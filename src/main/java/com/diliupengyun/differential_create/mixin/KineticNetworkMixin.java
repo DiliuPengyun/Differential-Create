@@ -1,0 +1,126 @@
+package com.diliupengyun.differential_create.mixin;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import com.diliupengyun.differential_create.kinetics.ClientSpeedSync;
+import com.diliupengyun.differential_create.kinetics.INetworkDynamics;
+import com.simibubi.create.content.kinetics.KineticNetwork;
+import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
+
+/**
+ * Attaches the continuous-rotation state (current speed, target speed,
+ * per-member ratios) to Create's {@link KineticNetwork}, and marks the
+ * structure sync dirty on membership changes.
+ */
+@Mixin(KineticNetwork.class)
+public abstract class KineticNetworkMixin implements INetworkDynamics {
+
+	@Unique
+	private float differentialcreate$speed;
+	@Unique
+	private float differentialcreate$targetSpeed;
+	@Unique
+	private final Map<KineticBlockEntity, Float> differentialcreate$ratios = new HashMap<>();
+	@Unique
+	private boolean differentialcreate$settled;
+	@Unique
+	private float differentialcreate$externalTorque;
+	@Unique
+	private float differentialcreate$lastNonZeroTarget;
+
+	@Inject(method = "add", at = @At("RETURN"))
+	private void differentialcreate$onAdd(KineticBlockEntity be, CallbackInfo ci) {
+		differentialcreate$markDirty(be);
+	}
+
+	@Inject(method = "addSilently", at = @At("RETURN"))
+	private void differentialcreate$onAddSilently(KineticBlockEntity be, float lastCapacity, float lastStress,
+		CallbackInfo ci) {
+		differentialcreate$markDirty(be);
+	}
+
+	@Inject(method = "remove", at = @At("HEAD"))
+	private void differentialcreate$onRemove(KineticBlockEntity be, CallbackInfo ci) {
+		KineticNetwork self = (KineticNetwork) (Object) this;
+		if (be.getLevel() != null)
+			ClientSpeedSync.markStructureDirty(self, be.getLevel());
+	}
+
+	@Inject(method = "remove", at = @At("RETURN"))
+	private void differentialcreate$onRemoved(KineticBlockEntity be, CallbackInfo ci) {
+		// KineticNetwork#remove drops the network from the registry when its
+		// last member leaves: dissolve it on clients too
+		KineticNetwork self = (KineticNetwork) (Object) this;
+		if (self.members.isEmpty() && be.getLevel() != null)
+			ClientSpeedSync.networkDissolved(be.getLevel(), self.id == null ? 0 : self.id);
+	}
+
+	@Unique
+	private void differentialcreate$markDirty(KineticBlockEntity be) {
+		if (be.getLevel() != null)
+			ClientSpeedSync.markStructureDirty((KineticNetwork) (Object) this, be.getLevel());
+	}
+
+	@Override
+	public float differentialcreate$getSpeed() {
+		return differentialcreate$speed;
+	}
+
+	@Override
+	public void differentialcreate$setSpeed(float speed) {
+		this.differentialcreate$speed = speed;
+	}
+
+	@Override
+	public float differentialcreate$getTargetSpeed() {
+		return differentialcreate$targetSpeed;
+	}
+
+	@Override
+	public void differentialcreate$setTargetSpeed(float targetSpeed) {
+		this.differentialcreate$targetSpeed = targetSpeed;
+	}
+
+	@Override
+	public Map<KineticBlockEntity, Float> differentialcreate$getRatios() {
+		return differentialcreate$ratios;
+	}
+
+	@Override
+	public boolean differentialcreate$isSettled() {
+		return differentialcreate$settled;
+	}
+
+	@Override
+	public void differentialcreate$setSettled(boolean settled) {
+		this.differentialcreate$settled = settled;
+	}
+
+	@Override
+	public float differentialcreate$getExternalTorque() {
+		return differentialcreate$externalTorque;
+	}
+
+	@Override
+	public void differentialcreate$setExternalTorque(float torque) {
+		this.differentialcreate$externalTorque = torque;
+	}
+
+	@Override
+	public float differentialcreate$getLastNonZeroTarget() {
+		return differentialcreate$lastNonZeroTarget;
+	}
+
+	@Override
+	public void differentialcreate$setLastNonZeroTarget(float target) {
+		this.differentialcreate$lastNonZeroTarget = target;
+	}
+
+}

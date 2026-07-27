@@ -1,0 +1,10 @@
+{
+  "gui.differentialcreate.goggles.torque": "扭矩: %s su/RPM",
+  "gui.differentialcreate.goggles.no_load_speed": "空载转速: %s RPM",
+  "gui.differentialcreate.goggles.load_factor": "负载率: %s",
+  "gui.differentialcreate.goggles.speed": "转速: %s RPM",
+  "gui.differentialcreate.goggles.clutch_torque": "离合器扭矩: %s su/RPM",
+  "gui.differentialcreate.goggles.clutch_slip": "转速差: %s RPM",
+  "gui.differentialcreate.goggles.rsc_ratio": "速比: %s:1",
+  "gui.differentialcreate.goggles.rsc_io": "输入: %s RPM / 输出: %s RPM"
+}

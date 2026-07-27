@@ -1,0 +1,26 @@
+{
+  "required": true,
+  "package": "com.diliupengyun.differential_create.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "refmap": "differentialcreate.refmap.json",
+  "mixins": [
+    "ClutchBlockEntityMixin",
+    "GeneratingKineticBlockEntityMixin",
+    "KineticBlockEntityMixin",
+    "KineticNetworkMixin",
+    "KineticBlockEntityRendererMixin",
+    "MechanicalBearingAccessor",
+    "RotatingInstanceMixin",
+    "RotationPropagatorInvoker",
+    "RotationPropagatorMixin",
+    "SpeedControllerBlockEntityMixin",
+    "TorquePropagatorAccessor",
+    "WindmillBearingBlockEntityMixin"
+  ],
+  "client": [],
+  "server": [],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
