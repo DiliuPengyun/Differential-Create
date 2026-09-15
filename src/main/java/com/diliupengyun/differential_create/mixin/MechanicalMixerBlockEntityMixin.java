@@ -1,5 +1,7 @@
 package com.diliupengyun.differential_create.mixin;
 
+import com.diliupengyun.differential_create.kinetics.MachineWork;
+import com.diliupengyun.differential_create.kinetics.ShaftWork;
 import com.diliupengyun.differential_create.kinetics.WorkAccumulator;
 import com.simibubi.create.content.kinetics.mixer.MechanicalMixerBlockEntity;
 import com.simibubi.create.content.processing.basin.BasinOperatingBlockEntity;
@@ -18,7 +20,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /** Mixing and head travel consume shaft travel calibrated at 64 RPM. */
 @Mixin(MechanicalMixerBlockEntity.class)
-public abstract class MechanicalMixerBlockEntityMixin extends BasinOperatingBlockEntity {
+public abstract class MechanicalMixerBlockEntityMixin extends BasinOperatingBlockEntity implements ShaftWork {
 	@Unique private final WorkAccumulator differentialcreate$travel = new WorkAccumulator();
 	@Unique private double differentialcreate$remaining = -1;
 	@Unique private ResourceLocation differentialcreate$recipe;
@@ -29,7 +31,7 @@ public abstract class MechanicalMixerBlockEntityMixin extends BasinOperatingBloc
 	private void differentialcreate$workTick(CallbackInfo ci) {
 		ci.cancel();
 		MechanicalMixerBlockEntity self = (MechanicalMixerBlockEntity) (Object) this;
-		if (!self.running || level == null) return;
+		if (!self.running || level == null || MachineWork.deferred(self)) return;
 		double rate = Math.abs(getSpeed()) / 64.0;
 		if (rate == 0) return;
 		if (!level.isClientSide) setChanged();
@@ -68,6 +70,54 @@ public abstract class MechanicalMixerBlockEntityMixin extends BasinOperatingBloc
 			applyBasinRecipe();
 			sendData();
 		}
+	}
+
+
+	@Override public double differentialcreate$remainingTravel() {
+		MechanicalMixerBlockEntity self = (MechanicalMixerBlockEntity) (Object) this;
+		if (!self.running) return Double.POSITIVE_INFINITY;
+		if (self.runningTicks != 20)
+			return Math.max(0, (self.runningTicks < 20 ? 20 : 40) - self.runningTicks - differentialcreate$travel.remainder()) * 64;
+		if (currentRecipe == null && differentialcreate$recipe != null)
+			currentRecipe = level.getRecipeManager().byKey(differentialcreate$recipe).map(holder -> holder.value()).orElse(null);
+		if (!matchBasinRecipe(currentRecipe)) {
+			var matches = getMatchingRecipes();
+			currentRecipe = matches.isEmpty() ? null : matches.get(0);
+			differentialcreate$remaining = -1;
+			if (currentRecipe == null) return 0;
+		}
+		if (differentialcreate$remaining < 0) {
+			double duration = currentRecipe instanceof StandardProcessingRecipe<?> recipe && recipe.getProcessingDuration() > 0
+				? recipe.getProcessingDuration() / 100.0 : 1;
+			differentialcreate$remaining = 3 * Math.ceil(duration * 15) + 1;
+		}
+		return Math.max(0, differentialcreate$remaining) * 64;
+	}
+	@Override public void differentialcreate$advanceTravel(double travel) {
+		MechanicalMixerBlockEntity self = (MechanicalMixerBlockEntity) (Object) this;
+		boolean complete = travel + MachineWork.EPSILON >= differentialcreate$remainingTravel();
+		setChanged();
+		if (self.runningTicks != 20) {
+			int end = self.runningTicks < 20 ? 20 : 40;
+			self.runningTicks += differentialcreate$travel.advance(travel / 64);
+			if (!complete) return;
+			self.runningTicks = end;
+			differentialcreate$travel.reset();
+			if (end == 40) { self.running = false; self.runningTicks = 0; basinChecker.scheduleUpdate(); }
+			sendData();
+			return;
+		}
+		differentialcreate$remaining -= travel / 64;
+		self.processingTicks = (int) Math.ceil(Math.max(0, differentialcreate$remaining));
+		if (!complete) return;
+		self.runningTicks = 21;
+		self.processingTicks = -1;
+		differentialcreate$remaining = -1;
+		MachineWork.event(() -> {
+			if (self.isRemoved()) return;
+			if (currentRecipe != null) applyBasinRecipe();
+			sendData();
+		});
 	}
 
 	@Inject(method = "startProcessingBasin", at = @At("RETURN"))

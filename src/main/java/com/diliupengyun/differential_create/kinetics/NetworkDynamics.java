@@ -18,18 +18,23 @@ public final class NetworkDynamics {
 		return target;
 	}
 
-	public static float localSpeed(KineticBlockEntity be, KineticNetwork network) {
+	public static double localSpeed(KineticBlockEntity be, KineticNetwork network) {
 		INetworkDynamics dynamics = (INetworkDynamics) network;
 		Float r = dynamics.differentialcreate$getRatios().get(be);
 		return r == null ? 0 : r * dynamics.differentialcreate$getSpeed();
+	}
+
+	public static double preciseSpeed(KineticBlockEntity be) {
+		return be.getLevel() != null && !be.getLevel().isClientSide && be.hasNetwork()
+			? localSpeed(be, be.getOrCreateNetwork()) : be.getSpeed();
 	}
 
 	public static void restoreMember(KineticBlockEntity be, KineticNetwork network) {
 		IMemberDynamics member = (IMemberDynamics) be;
 		INetworkDynamics dynamics = (INetworkDynamics) network;
 		MemberState saved = member.differentialcreate$member();
-		float pending = member.differentialcreate$getPendingNetworkSpeed();
-		if (Float.isFinite(pending) && !dynamics.differentialcreate$data().initialized) {
+		double pending = member.differentialcreate$getPendingNetworkSpeed();
+		if (Double.isFinite(pending) && !dynamics.differentialcreate$data().initialized) {
 			dynamics.differentialcreate$setSpeed(pending);
 			dynamics.differentialcreate$setLastNonZeroTarget(saved.savedNominal);
 			dynamics.differentialcreate$data().anchor = saved.savedAnchor;
@@ -63,7 +68,7 @@ public final class NetworkDynamics {
 		if (clientPacket || be.getLevel() == null || be.getLevel().isClientSide || !be.hasNetwork()) return;
 		INetworkDynamics dynamics = (INetworkDynamics) be.getOrCreateNetwork();
 		CompoundTag network = tag.getCompound("Network");
-		network.putFloat("DCSpeed", dynamics.differentialcreate$getSpeed());
+		network.putDouble("DCSpeed", dynamics.differentialcreate$getSpeed());
 		network.putFloat("DCTargetSpeed", dynamics.differentialcreate$getTargetSpeed());
 		network.putFloat("DCNominal", dynamics.differentialcreate$getLastNonZeroTarget());
 		network.putFloat("DCRatio", dynamics.differentialcreate$getRatios().getOrDefault(be, 1f));
@@ -86,7 +91,7 @@ public final class NetworkDynamics {
 		if (clientPacket || !tag.contains("Network")) return;
 		CompoundTag network = tag.getCompound("Network");
 		IMemberDynamics member = (IMemberDynamics) be;
-		member.differentialcreate$setPendingNetworkSpeed(network.contains("DCSpeed") ? network.getFloat("DCSpeed")
+		member.differentialcreate$setPendingNetworkSpeed(network.contains("DCSpeed") ? network.getDouble("DCSpeed")
 			: network.getFloat("DCTargetSpeed"));
 		MemberState saved = member.differentialcreate$member();
 		saved.savedRatio = network.contains("DCRatio") ? network.getFloat("DCRatio") : Float.NaN;
@@ -101,7 +106,7 @@ public final class NetworkDynamics {
 			Float speed = ClientNetworkSpeeds.speedOf(be);
 			if (speed != null) cir.setReturnValue(speed);
 		} else if (be.hasNetwork()) {
-			cir.setReturnValue(localSpeed(be, be.getOrCreateNetwork()));
+			cir.setReturnValue((float) localSpeed(be, be.getOrCreateNetwork()));
 		}
 	}
 }

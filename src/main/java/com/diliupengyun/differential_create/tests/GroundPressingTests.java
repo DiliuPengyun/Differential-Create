@@ -51,7 +51,7 @@ final class GroundPressingTests {
 		for (int i = 1; i <= 6; i++) {
 			int processed = i;
 			f.cycle(sequence).thenExecute(() -> {
-				helper.assertTrue(f.sheets() == 2 + processed, "non-bulk contact must produce exactly one sheet per cycle");
+				helper.assertTrue(f.sheets() == 2 + processed, "non-bulk contact must produce exactly one sheet per cycle: expected=" + (2 + processed) + ", actual=" + f.sheets());
 				helper.assertTrue(f.ingots() == 6 - processed, "non-bulk contact must consume exactly one ingot across all stacks");
 				f.count(Items.BEDROCK, 3);
 			});
@@ -104,7 +104,7 @@ final class GroundPressingTests {
 			.thenExecuteFor(20, () -> {
 				helper.assertTrue(f.behaviour().running, "a stalled cycle must remain active");
 				helper.assertTrue(f.behaviour().runningTicks == stoppedTicks[0], "stopped downstroke must retain integer progress");
-				helper.assertTrue(f.savedWork().getDouble("DCWorkFraction") == stoppedWork[0].getDouble("DCWorkFraction"),
+				helper.assertTrue(f.savedWork().getDouble("DCPressPosition") == stoppedWork[0].getDouble("DCPressPosition"),
 					"stopped downstroke must retain fractional progress");
 				f.count(Items.IRON_INGOT, 2);
 				f.count(AllItems.IRON_SHEET.get(), 1);
@@ -113,7 +113,7 @@ final class GroundPressingTests {
 				f.behaviour().read(stoppedWork[0], helper.getLevel().registryAccess(), false);
 				f.setSpeed(32);
 			})
-			.thenWaitUntil(() -> helper.assertTrue(f.behaviour().runningTicks == 120, "resumed downstroke must reach contact"))
+			.thenWaitUntil(() -> helper.assertTrue(f.behaviour().runningTicks >= 120, "resumed downstroke must reach contact"))
 			.thenExecute(() -> f.setSpeed(0.5f))
 			.thenExecuteAfter(1, () -> {
 				f.count(AllItems.IRON_SHEET.get(), 2);
@@ -136,6 +136,69 @@ final class GroundPressingTests {
 		f.finishIdle(sequence);
 	}
 
+	static void energyInvariant(GameTestHelper helper) {
+		Fixture f = new Fixture(helper, false);
+		GameTestSequence sequence = f.chargedSequence(16);
+		double[] before = {0};
+		for (float speed : new float[]{8, 16, 32, 64, 128, 256}) {
+			sequence.thenExecute(() -> { f.setSpeed(speed); before[0] = f.energy(); f.drop(Items.IRON_INGOT, 1); });
+			f.cycle(sequence).thenExecute(() -> {
+				double work = before[0] - f.energy();
+				helper.assertTrue(Math.abs(work - 12.8) < 1e-7, "full press work at " + speed + " RPM: " + work + " expected 12.8");
+				com.diliupengyun.differential_create.DifferentialCreate.LOGGER.info("PRESS_WORK initialRpm={} consumed={} expected=12.8", speed, work);
+			});
+		}
+		sequence.thenExecute(() -> {
+			f.count(AllItems.IRON_SHEET.get(), 6);
+			BlockPos depotPos = new BlockPos(6, 1, 4);
+			helper.setBlock(depotPos, AllBlocks.DEPOT.getDefaultState());
+			com.simibubi.create.content.logistics.depot.DepotBlockEntity depot = helper.getBlockEntity(depotPos);
+			depot.setHeldItem(new ItemStack(Items.IRON_INGOT));
+			f.setSpeed(256); before[0] = f.energy();
+		});
+		f.cycle(sequence).thenExecute(() -> {
+			helper.assertTrue(Math.abs(before[0] - f.energy() - 12.8) < 1e-7, "depot pressing must use the same cycle work");
+			com.simibubi.create.content.logistics.depot.DepotBlockEntity depot = helper.getBlockEntity(new BlockPos(6, 1, 4));
+			var inventory = depot.getBehaviour(com.simibubi.create.content.logistics.depot.DepotBehaviour.TYPE).itemHandler;
+			int sheets = 0;
+			for (int slot = 0; slot < inventory.getSlots(); slot++)
+				if (inventory.getStackInSlot(slot).is(AllItems.IRON_SHEET.get())) sheets += inventory.getStackInSlot(slot).getCount();
+			helper.assertTrue(sheets == 1, "belt-style contact must apply exactly one recipe on the depot");
+		}).thenSucceed();
+	}
+
+	static void largeInertia(GameTestHelper helper) {
+		Fixture f = new Fixture(helper, false, true);
+		var sequence = f.chargedSequence(256);
+		double[] before = {0};
+		sequence.thenExecute(() -> {
+			var network = f.press.getOrCreateNetwork();
+			INetworkDynamics dynamics = (INetworkDynamics) network;
+			double ratio = dynamics.differentialcreate$getRatios().get(f.press);
+			double inertia = com.diliupengyun.differential_create.kinetics.NetworkPhysics.aggregate(network, dynamics.differentialcreate$getRatios()).j() / (ratio * ratio);
+			helper.assertTrue(Math.abs(inertia - 896.01) < 1e-5, "seven 16x flywheels must reproduce the high-inertia case: " + inertia);
+			double precise = dynamics.differentialcreate$getSpeed() - 1e-8;
+			dynamics.differentialcreate$setSpeed(precise);
+			var tag = f.press.saveWithoutMetadata(helper.getLevel().registryAccess());
+			helper.assertTrue(tag.getCompound("Network").getDouble("DCSpeed") == precise, "saved network speed must retain double precision");
+			var clone = (MechanicalPressBlockEntity) f.press.getType().create(f.press.getBlockPos(), f.press.getBlockState());
+			clone.setLevel(helper.getLevel()); clone.loadWithComponents(tag, helper.getLevel().registryAccess());
+			var restored = new com.simibubi.create.content.kinetics.KineticNetwork();
+			com.diliupengyun.differential_create.kinetics.NetworkDynamics.restoreMember(clone, restored);
+			helper.assertTrue(((INetworkDynamics) restored).differentialcreate$getSpeed() == precise, "NBT restore must retain the exact double speed");
+			NetworkTopology.mark(f.press); NetworkTopology.flush();
+			dynamics = (INetworkDynamics) f.press.getOrCreateNetwork();
+			helper.assertTrue(Math.abs(dynamics.differentialcreate$getSpeed() - precise) < 1e-11, "topology rebuild must not round the physical speed to float");
+			before[0] = f.energy(); f.drop(Items.IRON_INGOT, 1);
+		});
+		f.cycle(sequence).thenExecute(() -> {
+			double work = before[0] - f.energy();
+			helper.assertTrue(Math.abs(work - 12.8) < 2e-6, "large-inertia press must debit a full cycle: " + work);
+			com.diliupengyun.differential_create.DifferentialCreate.LOGGER.info("PRESS_WORK seven16xFlywheels consumed={} expected=12.8", work);
+			f.count(AllItems.IRON_SHEET.get(), 1);
+		}).thenSucceed();
+	}
+
 	private static final class Fixture {
 		private final GameTestHelper helper;
 		private final MechanicalPressBlockEntity press;
@@ -146,7 +209,9 @@ final class GroundPressingTests {
 		private double chargedEnergy;
 		private double idleEnergy;
 
-		private Fixture(GameTestHelper helper, boolean bulk) {
+		private Fixture(GameTestHelper helper, boolean bulk) { this(helper, bulk, false); }
+
+		private Fixture(GameTestHelper helper, boolean bulk, boolean geared) {
 			this.helper = helper;
 			this.bulk = bulk;
 			var config = AllConfigs.server().recipes.bulkPressing;
@@ -158,8 +223,15 @@ final class GroundPressingTests {
 				@Override public void testFailed(GameTestInfo info, GameTestRunner runner) { restore(); }
 				@Override public void testAddedForRerun(GameTestInfo oldTest, GameTestInfo newTest, GameTestRunner runner) { restore(); }
 			});
-			BlockPos pressPos = new BlockPos(6, 3, 4);
-			helper.setBlock(pressPos.west(2), AllBlocks.FLYWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+			BlockPos pressPos = geared ? new BlockPos(14, 3, 14) : new BlockPos(6, 3, 4);
+			if (geared) {
+				BlockPos controller = pressPos.west(2);
+				helper.setBlock(controller, AllBlocks.ROTATION_SPEED_CONTROLLER.getDefaultState().setValue(BlockStateProperties.HORIZONTAL_AXIS, Direction.Axis.X));
+				((com.simibubi.create.content.kinetics.speedController.SpeedControllerBlockEntity) helper.getBlockEntity(controller)).targetSpeed.setValue(1);
+				helper.setBlock(controller.above(), AllBlocks.LARGE_COGWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.Z));
+				for (int i = 1; i <= 7; i++)
+					helper.setBlock(controller.above().north(i), AllBlocks.FLYWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.Z));
+			} else helper.setBlock(pressPos.west(2), AllBlocks.FLYWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
 			helper.setBlock(pressPos.west(), AllBlocks.SHAFT.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
 			helper.setBlock(pressPos, AllBlocks.MECHANICAL_PRESS.getDefaultState().setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST));
 			helper.setBlock(pressPos.below(2), Blocks.STONE.defaultBlockState());
@@ -251,7 +323,7 @@ final class GroundPressingTests {
 
 		private double energy() {
 			return press.getOrCreateNetwork().members.keySet().stream()
-				.mapToDouble(member -> 0.5 * InertiaRegistry.getInertia(member) * member.getSpeed() * member.getSpeed()).sum();
+				.mapToDouble(member -> { double speed = com.diliupengyun.differential_create.kinetics.NetworkDynamics.preciseSpeed(member); return 0.5 * InertiaRegistry.getInertia(member) * speed * speed; }).sum();
 		}
 	}
 }

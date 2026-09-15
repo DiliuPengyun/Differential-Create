@@ -8,7 +8,7 @@ import com.simibubi.create.content.kinetics.fan.EncasedFanBlockEntity;
 public final class NetworkPhysics {
 	public static final double TICK_MINUTES = RotationMath.TICK_MINUTES;
 	public record Balance(double t0, double k, double l, double j, double fanDrag) {}
-	public record StepResult(float newSpeed, float equilibrium) {}
+	public record StepResult(double newSpeed, double equilibrium) {}
 	private NetworkPhysics() {}
 
 	public static Balance aggregate(KineticNetwork network, Map<KineticBlockEntity, Float> ratios) {
@@ -46,9 +46,9 @@ public final class NetworkPhysics {
 		return new Balance(torque, damping, base.l, base.j, base.fanDrag);
 	}
 
-	public static StepResult integrate(float omega, Balance b) {
+	public static StepResult integrate(double omega, Balance b) {
 		double next = RotationMath.advance(omega, b.t0, b.k, b.l, b.j, b.fanDrag, TICK_MINUTES);
 		double equilibrium = RotationMath.equilibrium(b.t0, b.k, b.l, b.fanDrag);
-		return new StepResult((float) next, (float) equilibrium);
+		return new StepResult(next, equilibrium);
 	}
 }

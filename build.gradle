@@ -31,6 +31,11 @@ repositories {
     maven { url = "https://maven.createmod.net" }
     // Registrate
     maven { url = "https://maven.ithundxr.dev/snapshots" }
+    // JEI
+    maven {
+        url = "https://maven.blamejared.com"
+        content { includeGroup "mezz.jei" }
+    }
 }
 
 base {
@@ -124,8 +129,7 @@ configurations {
 dependencies {
     // Create: compile against it, ship nothing (it's a required mod dependency at runtime)
     compileOnly "com.simibubi.create:create-${minecraft_version}:${create_version}"
-    // Exclude Create's optional compat mods (JEI, FTB, JourneyMap, ...) from the runtime
-    // classpath: Create runs fine without them and their repositories are not declared.
+    // Exclude Create's transitive optional compat mods; enable selected ones explicitly below.
     localRuntime("com.simibubi.create:create-${minecraft_version}:${create_version}") {
         exclude group: "mezz.jei"
         exclude group: "maven.modrinth"
@@ -135,6 +139,9 @@ dependencies {
         exclude group: "cc.tweaked"
         exclude group: "dev.architectury"
     }
+
+    // JEI for viewing recipes during development.
+    localRuntime "mezz.jei:jei-${minecraft_version}-neoforge:${jei_version}"
 
     // Create's compile-time dependencies (types referenced from Create's classes)
     compileOnly "dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}"

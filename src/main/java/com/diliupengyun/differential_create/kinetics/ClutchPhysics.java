@@ -36,6 +36,30 @@ public final class ClutchPhysics {
 			if (!clutch.isRemoved()) process(clutch, network, level);
 	}
 
+	/** Re-evaluate the impulse for a physical segment without ticking locks, particles or sounds. */
+	public static void sampleCoupling(KineticNetwork network, double minutes) {
+		INetworkDynamics da = (INetworkDynamics) network;
+		for (ClutchBlockEntity clutch : da.differentialcreate$data().clutches) {
+			if (clutch.isRemoved()) continue;
+			double limit = ClutchControl.torqueLimit(signal(clutch));
+			KineticBlockEntity far = output(clutch);
+			if (limit == 0 || far == null || !far.hasNetwork()) continue;
+			KineticNetwork other = far.getOrCreateNetwork();
+			if (other == network) continue;
+			INetworkDynamics db = (INetworkDynamics) other;
+			if (db.differentialcreate$data().balance == null) continue;
+			double ra = da.differentialcreate$getRatios().getOrDefault(clutch, 0f);
+			double rb = db.differentialcreate$getRatios().getOrDefault(far, 0f);
+			if (ra == 0 || rb == 0) continue;
+			double ja = da.differentialcreate$data().balance.j(), jb = db.differentialcreate$data().balance.j();
+			double torque = ja > 0 && jb > 0 ? ClutchCoupling.torque(shaft(da, ra), shaft(db, rb), limit, minutes)
+				: ja == 0 && jb > 0 ? Math.clamp(force(da.differentialcreate$data().balance, rb * db.differentialcreate$getSpeed() / ra) / ra, -limit, limit)
+				: jb == 0 && ja > 0 ? Math.clamp(-force(db.differentialcreate$data().balance, ra * da.differentialcreate$getSpeed() / rb) / rb, -limit, limit) : 0;
+			da.differentialcreate$setExternalTorque(da.differentialcreate$getExternalTorque() - ra * torque);
+			db.differentialcreate$setExternalTorque(db.differentialcreate$getExternalTorque() + rb * torque);
+		}
+	}
+
 	public static KineticBlockEntity output(ClutchBlockEntity clutch) {
 		if (!clutch.hasSource() || clutch.getLevel() == null) return null;
 		var pos = clutch.getBlockPos().relative(clutch.getSourceFacing().getOpposite());
@@ -126,18 +150,18 @@ public final class ClutchPhysics {
 				double matched = rb * db.differentialcreate$getSpeed() / ra;
 				double required = force(da.differentialcreate$data().balance, matched) / ra;
 				torque = Math.clamp(required, -limit, limit);
-				da.differentialcreate$setSpeed(Math.abs(required) <= limit ? (float) matched : 0);
+				da.differentialcreate$setSpeed(Math.abs(required) <= limit ? matched : 0);
 			} else if (jb == 0 && ja > 0) {
 				double matched = ra * da.differentialcreate$getSpeed() / rb;
 				double required = -force(db.differentialcreate$data().balance, matched) / rb;
 				torque = Math.clamp(required, -limit, limit);
-				db.differentialcreate$setSpeed(Math.abs(required) <= limit ? (float) matched : 0);
+				db.differentialcreate$setSpeed(Math.abs(required) <= limit ? matched : 0);
 			}
 			delta = ra * da.differentialcreate$getSpeed() - rb * db.differentialcreate$getSpeed();
 		}
 		double holding = holdingTorque(da, db, ra, rb);
-		da.differentialcreate$setExternalTorque((float) (da.differentialcreate$getExternalTorque() - torque * ra));
-		db.differentialcreate$setExternalTorque((float) (db.differentialcreate$getExternalTorque() + torque * rb));
+		da.differentialcreate$setExternalTorque(da.differentialcreate$getExternalTorque() - torque * ra);
+		db.differentialcreate$setExternalTorque(db.differentialcreate$getExternalTorque() + torque * rb);
 		int ticks = Math.abs(delta) < PhysicsTuning.CLUTCH_LOCK_EPSILON_RPM && Math.abs(holding) <= limit
 			&& mergeLoss <= PhysicsTuning.CLUTCH_LOCK_ENERGY
 			? state.differentialcreate$getLockTimer() + 1 : 0;
@@ -159,7 +183,7 @@ public final class ClutchPhysics {
 		}
 	}
 
-	private static ClutchCoupling.Shaft shaft(INetworkDynamics dynamics, float ratio) {
+	private static ClutchCoupling.Shaft shaft(INetworkDynamics dynamics, double ratio) {
 		NetworkPhysics.Balance b = dynamics.differentialcreate$data().balance;
 		return new ClutchCoupling.Shaft(dynamics.differentialcreate$getSpeed(),
 			b.t0() + dynamics.differentialcreate$getExternalTorque(), b.k(), b.l(), b.j(), b.fanDrag(), ratio);

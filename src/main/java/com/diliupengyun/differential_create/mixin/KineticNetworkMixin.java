@@ -31,7 +31,7 @@ public abstract class KineticNetworkMixin implements INetworkDynamics {
 	}
 
 	@Unique
-	private float differentialcreate$speed;
+	private double differentialcreate$speed;
 	@Unique
 	private float differentialcreate$targetSpeed;
 	@Unique
@@ -39,7 +39,7 @@ public abstract class KineticNetworkMixin implements INetworkDynamics {
 	@Unique
 	private boolean differentialcreate$settled;
 	@Unique
-	private float differentialcreate$externalTorque;
+	private double differentialcreate$externalTorque;
 	@Unique
 	private float differentialcreate$lastNonZeroTarget;
 
@@ -87,12 +87,12 @@ public abstract class KineticNetworkMixin implements INetworkDynamics {
 	}
 
 	@Override
-	public float differentialcreate$getSpeed() {
+	public double differentialcreate$getSpeed() {
 		return differentialcreate$speed;
 	}
 
 	@Override
-	public void differentialcreate$setSpeed(float speed) {
+	public void differentialcreate$setSpeed(double speed) {
 		this.differentialcreate$speed = speed;
 	}
 
@@ -122,12 +122,12 @@ public abstract class KineticNetworkMixin implements INetworkDynamics {
 	}
 
 	@Override
-	public float differentialcreate$getExternalTorque() {
+	public double differentialcreate$getExternalTorque() {
 		return differentialcreate$externalTorque;
 	}
 
 	@Override
-	public void differentialcreate$setExternalTorque(float torque) {
+	public void differentialcreate$setExternalTorque(double torque) {
 		this.differentialcreate$externalTorque = torque;
 	}
 

@@ -62,6 +62,30 @@ public final class KineticPhysicsTests {
 	private static final String TEMPLATE = "physics_test";
 	private static final int TOTAL_CHECKS = 14;
 
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "speed_gauge", timeoutTicks = 200)
+	public static void speedGaugeRange(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		SpeedGaugeTests.run(helper);
+	}
+
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "machine_work", timeoutTicks = 500)
+	public static void machiningWorkInvariant(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		MachiningTests.run(helper);
+	}
+
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "press_large_inertia", timeoutTicks = 300)
+	public static void pressingLargeInertia(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		GroundPressingTests.largeInertia(helper);
+	}
+
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "press_energy", timeoutTicks = 1800)
+	public static void pressingWorkInvariant(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		GroundPressingTests.energyInvariant(helper);
+	}
+
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "ground_press_single", timeoutTicks = 1600)
 	public static void groundPressingSingle(GameTestHelper helper) {
 		forceImpactChunks(helper);
@@ -531,9 +555,9 @@ public final class KineticPhysicsTests {
 				clone.loadWithComponents(tag, helper.getLevel().registryAccess());
 				KineticNetwork restored = new KineticNetwork();
 				com.diliupengyun.differential_create.kinetics.NetworkDynamics.restoreMember(clone, restored);
-				float restoredLocal = com.diliupengyun.differential_create.kinetics.NetworkDynamics.localSpeed(clone, restored);
+				double restoredLocal = com.diliupengyun.differential_create.kinetics.NetworkDynamics.localSpeed(clone, restored);
 				if (Math.abs(restoredLocal - small.getSpeed()) > 0.001) helper.fail("NBT round trip changed a geared member's physical speed");
-				float before = ((INetworkDynamics) geared.getOrCreateNetwork()).differentialcreate$getSpeed();
+				double before = ((INetworkDynamics) geared.getOrCreateNetwork()).differentialcreate$getSpeed();
 				saved.putFloat("DCSpeed", -1000);
 				com.diliupengyun.differential_create.kinetics.NetworkDynamics.readNetworkDynamics(tag, false, small);
 				com.diliupengyun.differential_create.kinetics.NetworkDynamics.restoreMember(small, small.getOrCreateNetwork());
@@ -1414,7 +1438,7 @@ public final class KineticPhysicsTests {
 								helper.fail("member at " + pos + " still shows " + speed + " RPM after standstill");
 						}
 					} else {
-						float dcSpeed = ((INetworkDynamics) network).differentialcreate$getSpeed();
+						double dcSpeed = ((INetworkDynamics) network).differentialcreate$getSpeed();
 						if (Math.abs(dcSpeed) > 0.01f)
 							helper.fail("coasting network did not stop: " + dcSpeed);
 						for (KineticBlockEntity member : network.members.keySet()) {
@@ -1432,7 +1456,7 @@ public final class KineticPhysicsTests {
 				KineticNetwork network = stalled.getOrCreateNetwork();
 				if (network == null || network.members.size() < 12)
 					helper.fail("stalled network missing or incomplete: " + network);
-				float speed = Math.abs(((INetworkDynamics) network).differentialcreate$getSpeed());
+				double speed = Math.abs(((INetworkDynamics) network).differentialcreate$getSpeed());
 				if (speed > 0.01f)
 					helper.fail("stalled water wheel network: expected 0 RPM but got " + speed);
 				done[0] |= 1 << 9;
@@ -1483,7 +1507,8 @@ public final class KineticPhysicsTests {
 		// scheduled callback runs mutates GameTest's task map during iteration.
 		helper.onEachTick(() -> {
 			for (var press : loads)
-				if (!press.isRemoved() && !press.getPressingBehaviour().running)
+				// These fixtures represent constant torque, so restart before any completion/idle boundary.
+				if (!press.isRemoved() && (!press.getPressingBehaviour().running || press.getPressingBehaviour().runningTicks >= 80))
 					press.getPressingBehaviour().start(com.simibubi.create.content.kinetics.press.PressingBehaviour.Mode.WORLD);
 		});
 	}
@@ -1514,13 +1539,13 @@ public final class KineticPhysicsTests {
 		if (network == null)
 			throw new GameTestAssertException(what + ": no network");
 		INetworkDynamics dynamics = (INetworkDynamics) network;
-		float omega = dynamics.differentialcreate$getSpeed();
+		double omega = dynamics.differentialcreate$getSpeed();
 		for (KineticBlockEntity member : network.members.keySet()) {
 			Float ratio = dynamics.differentialcreate$getRatios()
 				.get(member);
 			if (ratio == null)
 				throw new GameTestAssertException(what + ": missing ratio for " + member.getBlockPos());
-			float expected = ratio * omega;
+			double expected = ratio * omega;
 			float actual = member.getSpeed();
 			if (Math.abs(actual - expected) > 0.01f)
 				throw new GameTestAssertException(

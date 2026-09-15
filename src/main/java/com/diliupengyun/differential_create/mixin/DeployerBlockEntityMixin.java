@@ -1,5 +1,12 @@
 package com.diliupengyun.differential_create.mixin;
 
+import org.spongepowered.asm.mixin.Shadow;
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.diliupengyun.differential_create.kinetics.MachinePhase;
+import com.diliupengyun.differential_create.kinetics.MachineWork;
+import com.diliupengyun.differential_create.kinetics.ShaftWork;
 import java.util.List;
 
 import com.diliupengyun.differential_create.kinetics.KineticGoggleInfo;
@@ -17,7 +24,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(DeployerBlockEntity.class)
-public abstract class DeployerBlockEntityMixin {
+public abstract class DeployerBlockEntityMixin implements ShaftWork {
 	// Keep the held item and use/punch mode in the normal view.
 	@Inject(method = "addToGoggleTooltip", at = @At("HEAD"), cancellable = true)
 	private void differentialcreate$energyView(List<Component> tooltip, boolean isPlayerSneaking,
@@ -37,6 +44,48 @@ public abstract class DeployerBlockEntityMixin {
 	@Redirect(method = "addToGoggleTooltip", at = @At(value = "INVOKE",
 		target = "Lcom/simibubi/create/content/kinetics/base/IRotate$StressImpact;isEnabled()Z"))
 	private boolean differentialcreate$suppressNominalStress() { return false; }
+
+
+	@Shadow protected int timer;
+	@Unique private boolean differentialcreate$event;
+	@WrapOperation(method = "tick", at = @At(value = "INVOKE", target = "Lcom/simibubi/create/content/kinetics/base/KineticBlockEntity;tick()V"))
+	private void differentialcreate$once(DeployerBlockEntity self,
+		Operation<Void> original) {
+		if (!differentialcreate$event) original.call(self);
+	}
+	@Inject(method = "tick", at = @At(value = "INVOKE", target = "Lcom/simibubi/create/content/kinetics/base/KineticBlockEntity;tick()V", shift = At.Shift.AFTER), cancellable = true)
+	private void differentialcreate$defer(CallbackInfo ci) {
+		if (!differentialcreate$event && MachineWork.deferred((DeployerBlockEntity) (Object) this)
+			&& differentialcreate$working()) ci.cancel();
+	}
+	@Unique private boolean differentialcreate$working() {
+		String phase = MachinePhase.of((DeployerBlockEntity) (Object) this);
+		return phase.equals("EXPANDING") || phase.equals("RETRACTING");
+	}
+	@Override public double differentialcreate$remainingTravel() {
+		return differentialcreate$working() ? Math.max(0, timer - differentialcreate$work.remainder()) / 2 : Double.POSITIVE_INFINITY;
+	}
+	@Override public void differentialcreate$advanceTravel(double travel) {
+		boolean complete = travel + MachineWork.EPSILON >= differentialcreate$remainingTravel();
+		timer -= differentialcreate$work.advance(travel * 2);
+		DeployerBlockEntity self = (DeployerBlockEntity) (Object) this;
+		self.setChanged();
+		if (complete) {
+			timer = 0;
+			differentialcreate$work.reset();
+			String phase = MachinePhase.of(self);
+			MachineWork.event(() -> {
+				// A paired deployer's fist-bump callback may already have retracted this hand.
+				if (self.isRemoved() || !phase.equals(MachinePhase.of(self))) return;
+				differentialcreate$event = true;
+				try { self.tick(); } finally { differentialcreate$event = false; }
+			});
+		}
+	}
+	@ModifyExpressionValue(method = "tick", at = @At(value = "INVOKE", target = "Lcom/simibubi/create/content/kinetics/deployer/DeployerBlockEntity;getSpeed()F"))
+	private float differentialcreate$completedAtRest(float speed) { return differentialcreate$event && speed == 0 ? Float.MIN_NORMAL : speed; }
+	@Inject(method = "start", at = @At("HEAD"))
+	private void differentialcreate$start(CallbackInfo ci) { differentialcreate$work.reset(); }
 
 	@Unique private final WorkAccumulator differentialcreate$work = new WorkAccumulator();
 	@Redirect(method = "tick", at = @At(value = "INVOKE",

@@ -1,5 +1,9 @@
 package com.diliupengyun.differential_create.mixin;
 
+import org.spongepowered.asm.mixin.Shadow;
+import com.diliupengyun.differential_create.kinetics.MachineActivity;
+import com.diliupengyun.differential_create.kinetics.MachineWork;
+import com.diliupengyun.differential_create.kinetics.ShaftWork;
 import com.diliupengyun.differential_create.kinetics.WorkAccumulator;
 import com.simibubi.create.content.kinetics.millstone.MillstoneBlockEntity;
 import net.minecraft.core.HolderLookup;
@@ -12,13 +16,32 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(MillstoneBlockEntity.class)
-public abstract class MillstoneBlockEntityMixin {
+public abstract class MillstoneBlockEntityMixin implements ShaftWork {
 	@Unique private final WorkAccumulator differentialcreate$work = new WorkAccumulator();
 	@Inject(method = "tick", at = @At(value = "INVOKE",
 		target = "Lcom/simibubi/create/content/kinetics/base/KineticBlockEntity;tick()V", shift = At.Shift.AFTER), cancellable = true)
 	private void differentialcreate$pauseBlockedOutput(CallbackInfo ci) {
-		if (com.diliupengyun.differential_create.kinetics.MachineActivity.millOutputBlocked((MillstoneBlockEntity) (Object) this))
+		MillstoneBlockEntity self = (MillstoneBlockEntity) (Object) this;
+		if (MachineActivity.millOutputBlocked(self)
+			|| MachineWork.deferred(self) && self.timer > 0)
 			ci.cancel();
+	}
+
+	@Shadow private void process() { throw new AssertionError(); }
+	@Override public double differentialcreate$remainingTravel() {
+		MillstoneBlockEntity self = (MillstoneBlockEntity) (Object) this;
+		return MachineActivity.working(self)
+			? Math.max(0, self.timer - differentialcreate$work.remainder()) * 16 : Double.POSITIVE_INFINITY;
+	}
+	@Override public void differentialcreate$advanceTravel(double travel) {
+		MillstoneBlockEntity self = (MillstoneBlockEntity) (Object) this;
+		boolean complete = travel + MachineWork.EPSILON >= differentialcreate$remainingTravel();
+		self.timer -= differentialcreate$work.advance(travel / 16);
+		self.setChanged();
+		if (complete) {
+			self.timer = 0; differentialcreate$work.reset();
+			MachineWork.event(() -> { if (!self.isRemoved()) process(); });
+		}
 	}
 	@Redirect(method = "tick", at = @At(value = "INVOKE",
 		target = "Lcom/simibubi/create/content/kinetics/millstone/MillstoneBlockEntity;getProcessingSpeed()I"))

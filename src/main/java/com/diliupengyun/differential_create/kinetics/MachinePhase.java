@@ -10,14 +10,14 @@ import com.simibubi.create.content.kinetics.deployer.DeployerBlockEntity;
 import com.simibubi.create.content.kinetics.mechanicalArm.ArmBlockEntity;
 
 /** Read-only bridges for Create's inaccessible operation enums; resolve each field once. */
-final class MachinePhase {
+public final class MachinePhase {
 	private static final MethodHandle DEPLOYER = getter(DeployerBlockEntity.class, "state");
 	private static final MethodHandle CRAFTER = getter(MechanicalCrafterBlockEntity.class, "phase");
 	private static final MethodHandle ARM = getter(ArmBlockEntity.class, "phase");
 
 	private MachinePhase() {}
 
-	static String of(KineticBlockEntity be) {
+	public static String of(KineticBlockEntity be) {
 		MethodHandle getter = be instanceof DeployerBlockEntity ? DEPLOYER
 			: be instanceof MechanicalCrafterBlockEntity ? CRAFTER : ARM;
 		try {

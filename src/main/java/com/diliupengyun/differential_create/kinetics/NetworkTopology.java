@@ -197,6 +197,13 @@ public final class NetworkTopology {
 		Set<KineticBlockEntity> nodes = new LinkedHashSet<>();
 		Set<KineticNetwork> oldNetworks = new HashSet<>();
 		ArrayDeque<KineticBlockEntity> queue = new ArrayDeque<>(seeds.stream().sorted(ORDER).toList());
+		// NBT restoration can replace a member's id before it rejoins. Include
+		// its prior registry membership so an orphan cannot keep a stale load cache.
+		for (KineticNetwork network : TorquePropagatorAccessor.differentialcreate$getNetworks().getOrDefault(level, Map.of()).values())
+			if (seeds.stream().anyMatch(network.members::containsKey)) {
+				oldNetworks.add(network);
+				queue.addAll(network.members.keySet());
+			}
 		probeClutches = true;
 		try {
 			while (!queue.isEmpty()) {
@@ -239,7 +246,7 @@ public final class NetworkTopology {
 		for (KineticBlockEntity be : nodes.stream().sorted(ORDER).toList()) {
 			KineticNetwork net = be.hasNetwork() ? be.getOrCreateNetwork() : null;
 			old.put(be, net);
-			float local = net == null ? 0 : NetworkDynamics.localSpeed(be, net);
+			double local = net == null ? 0 : NetworkDynamics.localSpeed(be, net);
 			groups.put(be, new Group(be, local));
 			for (BlockPos pos : locations(be)) {
 				if (!level.isLoaded(pos) || !(level.getBlockEntity(pos) instanceof KineticBlockEntity next)
@@ -344,7 +351,7 @@ public final class NetworkTopology {
 				dynamics.differentialcreate$data().initialized = true;
 				dynamics.differentialcreate$data().anchor = group.savedAnchor;
 				dynamics.differentialcreate$data().jammed = group.jammed;
-				dynamics.differentialcreate$setSpeed(group.jammed ? 0 : (float) group.speed);
+				dynamics.differentialcreate$setSpeed(group.jammed ? 0 : group.speed);
 				dynamics.differentialcreate$setLastNonZeroTarget(16);
 				dynamics.differentialcreate$getRatios().putAll(group.ratios);
 				for (var entry : group.ratios.entrySet()) {
@@ -395,7 +402,7 @@ public final class NetworkTopology {
 		boolean jammed;
 		BlockPos savedAnchor;
 		Long savedId;
-		Group(KineticBlockEntity be, float speed) {
+		Group(KineticBlockEntity be, double speed) {
 			anchor = be;
 			savedAnchor = be.getBlockPos();
 			ratios.put(be, 1f);

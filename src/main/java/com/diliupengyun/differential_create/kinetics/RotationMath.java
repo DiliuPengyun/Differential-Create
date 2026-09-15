@@ -7,6 +7,58 @@ public final class RotationMath {
 
 	private RotationMath() {}
 
+	/** Shaft turns in the same calibrated units as torque and kinetic energy. */
+	public record Motion(double speed, double angle, double travel) {}
+
+	/** Integrate speed and travel together, including a stop or reversal inside the interval. */
+	public static Motion motion(double speed, double torque, double damping, double load,
+		double inertia, double drag, double minutes) {
+		if (minutes <= 0) return new Motion(speed, 0, 0);
+		if (inertia <= 0) {
+			double next = advance(speed, torque, damping, load, inertia, drag, minutes);
+			return new Motion(next, next * minutes, Math.abs(next) * minutes);
+		}
+		if (speed == 0 && Math.abs(torque) <= load) return new Motion(0, 0, 0);
+		double sign = speed == 0 ? Math.signum(torque) : Math.signum(speed);
+		double x = Math.abs(speed), a = sign * torque - load;
+		double stop = a < 0 ? timeToStop(x, a, damping, drag) * inertia : Double.POSITIVE_INFINITY;
+		double first = Math.min(minutes, stop);
+		double travel = inertia * positiveTravel(x, a, damping, drag, first / inertia);
+		if (stop <= minutes) {
+			if (Math.abs(torque) <= load) return new Motion(0, sign * travel, travel);
+			double rest = (minutes - stop) / inertia;
+			double back = inertia * positiveTravel(0, Math.abs(torque) - load, damping, drag, rest);
+			return new Motion(Math.signum(torque) * positiveStep(0, Math.abs(torque) - load, damping, drag, rest),
+				sign * (travel - back), travel + back);
+		}
+		return new Motion(sign * Math.max(0, positiveStep(x, a, damping, drag, minutes / inertia)), sign * travel, travel);
+	}
+
+	private static double positiveTravel(double x, double a, double k, double c, double t) {
+		if (t == 0) return 0;
+		if (c == 0) {
+			if (k == 0) return Math.max(0, t * (x + a * t / 2));
+			double z = k * t;
+			// (z + expm1(-z)) / z, without cancellation during very short steps.
+			double f = Math.abs(z) < 1e-4 ? z * (0.5 + z * (-1.0 / 6 + z * (1.0 / 24 - z / 120)))
+				: (z + Math.expm1(-z)) / z;
+			return Math.max(0, t * (x + (a / k - x) * f));
+		}
+		double discriminant = k * k + 4 * c * a;
+		double result;
+		if (discriminant > 0) {
+			double d = Math.sqrt(discriminant), root = 2 * a / (k + d);
+			result = root * t + Math.log1p(c * (x - root) * -Math.expm1(-d * t) / d) / c;
+		} else if (discriminant == 0) {
+			result = Math.log1p(c * (x + k / (2 * c)) * t) / c - k * t / (2 * c);
+		} else {
+			double d = Math.sqrt(-discriminant), h = d * t / 2;
+			result = Math.log1p(-2 * Math.pow(Math.sin(h / 2), 2) + (2 * c * x + k) / d * Math.sin(h)) / c
+				- k * t / (2 * c);
+		}
+		return Math.max(0, result);
+	}
+
 	/** J dw/dt = torque - load sign(w) - damping w - drag w |w|. */
 	public static double advance(double speed, double torque, double damping, double load,
 		double inertia, double drag, double minutes) {

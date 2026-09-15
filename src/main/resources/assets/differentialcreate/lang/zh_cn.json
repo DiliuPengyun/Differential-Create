@@ -30,5 +30,8 @@
   "gui.differentialcreate.goggles.consumed_power": "消耗功率: %s su",
   "gui.differentialcreate.goggles.clutch_loss_power": "打滑损耗功率: %s su",
   "gui.differentialcreate.ratio_setting": "速比（0 为断开）",
+  "gui.differentialcreate.gauge.range_setting": "转速表量程",
+  "gui.differentialcreate.gauge.range": "量程: 0–%s RPM",
+  "gui.differentialcreate.gauge.over_range": "超出量程",
   "gui.differentialcreate.goggles.pump_head": "等效扬程: %s m"
 }

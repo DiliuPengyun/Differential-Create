@@ -30,36 +30,8 @@ public final class NetworkSpeedTicker {
 		Set<KineticNetwork> live = new HashSet<>();
 		for (var entry : new ArrayList<>(TorquePropagatorAccessor.differentialcreate$getNetworks().entrySet())) {
 			if (!(entry.getKey() instanceof Level level) || level.isClientSide) continue;
-			var networks = new ArrayList<>(entry.getValue().values());
-			live.addAll(networks);
-			if (level.tickRateManager().isFrozen()) continue;
-			for (KineticNetwork network : networks) {
-				INetworkDynamics dynamics = (INetworkDynamics) network;
-				dynamics.differentialcreate$setExternalTorque(0);
-				NetworkData data = dynamics.differentialcreate$data();
-				MachineActivity.refresh(network);
-				NetworkPhysics.Balance next = NetworkPhysics.aggregate(network, dynamics.differentialcreate$getRatios());
-				if (data.balance != null && next.j() > data.balance.j())
-					dynamics.differentialcreate$setSpeed((float) (dynamics.differentialcreate$getSpeed() * data.balance.j() / next.j()));
-				data.balance = next;
-			}
-			for (KineticNetwork network : networks)
-				ClutchPhysics.accumulateCoupling(network, level);
-			for (KineticNetwork network : networks) {
-				INetworkDynamics dynamics = (INetworkDynamics) network;
-				NetworkPhysics.Balance base = dynamics.differentialcreate$data().balance;
-				NetworkPhysics.Balance balance = new NetworkPhysics.Balance(
-					base.t0() + dynamics.differentialcreate$getExternalTorque(), base.k(), base.l(), base.j(), base.fanDrag());
-				if (dynamics.differentialcreate$data().jammed)
-					balance = new NetworkPhysics.Balance(0, 0, 0, base.j(), 0);
-				float speed = dynamics.differentialcreate$data().jammed ? 0
-					: NetworkPhysics.integrate(dynamics.differentialcreate$getSpeed(), balance).newSpeed();
-				if (!Float.isFinite(speed)) throw new IllegalStateException("Non-finite kinetic speed in network " + network.id);
-				dynamics.differentialcreate$setSpeed(speed);
-				dynamics.differentialcreate$data().initialized = true;
-				dynamics.differentialcreate$setTargetSpeed(NetworkDynamics.computeTargetSpeed(network));
-				ClientSpeedSync.syncNetwork(network, level, dynamics, balance);
-			}
+			if (!level.tickRateManager().isFrozen()) MachiningClock.advance(level);
+			live.addAll(MachiningClock.networks(level));
 		}
 		ClientSpeedSync.prune(live);
 		ClientSpeedSync.flush();

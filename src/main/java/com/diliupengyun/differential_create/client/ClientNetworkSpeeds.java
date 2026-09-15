@@ -47,7 +47,7 @@ public final class ClientNetworkSpeeds {
 		boolean rotationDirty;
 		/**
 		 * Accumulated rotation angle of the network, degrees. Advanced with
-		 * the same trapezoid rule as the speed so member angles r_i × θ stay
+		 * the analytical shaft angle alongside the speed so member angles r_i × θ stay
 		 * continuous through ramps (the shader animates offset + t × speed,
 		 * which is discontinuous for a varying speed — the visuals re-anchor
 		 * their offset to this θ instead).
@@ -56,11 +56,11 @@ public final class ClientNetworkSpeeds {
 
 		/** Advances ω by one client tick with the server's exact steps. */
 		void advance(int renderTick) {
-			float before = speed;
 			previousTheta = theta;
-			speed = NetworkPhysics.integrate(speed, balance).newSpeed();
-			// Trapezoid: θ += (ω_before + ω_after)/2 × 0.3 deg per RPM-tick
-			theta += (before + speed) * 0.5f * 0.3f;
+			var motion = com.diliupengyun.differential_create.kinetics.RotationMath.motion(speed, balance.t0(), balance.k(), balance.l(), balance.j(), balance.fanDrag(), NetworkPhysics.TICK_MINUTES);
+			speed = (float) motion.speed();
+			// One calibrated turn is 360 degrees; signed motion includes a reversal.
+			theta += motion.angle() * 360;
 			setFrame(new RotationFrame(renderTick, previousTheta, theta - previousTheta));
 		}
 

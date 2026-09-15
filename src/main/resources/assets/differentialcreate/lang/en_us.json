@@ -30,5 +30,8 @@
   "gui.differentialcreate.goggles.consumed_power": "Power consumption: %s su",
   "gui.differentialcreate.goggles.clutch_loss_power": "Slip power loss: %s su",
   "gui.differentialcreate.ratio_setting": "Gear ratio (0 disconnects)",
+  "gui.differentialcreate.gauge.range_setting": "Speedometer range",
+  "gui.differentialcreate.gauge.range": "Range: 0–%s RPM",
+  "gui.differentialcreate.gauge.over_range": "Out of range",
   "gui.differentialcreate.goggles.pump_head": "Equivalent lift: %s m"
 }

@@ -38,7 +38,7 @@ public abstract class KineticBlockEntityMixin implements IMemberDynamics {
 	}
 
 	@Unique
-	private float differentialcreate$pendingNetworkSpeed = Float.NaN;
+	private double differentialcreate$pendingNetworkSpeed = Double.NaN;
 
 	@Inject(method = "tick", at = @At("HEAD"))
 	private void differentialcreate$captureWorkingTick(CallbackInfo ci) {
@@ -207,18 +207,18 @@ public abstract class KineticBlockEntityMixin implements IMemberDynamics {
 	}
 
 	@Override
-	public float differentialcreate$getPendingNetworkSpeed() {
+	public double differentialcreate$getPendingNetworkSpeed() {
 		return differentialcreate$pendingNetworkSpeed;
 	}
 
 	@Override
-	public void differentialcreate$setPendingNetworkSpeed(float speed) {
+	public void differentialcreate$setPendingNetworkSpeed(double speed) {
 		this.differentialcreate$pendingNetworkSpeed = speed;
 	}
 
 	@Override
 	public void differentialcreate$clearPendingNetworkSpeed() {
-		this.differentialcreate$pendingNetworkSpeed = Float.NaN;
+		this.differentialcreate$pendingNetworkSpeed = Double.NaN;
 	}
 
 }

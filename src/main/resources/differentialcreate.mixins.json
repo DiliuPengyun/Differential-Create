@@ -5,6 +5,7 @@
   "minVersion": "0.8",
   "refmap": "differentialcreate.refmap.json",
   "mixins": [
+    "CKineticsMixin",
     "ClutchBlockEntityMixin",
     "FlywheelBlockEntityMixin",
     "ClockworkBearingAccessor",
@@ -24,6 +25,7 @@
     "LinearActuatorAccessor",
     "PoweredShaftBlockEntityMixin",
     "SpeedGaugeBlockEntityMixin",
+    "GaugeBlockMixin",
     "MechanicalBearingAccessor",
     "MechanicalBearingBlockEntityMixin",
     "RotationPropagatorInvoker",

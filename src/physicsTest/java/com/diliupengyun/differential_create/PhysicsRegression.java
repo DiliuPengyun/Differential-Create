@@ -10,6 +10,7 @@ import com.diliupengyun.differential_create.kinetics.WorkAccumulator;
 public final class PhysicsRegression {
 	private static int checks;
 	public static void main(String[] args) {
+		shaftTravel();
 		near(32, ClutchControl.torqueLimit(0), 0, "unpowered clutch retains full torque capacity");
 		near(0, ClutchControl.torqueLimit(15), 0, "full redstone completely releases the clutch");
 		near(32.0 / 15, ClutchControl.torqueLimit(14), 1e-12, "weakest engagement still transfers limited torque");
@@ -66,6 +67,54 @@ public final class PhysicsRegression {
 		mergeConservation();
 		RenderingRegression.run();
 		System.out.println("Physics regression: " + checks + " checks passed");
+	}
+
+	private static void shaftTravel() {
+		double tick = RotationMath.TICK_MINUTES;
+		for (double fraction : new double[]{1, .5, .03, 1e-4}) {
+			double dt = tick * fraction;
+			Shaft a = new Shaft(64, 0, 0, 0, .1, 0, 1), b = new Shaft(16, 0, 0, 8, .01, 0, 1);
+			double torque = ClutchCoupling.torque(a, b, 32, dt);
+			var ma = RotationMath.motion(64, -torque, 0, 0, .1, 0, dt);
+			var mb = RotationMath.motion(16, torque, 0, 8, .01, 0, dt);
+			double lost = .05 * (64 - ma.speed()) * (64 + ma.speed()) + .005 * (16 - mb.speed()) * (16 + mb.speed());
+			near(lost, torque * (ma.angle() - mb.angle()) + 8 * mb.travel(), 1e-10, "clutch segments account for machine work and slip dissipation together");
+		}
+		var stop = RotationMath.motion(.1, 0, 0, 8, .01, 0, tick);
+		near(0, stop.speed(), 0, "mid-tick stop");
+		near(.5 * .01 * .1 * .1, stop.travel() * 8, 1e-14, "stopping travel spends exactly the available kinetic energy");
+		var reversal = RotationMath.motion(1, -12, 0, 4, .01, 0, .002);
+		double stopTime = .01 / 16, backTime = .002 - stopTime;
+		near(.5 * stopTime + .5 * 800 * backTime * backTime, reversal.travel(), 1e-14, "reversal counts both directions of useful travel");
+		near(.5 * stopTime - .5 * 800 * backTime * backTime, reversal.angle(), 1e-14, "signed angle distinguishes a reversal");
+		for (double drag : new double[]{0, .01, 1, 100})
+			for (double damping : new double[]{0, 1, 10, 100})
+				for (double torque : new double[]{-64, -3, 0, 3, 64}) {
+					var once = RotationMath.motion(5, torque, damping, 4, .1, drag, .2);
+					double speed = 5, arc = 0, angle = 0;
+					for (int i = 0; i < 200; i++) {
+						var part = RotationMath.motion(speed, torque, damping, 4, .1, drag, .001);
+						speed = part.speed(); arc += part.travel(); angle += part.angle();
+					}
+					near(RotationMath.advance(5, torque, damping, 4, .1, drag, .2), once.speed(), 1e-10, "motion retains the analytical speed solution");
+					near(arc, once.travel(), 1e-8, "travel composes across arbitrary phase subdivisions");
+					near(angle, once.angle(), 1e-8, "angle composes across stops and reversals");
+				}
+		for (double inertia : new double[]{.51, 896.01})
+			for (double initial : new double[]{8, 16, 32, 64, 128, 256}) {
+				double speed = initial, budget = 1920, integratedWork = 0;
+				for (int ticks = 0; budget > 1e-8 && ticks < 10000; ticks++) {
+					double start = speed, left = budget;
+					double duration = com.diliupengyun.differential_create.kinetics.ShaftClock.firstBoundary(tick,
+						dt -> RotationMath.motion(start, 0, 0, 8, inertia, 0, dt).travel() / tick >= left);
+					var motion = RotationMath.motion(speed, 0, 0, 8, inertia, 0, duration);
+					speed = motion.speed(); budget -= motion.travel() / tick;
+					integratedWork += 8 * motion.travel();
+				}
+				near(0, budget, 1e-8, "full press reaches its exact work boundary");
+				near(12.8, integratedWork, 1e-10, "same shaft budget at every speed and inertia");
+				near(12.8, .5 * inertia * (initial - speed) * (initial + speed), 2e-6, "large-inertia double state retains the actual work debit");
+			}
 	}
 
 	private static void mergeConservation() {

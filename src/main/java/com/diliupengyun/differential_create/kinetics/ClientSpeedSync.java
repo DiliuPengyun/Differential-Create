@@ -69,7 +69,7 @@ public final class ClientSpeedSync {
 			last.audience = audience;
 		}
 		NetworkStatePayload current = new NetworkStatePayload(server.dimension().location(), network.id,
-			dynamics.differentialcreate$getSpeed(), (float) b.t0(), (float) b.k(), (float) b.l(), (float) b.j(), (float) b.fanDrag());
+			(float) dynamics.differentialcreate$getSpeed(), (float) b.t0(), (float) b.k(), (float) b.l(), (float) b.j(), (float) b.fanDrag());
 		boolean changed = last.state == null || Math.abs(current.speed() - last.state.speed()) > 1
 			|| current.torque() != last.state.torque() || current.damping() != last.state.damping()
 			|| current.load() != last.state.load() || current.inertia() != last.state.inertia() || current.drag() != last.state.drag();

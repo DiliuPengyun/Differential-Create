@@ -66,6 +66,9 @@ public final class MachineActivity {
 		MemberState state = ((IMemberDynamics) be).differentialcreate$member();
 		if (be.getLevel() == null) return false;
 		if (be.getLevel().isClientSide) return state.machineActive;
+		if (be instanceof CrushingWheelBlockEntity) return working(be);
+		ShaftWork work = MachineWork.of(be);
+		if (work != null) return Double.isFinite(work.differentialcreate$remainingTravel());
 		return state.lastWorkingTick == be.getLevel().getGameTime() || working(be);
 	}
 
@@ -89,7 +92,7 @@ public final class MachineActivity {
 		}
 	}
 
-	private static boolean working(KineticBlockEntity be) {
+	public static boolean working(KineticBlockEntity be) {
 		if (be instanceof MechanicalPressBlockEntity press)
 			return press.getPressingBehaviour() != null && press.getPressingBehaviour().running;
 		if (be instanceof MechanicalMixerBlockEntity mixer) return mixer.running;

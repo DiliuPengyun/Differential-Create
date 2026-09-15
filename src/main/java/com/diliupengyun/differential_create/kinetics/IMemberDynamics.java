@@ -9,11 +9,11 @@ public interface IMemberDynamics {
 
 	/**
 	 * Network speed restored from NBT, waiting to be applied once the block
-	 * entity has rejoined its network. {@link Float#NaN} when absent.
+	 * entity has rejoined its network. {@link Double#NaN} when absent.
 	 */
-	float differentialcreate$getPendingNetworkSpeed();
+	double differentialcreate$getPendingNetworkSpeed();
 
-	void differentialcreate$setPendingNetworkSpeed(float speed);
+	void differentialcreate$setPendingNetworkSpeed(double speed);
 
 	void differentialcreate$clearPendingNetworkSpeed();
 

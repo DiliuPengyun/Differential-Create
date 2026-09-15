@@ -5,6 +5,7 @@ import java.util.List;
 import com.diliupengyun.differential_create.client.ClientNetworkSpeeds;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.fan.EncasedFanBlockEntity;
+import com.simibubi.create.content.kinetics.gauge.SpeedGaugeBlockEntity;
 import com.simibubi.create.content.kinetics.speedController.SpeedControllerBlockEntity;
 import com.simibubi.create.content.kinetics.transmission.ClutchBlockEntity;
 import com.simibubi.create.content.kinetics.waterwheel.WaterWheelBlockEntity;
@@ -38,6 +39,16 @@ public final class KineticGoggleInfo {
 
 	private static void appendDynamics(KineticBlockEntity kbe, List<Component> tooltip) {
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.inertia", fmt(InertiaRegistry.getInertia(kbe))));
+		if (kbe instanceof SpeedGaugeBlockEntity gauge) {
+			double speed = NetworkDynamics.preciseSpeed(gauge);
+			int range = SpeedGaugeRangeBehaviour.rangeOf(gauge);
+			boolean overRange = Math.abs(speed) > range;
+			ChatFormatting color = speed == 0 ? ChatFormatting.GRAY : overRange ? ChatFormatting.YELLOW : ChatFormatting.GREEN;
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.speed", fmt1(speed)).withStyle(color));
+			tooltip.add(Component.translatable("gui.differentialcreate.gauge.range", range));
+			if (overRange) tooltip.add(Component.translatable("gui.differentialcreate.gauge.over_range").withStyle(ChatFormatting.YELLOW));
+			return;
+		}
 		if (kbe instanceof ClutchBlockEntity clutchBlock) {
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.speed", fmt1(kbe.getSpeed())));
 			// Clutch: coupling torque and slip (synced from the server)
@@ -111,7 +122,7 @@ public final class KineticGoggleInfo {
 	}
 
 	private static void appendEnergy(KineticBlockEntity kbe, List<Component> tooltip) {
-		double local = kbe.getSpeed();
+		double local = NetworkDynamics.preciseSpeed(kbe);
 		double energy = 0.5 * InertiaRegistry.getInertia(kbe) * local * local;
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.local_energy", fmt(energy)));
 		Double networkEnergy = kbe.getLevel() == null ? null : ClientNetworkSpeeds.energyOf(kbe);

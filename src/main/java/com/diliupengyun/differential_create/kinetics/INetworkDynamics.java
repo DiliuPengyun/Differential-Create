@@ -17,9 +17,9 @@ public interface INetworkDynamics {
 	 * the speed of a ratio-1 member (the source shaft in a single-source
 	 * network).
 	 */
-	float differentialcreate$getSpeed();
+	double differentialcreate$getSpeed();
 
-	void differentialcreate$setSpeed(float speed);
+	void differentialcreate$setSpeed(double speed);
 
 	/**
 	 * Legacy nominal source maximum retained for old-save compatibility.
@@ -50,9 +50,9 @@ public interface INetworkDynamics {
 	 * re-accumulated every tick before integration; folded into the T0 term
 	 * of the network equation.
 	 */
-	float differentialcreate$getExternalTorque();
+	double differentialcreate$getExternalTorque();
 
-	void differentialcreate$setExternalTorque(float torque);
+	void differentialcreate$setExternalTorque(double torque);
 
 	/**
 	 * Nominal reference basis, fixed at 16 in newly built networks and saved
