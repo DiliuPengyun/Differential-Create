@@ -73,6 +73,7 @@ neoForge {
         // The gametest system is also enabled by default for other run configs under the /test command.
         gameTestServer {
             type = "gameTestServer"
+            gameDirectory = project.file('run-gametest')
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
@@ -174,7 +175,7 @@ publishing {
     }
     repositories {
         maven {
-            url "file://${project.projectDir}/repo"
+            url = uri('repo')
         }
     }
 }
@@ -182,6 +183,19 @@ publishing {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8' // Use the UTF-8 charset for Java compilation
 }
+
+sourceSets {
+    physicsTest {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+tasks.register('physicsTest', JavaExec) {
+    dependsOn tasks.named('physicsTestClasses')
+    classpath = sourceSets.physicsTest.runtimeClasspath
+    mainClass = 'com.diliupengyun.differential_create.PhysicsRegression'
+}
+tasks.named('check') { dependsOn tasks.named('physicsTest') }
 
 // IDEA no longer automatically downloads sources/javadoc jars for dependencies, so we need to explicitly enable the behavior.
 idea {

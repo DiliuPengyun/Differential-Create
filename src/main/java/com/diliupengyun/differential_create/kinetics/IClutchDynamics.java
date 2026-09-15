@@ -2,10 +2,15 @@ package com.diliupengyun.differential_create.kinetics;
 
 /**
  * Per-clutch slip state attached to Create's {@code ClutchBlockEntity} by
- * mixin. Server authoritative; the two display values are synced to clients
+ * mixin. Server authoritative; control and display values are synced to clients
  * through the block entity's sync packet for the goggle overlay.
  */
 public interface IClutchDynamics {
+
+	/** Last sampled redstone level, or -1 before the first server update. */
+	int differentialcreate$getRedstoneSignal();
+
+	void differentialcreate$setRedstoneSignal(int signal);
 
 	/** Consecutive ticks with |Δω| below the lock epsilon. */
 	int differentialcreate$getLockTimer();
@@ -22,9 +27,14 @@ public interface IClutchDynamics {
 
 	void differentialcreate$setLastCouplingTorque(float torque);
 
-	/** One-shot: boundary lifted while the lock merge propagates. */
-	boolean differentialcreate$isMergePending();
+	/** Last output RPM, retained when the output has no neighbouring shaft. */
+	float differentialcreate$getFreeOutputSpeed();
 
-	void differentialcreate$setMergePending(boolean pending);
+	void differentialcreate$setFreeOutputSpeed(float speed);
+
+	/** Persistent rigid connection, released by redstone or excess load torque. */
+	boolean differentialcreate$isLocked();
+
+	void differentialcreate$setLocked(boolean pending);
 
 }

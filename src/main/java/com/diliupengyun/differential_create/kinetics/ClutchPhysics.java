@@ -1,222 +1,193 @@
 package com.diliupengyun.differential_create.kinetics;
 
-import java.util.ArrayList;
-import java.util.List;
-
-import com.diliupengyun.differential_create.DifferentialCreate;
 import com.simibubi.create.content.kinetics.KineticNetwork;
-import com.simibubi.create.content.kinetics.RotationPropagator;
+import com.simibubi.create.content.kinetics.base.IRotate;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.transmission.ClutchBlockEntity;
-
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.core.particles.ParticleTypes;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/**
- * The clutch as a friction-slip element (DESIGN.md §6): an engaged clutch no
- * longer merges the two sides into one network. Instead each side keeps its
- * own network and speed, and the clutch transmits a bounded coupling torque
- * τ_c = clamp(GAIN·Δω, ±τ_clutch) that drags them into sync. Once the sides
- * are synchronous for a while the clutch locks: the networks merge for real
- * through one propagation pass. Disengaging (redstone) drops the coupling
- * instantly and the sides evolve on their own.
- * <p>
- * The engaged clutch only acts as a boundary against a <em>different live
- * network</em>: a dead or networkless side is adopted through vanilla
- * pass-through (the zero-inertia case of DESIGN.md §6.1), and once both
- * sides share one network (locked) the clutch is transparent again.
- */
+/** Finite friction coupling. The output edge exists only while locked. */
 public final class ClutchPhysics {
-
-	private static final int SLIP_PARTICLE_INTERVAL = 5;
-	private static final int SLIP_SOUND_INTERVAL = 15;
-	private static final int SLIP_LOG_INTERVAL = 40;
-
-	private record LockRequest(ClutchBlockEntity clutch, double delta) {}
-
-	/** Lock merges queued during the coupling pass, flushed next pre-tick. */
-	private static final List<LockRequest> pendingLocks = new ArrayList<>();
-
 	private ClutchPhysics() {}
 
-	/**
-	 * Boundary query from the clutch's speed-modifier hook. Engaged
-	 * (unpowered) clutches convey 0 while a different live network sits across
-	 * them, severing the propagation in both directions.
-	 */
-	public static void onSpeedModifierQuery(ClutchBlockEntity clutch, CallbackInfoReturnable<Float> cir) {
-		BlockState state = clutch.getBlockState();
-		if (state.getValue(BlockStateProperties.POWERED))
-			return; // disengaged: vanilla disconnect
-		if (((IClutchDynamics) clutch).differentialcreate$isMergePending())
-			return; // lock merge in progress: vanilla 1:1 pass-through
-		if (cir.getReturnValue() == 0 || !clutch.hasNetwork())
-			return; // already disconnected, or unclaimed: let a live side adopt it
-		Level level = clutch.getLevel();
-		if (level == null || level.isClientSide)
-			return;
-		if (findFarSide(clutch, level) != null)
-			cir.setReturnValue(0f);
+	public static void onSpeedModifierQuery(ClutchBlockEntity clutch, Direction face, CallbackInfoReturnable<Float> cir) {
+		if (!clutch.hasSource() || face == clutch.getSourceFacing()) return;
+		if (NetworkTopology.probingClutches()) { cir.setReturnValue(1f); return; }
+		IClutchDynamics state = (IClutchDynamics) clutch;
+		// Override Create's binary POWERED result in both directions: a weak
+		// signal can still hold a rigid connection when its torque limit allows it.
+		cir.setReturnValue(signal(clutch) == 15 || !state.differentialcreate$isLocked() ? 0f : 1f);
 	}
 
-	/**
-	 * Per-tick pass over one network's members (called for every network
-	 * before integration): accumulates the clutch coupling torques into the
-	 * external-torque slot of both networks and advances the lock logic.
-	 */
+	public static int signal(ClutchBlockEntity clutch) {
+		if (clutch.getLevel() != null && !clutch.getLevel().isClientSide)
+			return clutch.getLevel().getBestNeighborSignal(clutch.getBlockPos());
+		int synced = ((IClutchDynamics) clutch).differentialcreate$getRedstoneSignal();
+		return synced < 0 ? (clutch.getBlockState().getValue(BlockStateProperties.POWERED) ? 15 : 0) : synced;
+	}
+
 	public static void accumulateCoupling(KineticNetwork network, Level level) {
-		INetworkDynamics dynamics = (INetworkDynamics) network;
-		for (KineticBlockEntity member : network.members.keySet()) {
-			if (member instanceof ClutchBlockEntity clutch && !clutch.isRemoved())
-				processClutch(clutch, network, dynamics, level);
-		}
+		for (ClutchBlockEntity clutch : ((INetworkDynamics) network).differentialcreate$data().clutches)
+			if (!clutch.isRemoved()) process(clutch, network, level);
 	}
 
-	private static void processClutch(ClutchBlockEntity clutch, KineticNetwork networkA, INetworkDynamics dynamicsA,
-		Level level) {
-		IClutchDynamics duck = (IClutchDynamics) clutch;
-		BlockState state = clutch.getBlockState();
+	public static KineticBlockEntity output(ClutchBlockEntity clutch) {
+		if (!clutch.hasSource() || clutch.getLevel() == null) return null;
+		var pos = clutch.getBlockPos().relative(clutch.getSourceFacing().getOpposite());
+		if (!clutch.getLevel().isLoaded(pos)) return null;
+		if (!(clutch.getLevel().getBlockEntity(pos) instanceof KineticBlockEntity be)) return null;
+		return be.getBlockState().getBlock() instanceof IRotate rotate
+			&& rotate.hasShaftTowards(clutch.getLevel(), pos, be.getBlockState(), clutch.getSourceFacing()) ? be : null;
+	}
 
-		if (state.getValue(BlockStateProperties.POWERED)) {
-			// Disengaged: no coupling; the sides evolve on their own
-			if (duck.differentialcreate$getLastCouplingTorque() != 0
-				|| duck.differentialcreate$getLastDeltaOmega() != 0)
-				DifferentialCreate.LOGGER.debug("Clutch at {} disengaged, coupling dropped",
-					clutch.getBlockPos().toShortString());
-			duck.differentialcreate$setLastCouplingTorque(0);
-			duck.differentialcreate$setLastDeltaOmega(0);
-			duck.differentialcreate$setLockTimer(0);
+	/** Release an impact-loaded clutch; the caller rebuilds the affected topology. */
+	public static void startSlipping(ClutchBlockEntity clutch) {
+		IClutchDynamics state = (IClutchDynamics) clutch;
+		state.differentialcreate$setLocked(false);
+		state.differentialcreate$setLockTimer(0);
+		state.differentialcreate$setLastCouplingTorque(0);
+		clutch.sendData();
+	}
+
+	private static void process(ClutchBlockEntity clutch, KineticNetwork a, Level level) {
+		IClutchDynamics state = (IClutchDynamics) clutch;
+		int signal = signal(clutch);
+		int previousSignal = state.differentialcreate$getRedstoneSignal();
+		boolean signalChanged = signal != previousSignal;
+		if (signalChanged) {
+			state.differentialcreate$setRedstoneSignal(signal);
+			state.differentialcreate$setLockTimer(0);
+		}
+		double limit = ClutchControl.torqueLimit(signal);
+		KineticBlockEntity far = output(clutch);
+		if (far != null)
+			state.differentialcreate$setFreeOutputSpeed(far.getSpeed());
+		if (limit == 0) {
+			boolean wasLocked = state.differentialcreate$isLocked();
+			// The bare half-shaft has J = 0 and no load, just like an isolated
+			// shaft network. Capture its release speed and retain that balance.
+			if (far == null && (wasLocked || previousSignal >= 0 && previousSignal < 15))
+				state.differentialcreate$setFreeOutputSpeed(clutch.getSpeed());
+			if (state.differentialcreate$isLocked()) {
+				state.differentialcreate$setLocked(false);
+				NetworkTopology.mark(clutch);
+			}
+			display(clutch, 0, clutch.getSpeed() - state.differentialcreate$getFreeOutputSpeed(), signalChanged || wasLocked);
+			state.differentialcreate$setLockTimer(0);
 			return;
 		}
-		if (!clutch.hasNetwork())
-			return;
-
-		KineticBlockEntity far = findFarSide(clutch, level);
 		if (far == null) {
-			// Locked (same network) or a dead side: nothing to couple against
-			duck.differentialcreate$setLastCouplingTorque(0);
-			duck.differentialcreate$setLastDeltaOmega(0);
-			duck.differentialcreate$setLockTimer(0);
+			// Any nonzero pressure can synchronize an unloaded, massless port.
+			state.differentialcreate$setFreeOutputSpeed(clutch.getSpeed());
+			int ticks = state.differentialcreate$isLocked() || !clutch.hasSource()
+				? 0 : state.differentialcreate$getLockTimer() + 1;
+			boolean locking = ticks >= PhysicsTuning.CLUTCH_LOCK_TICKS;
+			state.differentialcreate$setLockTimer(locking ? 0 : ticks);
+			if (locking) state.differentialcreate$setLocked(true);
+			display(clutch, 0, 0, signalChanged || locking);
 			return;
 		}
-
-		KineticNetwork networkB = far.getOrCreateNetwork();
-		INetworkDynamics dynamicsB = (INetworkDynamics) networkB;
-		Float ratioClutch = dynamicsA.differentialcreate$getRatios()
-			.get(clutch);
-		Float ratioFar = dynamicsB.differentialcreate$getRatios()
-			.get(far);
-		if (ratioClutch == null || ratioFar == null || ratioClutch == 0 || ratioFar == 0)
+		if (!far.hasNetwork()) {
+			display(clutch, 0, 0, signalChanged);
+			state.differentialcreate$setLockTimer(0);
 			return;
-
-		// Both local speeds in the clutch shaft frame; an engaged clutch is a
-		// straight 1:1 shaft, so no connection modifier is needed
-		double omegaA = ratioClutch * dynamicsA.differentialcreate$getSpeed();
-		double omegaB = ratioFar * dynamicsB.differentialcreate$getSpeed();
-		double delta = omegaA - omegaB;
-		double torque = Mth.clamp(PhysicsTuning.CLUTCH_GAIN * delta, -PhysicsTuning.CLUTCH_TORQUE,
-			PhysicsTuning.CLUTCH_TORQUE);
-
-		// The coupling drags the sides together; the clutch itself carries no
-		// inertia, so this is a pure external torque on both networks
-		dynamicsA.differentialcreate$setExternalTorque(
-			(float) (dynamicsA.differentialcreate$getExternalTorque() - torque * ratioClutch));
-		dynamicsB.differentialcreate$setExternalTorque(
-			(float) (dynamicsB.differentialcreate$getExternalTorque() + torque * ratioFar));
-
-		boolean wasSlipping = Math.abs(duck.differentialcreate$getLastDeltaOmega()) >= PhysicsTuning.CLUTCH_LOCK_EPSILON_RPM;
-		duck.differentialcreate$setLastCouplingTorque((float) torque);
-		duck.differentialcreate$setLastDeltaOmega((float) delta);
-
-		if (Math.abs(delta) < PhysicsTuning.CLUTCH_LOCK_EPSILON_RPM) {
-			int timer = duck.differentialcreate$getLockTimer() + 1;
-			duck.differentialcreate$setLockTimer(timer);
-			if (timer >= PhysicsTuning.CLUTCH_LOCK_TICKS) {
-				// Queue the lock: the merge must not run while the network
-				// member lists are being iterated (CME), and it must see
-				// nominal speed fields — it flushes in the next pre-tick
-				// phase after the restore
-				duck.differentialcreate$setLockTimer(0);
-				pendingLocks.add(new LockRequest(clutch, delta));
+		}
+		KineticNetwork b = far.getOrCreateNetwork();
+		INetworkDynamics da = (INetworkDynamics) a, db = (INetworkDynamics) b;
+		if (a == b) {
+			// Required shaft torque on the output component (including its acceleration).
+			double transmitted = NetworkTopology.clutchTorque(clutch, a);
+			boolean overloaded = Math.abs(transmitted) > limit + 0.001;
+			if (overloaded) {
+				state.differentialcreate$setLocked(false);
+				NetworkTopology.mark(clutch);
 			}
+			display(clutch, (float) transmitted, 0, signalChanged || overloaded);
 			return;
 		}
-
-		// Slipping
-		duck.differentialcreate$setLockTimer(0);
-		long gameTime = level.getGameTime();
-		if (!wasSlipping || gameTime % SLIP_LOG_INTERVAL == 0)
-			DifferentialCreate.LOGGER.debug("Clutch at {} slipping: Δω={} RPM, torque={} su/RPM",
-				clutch.getBlockPos().toShortString(), fmt(delta), fmt(torque));
-		if (level instanceof ServerLevel serverLevel) {
-			BlockPos pos = clutch.getBlockPos();
-			if (gameTime % SLIP_PARTICLE_INTERVAL == 0)
-				serverLevel.sendParticles(ParticleTypes.SMOKE, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
-					1, 0.1, 0.1, 0.1, 0.01);
-			if (gameTime % SLIP_SOUND_INTERVAL == 0)
-				level.playSound(null, pos, SoundEvents.GRINDSTONE_USE, SoundSource.BLOCKS, 0.25f, 1.2f);
-		}
-	}
-
-	/**
-	 * The far side of an engaged clutch: a kinetic neighbour along the clutch
-	 * axis that belongs to a different network, or null when the sides share
-	 * one network (locked) or the far side is dead.
-	 */
-	private static KineticBlockEntity findFarSide(ClutchBlockEntity clutch, Level level) {
-		Direction.Axis axis = clutch.getBlockState()
-			.getValue(BlockStateProperties.AXIS);
-		for (Direction.AxisDirection axisDirection : Direction.AxisDirection.values()) {
-			BlockEntity neighbour = level.getBlockEntity(
-				clutch.getBlockPos().relative(Direction.fromAxisAndDirection(axis, axisDirection)));
-			if (neighbour instanceof KineticBlockEntity kbe && kbe.hasNetwork()
-				&& !kbe.network.equals(clutch.network))
-				return kbe;
-		}
-		return null;
-	}
-
-	/**
-	 * Executes the queued lock merges. Called from the ticker's pre-tick
-	 * phase after the nominal-speed restore, so the propagation that merges
-	 * the networks sees vanilla-consistent (nominal) speed fields, and no
-	 * network member list is being iterated.
-	 */
-	public static void flushLocks() {
-		for (LockRequest request : pendingLocks) {
-			ClutchBlockEntity clutch = request.clutch();
-			Level level = clutch.getLevel();
-			BlockState state = clutch.getBlockState();
-			if (clutch.isRemoved() || level == null || state.getValue(BlockStateProperties.POWERED))
-				continue; // disengaged or gone before the flush
-			IClutchDynamics duck = (IClutchDynamics) clutch;
-			BlockPos pos = clutch.getBlockPos();
-			DifferentialCreate.LOGGER.debug("Clutch at {} locked (Δω={} RPM), merging networks", pos.toShortString(),
-				fmt(request.delta()));
-			duck.differentialcreate$setMergePending(true);
-			RotationPropagator.handleAdded(level, pos, clutch);
-			duck.differentialcreate$setMergePending(false);
-			if (level instanceof ServerLevel serverLevel) {
-				serverLevel.sendParticles(ParticleTypes.SMOKE, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
-					8, 0.2, 0.2, 0.2, 0.02);
-				level.playSound(null, pos, SoundEvents.PISTON_CONTRACT, SoundSource.BLOCKS, 0.5f, 0.9f);
+		state.differentialcreate$setLocked(false);
+		float ra = da.differentialcreate$getRatios().getOrDefault(clutch, 0f);
+		float rb = db.differentialcreate$getRatios().getOrDefault(far, 0f);
+		if (ra == 0 || rb == 0) return;
+		double delta = ra * da.differentialcreate$getSpeed() - rb * db.differentialcreate$getSpeed();
+		double ja = da.differentialcreate$data().balance.j(), jb = db.differentialcreate$data().balance.j();
+		double mergeLoss = RotationMath.mergeLoss(ja, da.differentialcreate$getSpeed(), jb, db.differentialcreate$getSpeed(), ra / rb);
+		// All engagement pressures dissipate a speed mismatch through finite
+		// friction torque, including full pressure after a locked clutch releases.
+		double torque = ja > 0 && jb > 0 ? ClutchCoupling.torque(shaft(da, ra), shaft(db, rb), limit) : 0;
+		if (ja == 0 || jb == 0) {
+			// Massless transmission still passes its load torque back to the driver.
+			if (ja == 0 && jb > 0) {
+				double matched = rb * db.differentialcreate$getSpeed() / ra;
+				double required = force(da.differentialcreate$data().balance, matched) / ra;
+				torque = Math.clamp(required, -limit, limit);
+				da.differentialcreate$setSpeed(Math.abs(required) <= limit ? (float) matched : 0);
+			} else if (jb == 0 && ja > 0) {
+				double matched = ra * da.differentialcreate$getSpeed() / rb;
+				double required = -force(db.differentialcreate$data().balance, matched) / rb;
+				torque = Math.clamp(required, -limit, limit);
+				db.differentialcreate$setSpeed(Math.abs(required) <= limit ? (float) matched : 0);
 			}
+			delta = ra * da.differentialcreate$getSpeed() - rb * db.differentialcreate$getSpeed();
 		}
-		pendingLocks.clear();
+		double holding = holdingTorque(da, db, ra, rb);
+		da.differentialcreate$setExternalTorque((float) (da.differentialcreate$getExternalTorque() - torque * ra));
+		db.differentialcreate$setExternalTorque((float) (db.differentialcreate$getExternalTorque() + torque * rb));
+		int ticks = Math.abs(delta) < PhysicsTuning.CLUTCH_LOCK_EPSILON_RPM && Math.abs(holding) <= limit
+			&& mergeLoss <= PhysicsTuning.CLUTCH_LOCK_ENERGY
+			? state.differentialcreate$getLockTimer() + 1 : 0;
+		state.differentialcreate$setLockTimer(ticks);
+		boolean locking = ticks >= PhysicsTuning.CLUTCH_LOCK_TICKS;
+		if (locking) {
+			state.differentialcreate$setLocked(true);
+			state.differentialcreate$setLockTimer(0);
+			NetworkTopology.mark(clutch);
+			level.playSound(null, clutch.getBlockPos(), SoundEvents.PISTON_CONTRACT, SoundSource.BLOCKS, 0.5f, 0.9f);
+		}
+		display(clutch, (float) torque, (float) delta, locking || signalChanged);
+		if (Math.abs(delta) > PhysicsTuning.CLUTCH_LOCK_EPSILON_RPM && level.getGameTime() % 10 == 0
+			&& level instanceof net.minecraft.server.level.ServerLevel server) {
+			var pos = clutch.getBlockPos();
+			server.sendParticles(net.minecraft.core.particles.ParticleTypes.SMOKE,
+				pos.getX() + 0.5, pos.getY() + 0.75, pos.getZ() + 0.5, 2, 0.15, 0.1, 0.15, 0.01);
+			level.playSound(null, pos, SoundEvents.FIRE_EXTINGUISH, SoundSource.BLOCKS, 0.15f, 1.6f);
+		}
 	}
 
-	private static String fmt(double value) {
-		return String.format("%.2f", value);
+	private static ClutchCoupling.Shaft shaft(INetworkDynamics dynamics, float ratio) {
+		NetworkPhysics.Balance b = dynamics.differentialcreate$data().balance;
+		return new ClutchCoupling.Shaft(dynamics.differentialcreate$getSpeed(),
+			b.t0() + dynamics.differentialcreate$getExternalTorque(), b.k(), b.l(), b.j(), b.fanDrag(), ratio);
 	}
 
+	/** Torque needed to keep the two sides synchronous under their external loads. */
+	private static double holdingTorque(INetworkDynamics a, INetworkDynamics b, float ra, float rb) {
+		NetworkPhysics.Balance ba = a.differentialcreate$data().balance, bb = b.differentialcreate$data().balance;
+		double matched = RotationMath.mergedSpeed(ba.j(), a.differentialcreate$getSpeed(),
+			bb.j(), b.differentialcreate$getSpeed(), ra / rb);
+		double fa = force(ba, matched) + a.differentialcreate$getExternalTorque();
+		double fb = force(bb, matched * ra / rb) + b.differentialcreate$getExternalTorque();
+		if (ba.j() == 0) return fa / ra;
+		if (bb.j() == 0) return -fb / rb;
+		return (ra * fa / ba.j() - rb * fb / bb.j()) / (ra * ra / ba.j() + rb * rb / bb.j());
+	}
+
+	private static double force(NetworkPhysics.Balance b, double speed) {
+		return b.t0() - b.k() * speed - b.l() * Math.signum(speed) - b.fanDrag() * speed * Math.abs(speed);
+	}
+
+	private static void display(ClutchBlockEntity clutch, float torque, float delta, boolean force) {
+		IClutchDynamics state = (IClutchDynamics) clutch;
+		boolean changed = Math.abs(torque - state.differentialcreate$getLastCouplingTorque()) > 0.05f
+			|| Math.abs(delta - state.differentialcreate$getLastDeltaOmega()) > 0.05f;
+		state.differentialcreate$setLastCouplingTorque(torque);
+		state.differentialcreate$setLastDeltaOmega(delta);
+		if (force || changed && torque == 0 && delta == 0
+			|| (torque != 0 || delta != 0) && clutch.getLevel().getGameTime() % 4 == 0) clutch.sendData();
+	}
 }

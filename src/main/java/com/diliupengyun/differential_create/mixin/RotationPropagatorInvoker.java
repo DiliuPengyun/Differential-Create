@@ -13,6 +13,16 @@ import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
  */
 @Mixin(RotationPropagator.class)
 public interface RotationPropagatorInvoker {
+	@Invoker("getRotationSpeedModifier")
+	static float differentialcreate$rotationModifier(KineticBlockEntity from, KineticBlockEntity to) {
+		throw new AssertionError("Mixin invoker was not applied");
+	}
+
+	@Invoker("isLargeCogToSpeedController")
+	static boolean differentialcreate$isControllerEdge(net.minecraft.world.level.block.state.BlockState from,
+		net.minecraft.world.level.block.state.BlockState to, net.minecraft.core.BlockPos diff) {
+		throw new AssertionError("Mixin invoker was not applied");
+	}
 
 	@Invoker("getConveyedSpeed")
 	static float differentialcreate$invokeGetConveyedSpeed(KineticBlockEntity from, KineticBlockEntity to) {

@@ -27,7 +27,7 @@ public class DifferentialCreate {
         NeoForge.EVENT_BUS.register(NetworkSpeedTicker.class);
         // Clientbound per-network speed sync (structure + state packets)
         modEventBus.addListener((net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent event) -> {
-            event.registrar("1")
+            event.registrar("2")
                 .playToClient(NetworkStructurePayload.TYPE, NetworkStructurePayload.STREAM_CODEC,
                     NetworkStructurePayload::handle)
                 .playToClient(NetworkStatePayload.TYPE, NetworkStatePayload.STREAM_CODEC,

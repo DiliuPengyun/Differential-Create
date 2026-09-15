@@ -10,6 +10,7 @@ import com.diliupengyun.differential_create.kinetics.NetworkStatePayload;
 import com.diliupengyun.differential_create.kinetics.NetworkStructurePayload;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 
+import dev.engine_room.flywheel.lib.visualization.VisualizationHelper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
@@ -18,8 +19,8 @@ import net.minecraft.world.level.Level;
 /**
  * Client-side mirror of the server's kinetic network speeds. Structure
  * packets install the member→network mapping and ratios; state packets
- * deliver (ω, ω*, K/J, L/J, C/J) which the client advances every tick with
- * the same exact steps the server uses. Member speeds are then r_i × ω of
+ * deliver speed and the complete torque equation, advanced with the same
+ * piecewise analytical solution as the server. Member speeds are r_i × ω of
  * their network, so all members of a network are strictly proportional —
  * no per-member jitter or angle drift between connected blocks.
  * <p>
@@ -30,6 +31,8 @@ public final class ClientNetworkSpeeds {
 
 	private static final Map<ResourceKey<Level>, Map<Long, Entry>> networks = new HashMap<>();
 	private static final Map<ResourceKey<Level>, Map<BlockPos, Long>> memberToNetwork = new HashMap<>();
+	private record Phase(double previous, double current, RotationFrame frame) {}
+	private static final Map<ResourceKey<Level>, Map<BlockPos, Phase>> retiredPhases = new HashMap<>();
 
 	private ClientNetworkSpeeds() {}
 
@@ -37,10 +40,11 @@ public final class ClientNetworkSpeeds {
 	private static final class Entry {
 		final Map<BlockPos, Float> ratios = new HashMap<>();
 		float speed;
-		float equilibrium;
-		float invTau;
-		float linearDecay;
-		float fanOverJ;
+		NetworkPhysics.Balance balance = new NetworkPhysics.Balance(0, 0, 0, 0, 0);
+		boolean hasState;
+		double previousTheta;
+		RotationFrame renderFrame;
+		boolean rotationDirty;
 		/**
 		 * Accumulated rotation angle of the network, degrees. Advanced with
 		 * the same trapezoid rule as the speed so member angles r_i × θ stay
@@ -48,42 +52,68 @@ public final class ClientNetworkSpeeds {
 		 * which is discontinuous for a varying speed — the visuals re-anchor
 		 * their offset to this θ instead).
 		 */
-		float theta;
+		double theta;
 
 		/** Advances ω by one client tick with the server's exact steps. */
-		void advance() {
+		void advance(int renderTick) {
 			float before = speed;
-			if (invTau > 0)
-				speed = (float) (equilibrium + (speed - equilibrium) * Math.exp(-invTau * NetworkPhysics.TICK_MINUTES));
-			else if (linearDecay > 0) {
-				// Sourceless network: dry friction decelerates linearly to a stop
-				double decel = linearDecay * NetworkPhysics.TICK_MINUTES;
-				speed = Math.abs(speed) <= decel ? 0 : (float) (speed - Math.signum(speed) * decel);
-			}
-			if (fanOverJ > 0)
-				speed = (float) (speed / (1 + fanOverJ * NetworkPhysics.TICK_MINUTES * Math.abs(speed)));
+			previousTheta = theta;
+			speed = NetworkPhysics.integrate(speed, balance).newSpeed();
 			// Trapezoid: θ += (ω_before + ω_after)/2 × 0.3 deg per RPM-tick
 			theta += (before + speed) * 0.5f * 0.3f;
-			// Stiction/sign-clamp nuances of the server integrator are skipped
-			// here: within a 1-second sync window they never matter visually
+			setFrame(new RotationFrame(renderTick, previousTheta, theta - previousTheta));
+		}
+
+		void setFrame(RotationFrame frame) {
+			// Retain identical coefficients at steady speed. New/rebuilt visuals
+			// then receive exactly the same phase as the existing instances.
+			if (renderFrame == null || !renderFrame.sameMotion(frame)) {
+				renderFrame = frame;
+				rotationDirty = true;
+			}
+		}
+
+		void freeze(int renderTick) {
+			if (renderFrame == null) {
+				setFrame(new RotationFrame(renderTick, theta, 0));
+			} else if (renderFrame.degreesPerTick() != 0) {
+				previousTheta = theta = renderFrame.angleAt(ClientKineticAngles.renderTick());
+				setFrame(new RotationFrame(renderTick, theta, 0));
+			}
 		}
 	}
 
 	public static void applyStructure(ResourceKey<Level> dimension, long networkId,
 		List<NetworkStructurePayload.Entry> entries) {
+		Map<Long, Entry> levelNetworks = networks.computeIfAbsent(dimension, $ -> new HashMap<>());
+		Entry old = levelNetworks.get(networkId);
+		Map<BlockPos, Phase> phases = retiredPhases.computeIfAbsent(dimension, $ -> new HashMap<>());
+		if (old != null)
+			old.ratios.forEach((pos, ratio) -> phases.put(pos, new Phase(old.previousTheta * ratio, old.theta * ratio,
+				old.renderFrame == null ? null : old.renderFrame.scaled(ratio))));
 		Map<BlockPos, Long> members = memberToNetwork.get(dimension);
 		if (members != null)
 			members.values()
 				.removeIf(id -> id == networkId);
 		if (entries.isEmpty()) {
 			// Network dissolved
-			Map<Long, Entry> levelNetworks = networks.get(dimension);
-			if (levelNetworks != null)
-				levelNetworks.remove(networkId);
+			levelNetworks.remove(networkId);
 			return;
 		}
 		Entry entry = networks.computeIfAbsent(dimension, $ -> new HashMap<>())
 			.computeIfAbsent(networkId, $ -> new Entry());
+		// A rebuild changes network identity or basis without rewinding the
+		// surviving shaft. Dissolve/install packets are sent in the same batch.
+		for (var member : entries) {
+			Phase phase = phases.get(member.pos());
+			if (phase != null && member.ratio() != 0) {
+				entry.previousTheta = phase.previous / member.ratio();
+				entry.theta = phase.current / member.ratio();
+				entry.renderFrame = phase.frame == null ? null : phase.frame.scaled(1.0 / member.ratio());
+				break;
+			}
+		}
+		entry.rotationDirty = true;
 		entry.ratios.clear();
 		Map<BlockPos, Long> memberMap = memberToNetwork.computeIfAbsent(dimension, $ -> new HashMap<>());
 		for (NetworkStructurePayload.Entry structureEntry : entries) {
@@ -96,14 +126,13 @@ public final class ClientNetworkSpeeds {
 		Entry entry = networks.computeIfAbsent(dimension, $ -> new HashMap<>())
 			.computeIfAbsent(payload.networkId(), $ -> new Entry());
 		entry.speed = payload.speed();
-		entry.equilibrium = payload.equilibrium();
-		entry.invTau = payload.invTau();
-		entry.linearDecay = payload.linearDecay();
-		entry.fanOverJ = payload.fanOverJ();
+		entry.balance = new NetworkPhysics.Balance(payload.torque(), payload.damping(), payload.load(), payload.inertia(), payload.drag());
+		entry.hasState = true;
 	}
 
 	/** Applied every client tick: advances all extrapolations one tick. */
 	public static void onClientTick() {
+		retiredPhases.clear();
 		Minecraft minecraft = Minecraft.getInstance();
 		Level level = minecraft.level;
 		if (level == null) {
@@ -111,6 +140,7 @@ public final class ClientNetworkSpeeds {
 				networks.clear();
 				memberToNetwork.clear();
 			}
+			ClientClutchAngles.onClientTick();
 			return;
 		}
 		// Single-player pause freezes the server, so the extrapolation and
@@ -124,9 +154,27 @@ public final class ClientNetworkSpeeds {
 		memberToNetwork.keySet()
 			.retainAll(Set.of(dimension));
 		Map<Long, Entry> levelNetworks = networks.get(dimension);
-		if (levelNetworks != null)
-			levelNetworks.values()
-				.forEach(Entry::advance);
+		if (levelNetworks != null) {
+			int renderTick = minecraft.levelRenderer.getTicks();
+			levelNetworks.forEach((id, entry) -> {
+				if (!entry.hasState) return;
+				if (level.tickRateManager().isFrozen())
+					entry.freeze(renderTick);
+				else
+					entry.advance(renderTick);
+				if (entry.rotationDirty) {
+					// Refresh the entire network together, including the final small
+					// speed change and topology-only changes. Per-member thresholds
+					// would leave different shader rates/phases on connected shafts.
+					for (BlockPos pos : entry.ratios.keySet())
+						if (level.getBlockEntity(pos) instanceof KineticBlockEntity be
+							&& java.util.Objects.equals(id, be.network))
+							VisualizationHelper.queueUpdate(be);
+					entry.rotationDirty = false;
+				}
+			});
+		}
+		ClientClutchAngles.onClientTick();
 	}
 
 	/**
@@ -147,12 +195,17 @@ public final class ClientNetworkSpeeds {
 	 * or null when unsynced. Drives the continuous-animation offset
 	 * compensation in the render hooks.
 	 */
-	public static Float thetaOf(KineticBlockEntity kbe) {
+	public static Double thetaOf(KineticBlockEntity kbe) {
+		RotationFrame frame = rotationOf(kbe);
+		return frame == null ? null : frame.angleAt(ClientKineticAngles.renderTick());
+	}
+
+	public static RotationFrame rotationOf(KineticBlockEntity kbe) {
 		Entry entry = entryOf(kbe);
-		if (entry == null)
+		if (entry == null || entry.renderFrame == null)
 			return null;
 		Float ratio = entry.ratios.get(kbe.getBlockPos());
-		return ratio == null ? null : ratio * entry.theta;
+		return ratio == null ? null : entry.renderFrame.scaled(ratio);
 	}
 
 	private static Entry entryOf(KineticBlockEntity kbe) {
@@ -164,8 +217,15 @@ public final class ClientNetworkSpeeds {
 		Long networkId = members.get(kbe.getBlockPos());
 		if (networkId == null)
 			return null;
+		if (!java.util.Objects.equals(networkId, kbe.network)) return null;
 		Map<Long, Entry> levelNetworks = networks.get(dimension);
-		return levelNetworks == null ? null : levelNetworks.get(networkId);
+		Entry entry = levelNetworks == null ? null : levelNetworks.get(networkId);
+		return entry == null || !entry.hasState ? null : entry;
+	}
+
+	public static Double energyOf(KineticBlockEntity be) {
+		Entry entry = entryOf(be);
+		return entry == null ? null : 0.5 * entry.balance.j() * entry.speed * entry.speed;
 	}
 
 }

@@ -41,17 +41,49 @@ public final class InertiaRegistry {
 	 * first use for the same reason).
 	 */
 	public static void register(Block block, float inertia) {
+		if (!Float.isFinite(inertia) || inertia < 0) throw new IllegalArgumentException("Inertia must be finite and nonnegative");
 		ensureInitialized();
 		overrides.put(block, inertia);
+		for (var level : com.diliupengyun.differential_create.mixin.TorquePropagatorAccessor.differentialcreate$getNetworks().values())
+			for (var network : level.values()) ((INetworkDynamics) network).differentialcreate$data().invalidate();
 	}
 
 	public static float getInertia(KineticBlockEntity kbe) {
 		ensureInitialized();
-		if (kbe instanceof WindmillBearingBlockEntity windmill)
-			return overrides.getOrDefault(kbe.getBlockState()
-				.getBlock(), DEFAULT_INERTIA) + SAIL_INERTIA * getSailCount(windmill);
-		return overrides.getOrDefault(kbe.getBlockState()
-			.getBlock(), DEFAULT_INERTIA);
+		float inertia = overrides.getOrDefault(kbe.getBlockState().getBlock(), DEFAULT_INERTIA);
+		if (kbe instanceof WindmillBearingBlockEntity windmill) inertia += SAIL_INERTIA * getSailCount(windmill);
+		for (var entity : attachments(kbe)) {
+			if (entity == null || entity.getContraption() == null) continue;
+			for (var block : entity.getContraption().getBlocks().values())
+				if (block.state().getBlock() instanceof com.simibubi.create.content.kinetics.base.IRotate)
+					inertia += overrides.getOrDefault(block.state().getBlock(), DEFAULT_INERTIA);
+		}
+		return inertia;
+	}
+
+	private static com.simibubi.create.content.contraptions.AbstractContraptionEntity[] attachments(KineticBlockEntity be) {
+		if (be instanceof com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity bearing)
+			return new com.simibubi.create.content.contraptions.AbstractContraptionEntity[]{bearing.getMovedContraption(), null};
+		if (be instanceof com.simibubi.create.content.contraptions.piston.LinearActuatorBlockEntity actuator)
+			return new com.simibubi.create.content.contraptions.AbstractContraptionEntity[]{actuator.movedContraption, null};
+		if (be instanceof com.diliupengyun.differential_create.mixin.ClockworkBearingAccessor clock)
+			return new com.simibubi.create.content.contraptions.AbstractContraptionEntity[]{clock.differentialcreate$hour(), clock.differentialcreate$minute()};
+		return new com.simibubi.create.content.contraptions.AbstractContraptionEntity[]{null, null};
+	}
+
+	public static void checkAttachments(KineticBlockEntity be) {
+		if (!(be instanceof com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity)
+			&& !(be instanceof com.simibubi.create.content.contraptions.piston.LinearActuatorBlockEntity)
+			&& !(be instanceof com.diliupengyun.differential_create.mixin.ClockworkBearingAccessor)) return;
+		var entities = attachments(be);
+		MemberState member = ((IMemberDynamics) be).differentialcreate$member();
+		if (entities[0] == member.attachmentA && entities[1] == member.attachmentB) return;
+		member.attachmentA = entities[0];
+		member.attachmentB = entities[1];
+		if (be.hasNetwork()) {
+			NetworkData data = ((INetworkDynamics) be.getOrCreateNetwork()).differentialcreate$data();
+			data.invalidate();
+		}
 	}
 
 	/**
@@ -59,7 +91,7 @@ public final class InertiaRegistry {
 	 * aggregates J = base + sails × J_sail). Recomputed every call, so
 	 * assembly/disassembly applies on the next tick with no event.
 	 */
-	private static int getSailCount(WindmillBearingBlockEntity windmill) {
+	public static int getSailCount(WindmillBearingBlockEntity windmill) {
 		ControlledContraptionEntity contraption =
 			((MechanicalBearingAccessor) windmill).differentialcreate$getMovedContraption();
 		if (contraption == null || !(contraption.getContraption() instanceof BearingContraption bearing))
@@ -78,6 +110,7 @@ public final class InertiaRegistry {
 		overrides.put(AllBlocks.LARGE_WATER_WHEEL.get(), 0.4f); // τ ≈ 0.0125 min ≈ 0.75 s
 		overrides.put(AllBlocks.POWERED_SHAFT.get(), 0.1f); // steam engine shaft: τ ≈ 1.5 s (approved)
 		overrides.put(AllBlocks.WINDMILL_BEARING.get(), 0.02f); // base + per-sail SAIL_INERTIA
+		overrides.put(AllBlocks.FLYWHEEL.get(), 0.5f);
 
 		// Inertialess transmission blocks
 		inertialess(AllBlocks.SHAFT.get());

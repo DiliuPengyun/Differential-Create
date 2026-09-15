@@ -1,25 +1,41 @@
+# Differential Create
 
-Installation information
-=======
+Create 6.0.10 的连续动力学附属模组，适用于 Minecraft 1.21.1、NeoForge 21.1.238、Java 21。
 
-This template repository can be directly cloned to get you started with a new
-mod. Simply create a new repository cloned from this one, by following the
-instructions provided by [GitHub](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
+动力源提供扭矩，负载和惯量决定转速。接入机器会降低转速，失去动力后会继续惰行；扭矩不足时逐渐停转。
 
-Once you have your clone, simply open the repository in the IDE of your choice. The usual recommendation for an IDE is either IntelliJ IDEA or Eclipse.
+## 玩法
 
-If at any point you are missing libraries in your IDE, or you've run into problems you can
-run `gradlew --refresh-dependencies` to refresh the local cache. `gradlew clean` to reset everything 
-{this does not affect your code} and then start the process again.
+- 水车、风车和蒸汽机按动力特性曲线输出，风车帆面积增加驱动力，锅炉供汽由发动机共享。
+- 普通连接按传动比折算惯量，接合会损失动能。高速对撞可能打掉接触方块。
+- 离合器支持红石强度调节：0 级完全接合、1–14 级调节压紧程度、15 级完全分离。传递扭矩上限为 `32 × (15 − 信号强度) / 15`；负载较轻时同步并锁止，超出上限时打滑。两侧惯量之间的接合冲击由打滑消化，包括完全接合、已锁止后从远处接入机器和反向激活动力源。同侧硬连接或绕过离合器的刚性旁路仍按普通冲击规则判定破坏。
+- 转速控制器改为速比控制器：显示 `2×` 表示输出为输入的两倍，负号反转，`0×` 断开。内部存档值仍为速比的 16 倍。
+- 冲压、石磨、搅拌、锯切、粉碎、机械手和机械合成按当前转速累计加工进度；停转保留进度。参考转速和适用范围见设计文档。
+- 地面冲压会跳过无冲压配方的掉落物，成品留在原地也能继续投料；加工数量遵循 Create 的批量冲压配置。
+- 具有工作循环的机器待机时不消耗扭矩，开始动作后恢复额定负载；冲压机的下压、加工和回程都计入工作。待机仍保留惯量，接入旋转网络时仍会分摊动量。鼓风机、泵等持续运转设备保留各自的负载规则，具体范围见设计文档。
+- 飞轮惯量为 `0.5 su/RPM³`；轮体和中心轴共用网络角度，取消原版额外的起停缓动。普通渲染和 Flywheel 实例渲染使用相同运动。离合器空输出端完全分离后保持当时转速，有外接传动时跟随输出网络。
+- 护目镜提供两种视图：正常时的动力学视图显示实际转速、当前方块的转动惯量（`su/RPM³`）、扭矩、设备状态、动力源负载率，以及离合器滑差、速比和泵的等效扬程；潜行时切换为能量视图，显示本体动能、所属网络总动能，以及动力源输出/吸收功率、机器消耗功率或离合器打滑损耗功率。底部提示当前绑定的潜行键。
 
-Mapping Names:
-============
-By default, the MDK is configured to use the official mapping names from Mojang for methods and fields 
-in the Minecraft codebase. These names are covered by a specific license. All modders should be aware of this
-license. For the latest license text, refer to the mapping file itself, or the reference copy here:
-https://github.com/NeoForged/NeoForm/blob/main/Mojang.md
+## 构建与验证
 
-Additional Resources: 
-==========
-Community Documentation: https://docs.neoforged.net/  
-NeoForged Discord: https://discord.neoforged.net/
+```powershell
+.\gradlew.bat build runGameTestServer
+```
+
+Linux 对应命令为 `./gradlew build runGameTestServer`。首次运行需要下载依赖。
+
+成品：`build/libs/differentialcreate-1.0.0.jar`。客户端和服务端均安装同一版本，并安装对应的 Create 及其依赖；本次同步协议已升级为 2，不能与修复前的客户端混用。
+
+`build` 自动运行不依赖游戏启动的数值回归；`runGameTestServer` 运行物理、拓扑、加工、碰撞、红石半联动、小惯量负载同步、风车移动结构转速、风车接合守恒、零待机负载、锁止离合器热接入、离合器冲击保护范围、空输出端离合器，以及地面冲压连续投料、批量冲压、停转恢复，共十五组游戏测试。测试使用独立的 `run-gametest/`，无需删除开发世界 `run/world`。CI 同时执行这两项并保存测试日志。
+
+若本机 Java 21 报 `Unable to establish loopback connection`，本次验证使用临时进程变量 `JAVA_TOOL_OPTIONS=-Djdk.net.unixdomain.tmpdir=<一个不存在的目录>`，使 Java 的内部通信回退到 TCP；不需要修改系统环境变量。正常环境无需此设置。
+
+## 当前边界
+
+已通过的自动化验证不等于完成所有场景的验收。多人中途加入/切维度、真实跨区块卸载重载、Flywheel 开关两种渲染路径、复杂管网及全部配方组合还需要客户端实测。
+
+泵采用管路端点平均高差的等效负载；运动结构惯量聚合覆盖机械轴承、钟表轴承、活塞和滑轮持有的结构。没有做真实流体动力学、方块质量分布或通用移动载具惯量。其他附属模组的特殊传动与加工逻辑没有全面验证。
+
+数值标定目前集中在 `PhysicsTuning` 和 `InertiaRegistry`，尚未提供配置界面。
+
+详细依据见 [设计与实现范围](DESIGN.md)、[修复记录与测试结果](FIXES-2026-09-14.md)。[初始审计](AUDIT-2026-09-14.md) 保留修复前的问题记录。

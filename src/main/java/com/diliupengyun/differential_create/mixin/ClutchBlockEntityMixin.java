@@ -21,13 +21,17 @@ import net.minecraft.core.Direction;
 public abstract class ClutchBlockEntityMixin implements IClutchDynamics {
 
 	@Unique
+	private int differentialcreate$redstoneSignal = -1;
+	@Unique
 	private int differentialcreate$lockTimer;
 	@Unique
 	private float differentialcreate$lastDeltaOmega;
 	@Unique
 	private float differentialcreate$lastCouplingTorque;
 	@Unique
-	private boolean differentialcreate$mergePending;
+	private float differentialcreate$freeOutputSpeed;
+	@Unique
+	private boolean differentialcreate$locked;
 
 	/**
 	 * Boundary hook. getRotationSpeedModifier feeds RotationPropagator's
@@ -38,7 +42,17 @@ public abstract class ClutchBlockEntityMixin implements IClutchDynamics {
 	 */
 	@Inject(method = "getRotationSpeedModifier", at = @At("RETURN"), cancellable = true)
 	private void differentialcreate$slipBoundary(Direction face, CallbackInfoReturnable<Float> cir) {
-		ClutchPhysics.onSpeedModifierQuery((ClutchBlockEntity) (Object) this, cir);
+		ClutchPhysics.onSpeedModifierQuery((ClutchBlockEntity) (Object) this, face, cir);
+	}
+
+	@Override
+	public int differentialcreate$getRedstoneSignal() {
+		return differentialcreate$redstoneSignal;
+	}
+
+	@Override
+	public void differentialcreate$setRedstoneSignal(int signal) {
+		this.differentialcreate$redstoneSignal = signal;
 	}
 
 	@Override
@@ -72,13 +86,23 @@ public abstract class ClutchBlockEntityMixin implements IClutchDynamics {
 	}
 
 	@Override
-	public boolean differentialcreate$isMergePending() {
-		return differentialcreate$mergePending;
+	public float differentialcreate$getFreeOutputSpeed() {
+		return differentialcreate$freeOutputSpeed;
 	}
 
 	@Override
-	public void differentialcreate$setMergePending(boolean pending) {
-		this.differentialcreate$mergePending = pending;
+	public void differentialcreate$setFreeOutputSpeed(float speed) {
+		this.differentialcreate$freeOutputSpeed = speed;
+	}
+
+	@Override
+	public boolean differentialcreate$isLocked() {
+		return differentialcreate$locked;
+	}
+
+	@Override
+	public void differentialcreate$setLocked(boolean pending) {
+		this.differentialcreate$locked = pending;
 	}
 
 }

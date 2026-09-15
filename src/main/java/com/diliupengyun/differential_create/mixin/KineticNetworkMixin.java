@@ -21,6 +21,14 @@ import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
  */
 @Mixin(KineticNetwork.class)
 public abstract class KineticNetworkMixin implements INetworkDynamics {
+	@Unique
+	private final com.diliupengyun.differential_create.kinetics.NetworkData differentialcreate$data =
+		new com.diliupengyun.differential_create.kinetics.NetworkData();
+
+	@Override
+	public com.diliupengyun.differential_create.kinetics.NetworkData differentialcreate$data() {
+		return differentialcreate$data;
+	}
 
 	@Unique
 	private float differentialcreate$speed;
@@ -37,17 +45,21 @@ public abstract class KineticNetworkMixin implements INetworkDynamics {
 
 	@Inject(method = "add", at = @At("RETURN"))
 	private void differentialcreate$onAdd(KineticBlockEntity be, CallbackInfo ci) {
+		com.diliupengyun.differential_create.kinetics.NetworkTopology.mark(be);
 		differentialcreate$markDirty(be);
 	}
 
 	@Inject(method = "addSilently", at = @At("RETURN"))
 	private void differentialcreate$onAddSilently(KineticBlockEntity be, float lastCapacity, float lastStress,
 		CallbackInfo ci) {
+		com.diliupengyun.differential_create.kinetics.NetworkDynamics.restoreMember(be, (KineticNetwork) (Object) this);
 		differentialcreate$markDirty(be);
 	}
 
 	@Inject(method = "remove", at = @At("HEAD"))
 	private void differentialcreate$onRemove(KineticBlockEntity be, CallbackInfo ci) {
+		com.diliupengyun.differential_create.kinetics.NetworkTopology.mark(be);
+		differentialcreate$data.invalidate();
 		KineticNetwork self = (KineticNetwork) (Object) this;
 		if (be.getLevel() != null)
 			ClientSpeedSync.markStructureDirty(self, be.getLevel());
@@ -64,8 +76,14 @@ public abstract class KineticNetworkMixin implements INetworkDynamics {
 
 	@Unique
 	private void differentialcreate$markDirty(KineticBlockEntity be) {
+		differentialcreate$data.invalidate();
 		if (be.getLevel() != null)
 			ClientSpeedSync.markStructureDirty((KineticNetwork) (Object) this, be.getLevel());
+	}
+
+	@Inject(method = {"updateStressFor", "updateCapacityFor"}, at = @At("HEAD"))
+	private void differentialcreate$invalidateBalance(KineticBlockEntity be, float value, CallbackInfo ci) {
+		differentialcreate$data.invalidate();
 	}
 
 	@Override

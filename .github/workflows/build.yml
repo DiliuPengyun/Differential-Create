@@ -26,5 +26,14 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Build with Gradle
-        run: ./gradlew build
+      - name: Build and verify physics and game scenarios
+        run: ./gradlew build runGameTestServer --console=plain
+
+      - name: Preserve test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-results
+          path: |
+            build/reports/
+            run-gametest/logs/latest.log

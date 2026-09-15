@@ -10,6 +10,7 @@ import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
  * derived as ratio × network speed.
  */
 public interface INetworkDynamics {
+	NetworkData differentialcreate$data();
 
 	/**
 	 * Current network speed (RPM), integrated every server tick. Corresponds to
@@ -21,18 +22,16 @@ public interface INetworkDynamics {
 	void differentialcreate$setSpeed(float speed);
 
 	/**
-	 * Nominal network speed (RPM) the current speed approaches exponentially:
-	 * the fastest |getGeneratedSpeed| among the network's sources. Always
-	 * positive; member directions live in the ratios.
+	 * Legacy nominal source maximum retained for old-save compatibility.
+	 * Physical equilibrium is calculated from the complete torque balance.
 	 */
 	float differentialcreate$getTargetSpeed();
 
 	void differentialcreate$setTargetSpeed(float targetSpeed);
 
 	/**
-	 * Per-member speed ratios r_i = member target speed / network target speed.
-	 * Signed (counter-rotating members are negative), 0 when the network target
-	 * is 0.
+	 * Geometric member-to-reference ratios, signed and independent of speed.
+	 * Ratios remain defined at standstill and in networks without sources.
 	 */
 	Map<KineticBlockEntity, Float> differentialcreate$getRatios();
 
@@ -56,9 +55,8 @@ public interface INetworkDynamics {
 	void differentialcreate$setExternalTorque(float torque);
 
 	/**
-	 * Last non-zero nominal network speed (RPM). Used as the ratio
-	 * denominator for blocks joining a sourceless (coasting) network, whose
-	 * live target speed is 0.
+	 * Nominal reference basis, fixed at 16 in newly built networks and saved
+	 * alongside each member's ratio. Also supports legacy NBT migration.
 	 */
 	float differentialcreate$getLastNonZeroTarget();
 

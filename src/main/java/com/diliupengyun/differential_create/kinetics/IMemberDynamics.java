@@ -5,6 +5,7 @@ package com.diliupengyun.differential_create.kinetics;
  * {@code KineticBlockEntity} by mixin.
  */
 public interface IMemberDynamics {
+	MemberState differentialcreate$member();
 
 	/**
 	 * Network speed restored from NBT, waiting to be applied once the block

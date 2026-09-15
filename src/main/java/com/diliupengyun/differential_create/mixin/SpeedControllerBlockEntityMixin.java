@@ -24,6 +24,18 @@ import net.minecraft.world.level.block.entity.BlockEntity;
  */
 @Mixin(SpeedControllerBlockEntity.class)
 public abstract class SpeedControllerBlockEntityMixin {
+	@Inject(method = "addBehaviours", at = @At("RETURN"))
+	private void differentialcreate$ratioControl(java.util.List<com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour> behaviours,
+		CallbackInfo ci) {
+		SpeedControllerBlockEntity self = (SpeedControllerBlockEntity) (Object) this;
+		var old = self.targetSpeed;
+		var ratio = new com.diliupengyun.differential_create.kinetics.RatioValueBehaviour(self, old.getSlotPositioning());
+		ratio.value = old.value;
+		ratio.withCallback(value -> com.diliupengyun.differential_create.kinetics.NetworkTopology.mark(self));
+		behaviours.remove(old);
+		behaviours.add(ratio);
+		self.targetSpeed = ratio;
+	}
 
 	/** RPM on the dial that corresponds to a 1:1 ratio. */
 	private static final float DIAL_PER_RATIO = 16f;
@@ -50,24 +62,22 @@ public abstract class SpeedControllerBlockEntityMixin {
 		cir.setReturnValue(ratio == 0 ? 0 : controller.getTheoreticalSpeed() / ratio);
 	}
 
-	/**
-	 * Dial changes re-propagate through vanilla's updateTargetRotation (it
-	 * detaches and re-attaches the controller), so ratios and J_eff refresh
-	 * through the existing capture. Just log the new ratio here.
-	 */
-	@Inject(method = "updateTargetRotation", at = @At("HEAD"))
+	/** A dial change rebuilds the physical constraint and referred inertia. */
+	@Inject(method = "updateTargetRotation", at = @At("HEAD"), cancellable = true)
 	private void differentialcreate$logRatioChange(CallbackInfo ci) {
 		SpeedControllerBlockEntity controller = (SpeedControllerBlockEntity) (Object) this;
+		com.diliupengyun.differential_create.kinetics.NetworkTopology.mark(controller);
+		ci.cancel();
 		Level level = controller.getLevel();
 		if (level == null || level.isClientSide)
 			return;
 		float input = 0;
 		BlockEntity above = level.getBlockEntity(controller.getBlockPos().above());
 		if (above instanceof KineticBlockEntity cog)
-			input = cog.getTheoreticalSpeed();
+			input = cog.getSpeed();
 		DifferentialCreate.LOGGER.debug("RSC at {} ratio changed to r={} (input {} RPM, output {} RPM)",
 			controller.getBlockPos().toShortString(), controller.targetSpeed.getValue() / DIAL_PER_RATIO,
-			String.format("%.2f", input), String.format("%.2f", controller.getTheoreticalSpeed()));
+			String.format("%.2f", input), String.format("%.2f", controller.getSpeed()));
 	}
 
 }

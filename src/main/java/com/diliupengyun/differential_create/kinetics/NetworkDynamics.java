@@ -3,33 +3,14 @@ package com.diliupengyun.differential_create.kinetics;
 import com.diliupengyun.differential_create.client.ClientNetworkSpeeds;
 import com.simibubi.create.content.kinetics.KineticNetwork;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
-import com.simibubi.create.content.kinetics.transmission.ClutchBlockEntity;
-
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-
+import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.Level;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/**
- * Static helpers implementing the continuous-rotation bookkeeping that the
- * mixins attach to Create's kinetic network classes.
- */
 public final class NetworkDynamics {
-
-	public static final String TAG_SPEED = "DCSpeed";
-	public static final String TAG_TARGET_SPEED = "DCTargetSpeed";
-	public static final String TAG_CLUTCH_TORQUE = "DCClutchTorque";
-	public static final String TAG_CLUTCH_SLIP = "DCClutchSlip";
-
 	private NetworkDynamics() {}
 
-	/**
-	 * Nominal speed of a network: the fastest source on it. Single-source
-	 * networks simply get |getGeneratedSpeed| of their source. Computed on
-	 * demand from Create's source registry, so it never depends on the
-	 * continuously ramping speed fields and the write-back cannot feed back
-	 * into the target.
-	 */
 	public static float computeTargetSpeed(KineticNetwork network) {
 		float target = 0;
 		for (KineticBlockEntity source : network.sources.keySet())
@@ -37,135 +18,90 @@ public final class NetworkDynamics {
 		return target;
 	}
 
-	/**
-	 * Denominator for ratio computation: the nominal target speed, or — for
-	 * sourceless (coasting) networks — the last non-zero nominal speed, so
-	 * blocks joining a coasting network get a sensible ratio instead of 0.
-	 */
-	private static float ratioDenominator(INetworkDynamics dynamics, float target) {
-		if (target != 0) {
-			dynamics.differentialcreate$setLastNonZeroTarget(target);
-			return target;
-		}
-		float lastNonZero = dynamics.differentialcreate$getLastNonZeroTarget();
-		if (lastNonZero != 0)
-			return lastNonZero;
-		return Math.abs(dynamics.differentialcreate$getSpeed());
-	}
-
-	/**
-	 * Called from the KineticBlockEntity#setSpeed mixin whenever propagation
-	 * (or a generator) assigns a speed on the server. The speed fields always
-	 * hold vanilla nominal values, so {@code newSpeed} is always a
-	 * target-space value and the recorded ratio stays correct.
-	 */
-	public static void capturePropagatedSpeed(KineticBlockEntity kbe, float newSpeed) {
-		Level level = kbe.getLevel();
-		if (level == null || level.isClientSide)
-			return;
-		if (!kbe.hasNetwork())
-			return;
-		KineticNetwork network = kbe.getOrCreateNetwork();
-		if (network == null)
-			return;
+	public static float localSpeed(KineticBlockEntity be, KineticNetwork network) {
 		INetworkDynamics dynamics = (INetworkDynamics) network;
-		float target = computeTargetSpeed(network);
-		dynamics.differentialcreate$setTargetSpeed(target);
-		float denominator = ratioDenominator(dynamics, target);
-		dynamics.differentialcreate$getRatios()
-			.put(kbe, denominator == 0 ? 0 : newSpeed / denominator);
-		ClientSpeedSync.markStructureDirty(network, level);
+		Float r = dynamics.differentialcreate$getRatios().get(be);
+		return r == null ? 0 : r * dynamics.differentialcreate$getSpeed();
 	}
 
-	/**
-	 * Ratio for a member that joined without a captured propagation (the
-	 * source itself, or restored from NBT): its field holds the vanilla
-	 * nominal speed, so the ratio can be derived from it.
-	 */
-	public static float ratioFromNominal(KineticBlockEntity member, INetworkDynamics dynamics, float target) {
-		float denominator = ratioDenominator(dynamics, target);
-		return denominator == 0 ? 0 : member.getTheoreticalSpeed() / denominator;
-	}
-
-	/**
-	 * Appends the member's network speed state to its save tag (inside the
-	 * vanilla "Network" compound). Every member saves the same values; restore
-	 * is idempotent. Clutch slip display values ride along on the sync packet
-	 * as well so the goggle overlay can show them on the client.
-	 */
-	public static void writeNetworkDynamics(KineticBlockEntity kbe, CompoundTag tag, boolean clientPacket) {
-		if (kbe instanceof ClutchBlockEntity) {
-			IClutchDynamics clutch = (IClutchDynamics) kbe;
-			tag.putFloat(TAG_CLUTCH_TORQUE, clutch.differentialcreate$getLastCouplingTorque());
-			tag.putFloat(TAG_CLUTCH_SLIP, clutch.differentialcreate$getLastDeltaOmega());
-		}
-		if (clientPacket || !kbe.hasNetwork())
-			return;
-		Level level = kbe.getLevel();
-		if (level == null || level.isClientSide)
-			return;
-		KineticNetwork network = kbe.getOrCreateNetwork();
-		if (network == null || !tag.contains("Network"))
-			return;
+	public static void restoreMember(KineticBlockEntity be, KineticNetwork network) {
+		IMemberDynamics member = (IMemberDynamics) be;
 		INetworkDynamics dynamics = (INetworkDynamics) network;
-		CompoundTag networkTag = tag.getCompound("Network");
-		networkTag.putFloat(TAG_SPEED, dynamics.differentialcreate$getSpeed());
-		networkTag.putFloat(TAG_TARGET_SPEED, dynamics.differentialcreate$getTargetSpeed());
-	}
-
-	/**
-	 * Stashes the saved network speed on the block entity; the ticker applies
-	 * it once the block entity has rejoined its network (the network object
-	 * may not exist yet while the chunk is being read). Prefers the physical
-	 * speed; tags written by the framework milestone only carry the nominal
-	 * target. Clutch display values are restored on both sides.
-	 */
-	public static void readNetworkDynamics(CompoundTag tag, boolean clientPacket, KineticBlockEntity kbe) {
-		if (kbe instanceof ClutchBlockEntity) {
-			IClutchDynamics clutch = (IClutchDynamics) kbe;
-			clutch.differentialcreate$setLastCouplingTorque(tag.getFloat(TAG_CLUTCH_TORQUE));
-			clutch.differentialcreate$setLastDeltaOmega(tag.getFloat(TAG_CLUTCH_SLIP));
+		MemberState saved = member.differentialcreate$member();
+		float pending = member.differentialcreate$getPendingNetworkSpeed();
+		if (Float.isFinite(pending) && !dynamics.differentialcreate$data().initialized) {
+			dynamics.differentialcreate$setSpeed(pending);
+			dynamics.differentialcreate$setLastNonZeroTarget(saved.savedNominal);
+			dynamics.differentialcreate$data().anchor = saved.savedAnchor;
+			dynamics.differentialcreate$data().initialized = true;
 		}
-		if (clientPacket || !tag.contains("Network"))
-			return;
-		CompoundTag networkTag = tag.getCompound("Network");
-		IMemberDynamics member = (IMemberDynamics) kbe;
-		if (networkTag.contains(TAG_SPEED))
-			member.differentialcreate$setPendingNetworkSpeed(networkTag.getFloat(TAG_SPEED));
-		else if (networkTag.contains(TAG_TARGET_SPEED))
-			member.differentialcreate$setPendingNetworkSpeed(networkTag.getFloat(TAG_TARGET_SPEED));
+		if (!dynamics.differentialcreate$getRatios().containsKey(be)) {
+			float ratio = saved.savedRatio;
+			if (!Float.isFinite(ratio)) {
+				float nominal = dynamics.differentialcreate$getLastNonZeroTarget();
+				if (nominal == 0) nominal = computeTargetSpeed(network);
+				if (nominal == 0) nominal = Math.abs(be.getTheoreticalSpeed());
+				ratio = nominal == 0 ? 1 : be.getTheoreticalSpeed() / nominal;
+			}
+			dynamics.differentialcreate$getRatios().put(be, ratio);
+			dynamics.differentialcreate$data().invalidate();
+		}
+		member.differentialcreate$clearPendingNetworkSpeed();
+		saved.savedRatio = Float.NaN;
 	}
 
-	/**
-	 * Serves the getSpeed() mixin with the physical speed (ratio × network ω):
-	 * on the server computed from the network state, on the client read from
-	 * the sync state (falling back to the nominal field until the first
-	 * packet arrives). Frozen levels keep the vanilla zero.
-	 * getTheoreticalSpeed() is untouched: propagation keeps operating on
-	 * nominal fields.
-	 */
-	public static void physicalSpeed(KineticBlockEntity kbe, CallbackInfoReturnable<Float> cir) {
-		Level level = kbe.getLevel();
-		if (level == null || level.tickRateManager()
-			.isFrozen())
-			return;
+	public static void writeNetworkDynamics(KineticBlockEntity be, CompoundTag tag, boolean clientPacket) {
+		if (clientPacket && MachineActivity.manages(be)) tag.putBoolean("DCMachineWorking", MachineActivity.active(be));
+		if (be instanceof IPumpDynamics pump) tag.putFloat("DCPumpHead", pump.differentialcreate$head());
+		if (be instanceof IClutchDynamics clutch) {
+			tag.putInt("DCClutchSignal", clutch.differentialcreate$getRedstoneSignal());
+			tag.putFloat("DCClutchTorque", clutch.differentialcreate$getLastCouplingTorque());
+			tag.putFloat("DCClutchSlip", clutch.differentialcreate$getLastDeltaOmega());
+			tag.putBoolean("DCClutchLocked", clutch.differentialcreate$isLocked());
+			tag.putFloat("DCClutchFreeOutputSpeed", clutch.differentialcreate$getFreeOutputSpeed());
+		}
+		if (clientPacket || be.getLevel() == null || be.getLevel().isClientSide || !be.hasNetwork()) return;
+		INetworkDynamics dynamics = (INetworkDynamics) be.getOrCreateNetwork();
+		CompoundTag network = tag.getCompound("Network");
+		network.putFloat("DCSpeed", dynamics.differentialcreate$getSpeed());
+		network.putFloat("DCTargetSpeed", dynamics.differentialcreate$getTargetSpeed());
+		network.putFloat("DCNominal", dynamics.differentialcreate$getLastNonZeroTarget());
+		network.putFloat("DCRatio", dynamics.differentialcreate$getRatios().getOrDefault(be, 1f));
+		BlockPos anchor = dynamics.differentialcreate$data().anchor;
+		if (anchor != null) network.putLong("DCAnchor", anchor.asLong());
+		tag.put("Network", network);
+	}
+
+	public static void readNetworkDynamics(CompoundTag tag, boolean clientPacket, KineticBlockEntity be) {
+		if (clientPacket && tag.contains("DCMachineWorking"))
+			((IMemberDynamics) be).differentialcreate$member().machineActive = tag.getBoolean("DCMachineWorking");
+		if (be instanceof IClutchDynamics clutch) {
+			clutch.differentialcreate$setRedstoneSignal(tag.contains("DCClutchSignal") ? tag.getInt("DCClutchSignal") : -1);
+			clutch.differentialcreate$setLastCouplingTorque(tag.getFloat("DCClutchTorque"));
+			clutch.differentialcreate$setLastDeltaOmega(tag.getFloat("DCClutchSlip"));
+			clutch.differentialcreate$setLocked(tag.getBoolean("DCClutchLocked"));
+			float outputSpeed = tag.getFloat("DCClutchFreeOutputSpeed");
+			clutch.differentialcreate$setFreeOutputSpeed(Float.isFinite(outputSpeed) ? outputSpeed : 0);
+		}
+		if (clientPacket || !tag.contains("Network")) return;
+		CompoundTag network = tag.getCompound("Network");
+		IMemberDynamics member = (IMemberDynamics) be;
+		member.differentialcreate$setPendingNetworkSpeed(network.contains("DCSpeed") ? network.getFloat("DCSpeed")
+			: network.getFloat("DCTargetSpeed"));
+		MemberState saved = member.differentialcreate$member();
+		saved.savedRatio = network.contains("DCRatio") ? network.getFloat("DCRatio") : Float.NaN;
+		saved.savedNominal = network.contains("DCNominal") ? network.getFloat("DCNominal") : network.getFloat("DCTargetSpeed");
+		saved.savedAnchor = network.contains("DCAnchor") ? BlockPos.of(network.getLong("DCAnchor")) : null;
+	}
+
+	public static void physicalSpeed(KineticBlockEntity be, CallbackInfoReturnable<Float> cir) {
+		Level level = be.getLevel();
+		if (level == null || level.tickRateManager().isFrozen()) return;
 		if (level.isClientSide) {
-			Float speed = ClientNetworkSpeeds.speedOf(kbe);
-			if (speed != null)
-				cir.setReturnValue(speed);
-			return;
+			Float speed = ClientNetworkSpeeds.speedOf(be);
+			if (speed != null) cir.setReturnValue(speed);
+		} else if (be.hasNetwork()) {
+			cir.setReturnValue(localSpeed(be, be.getOrCreateNetwork()));
 		}
-		if (!kbe.hasNetwork())
-			return;
-		KineticNetwork network = kbe.getOrCreateNetwork();
-		if (network == null)
-			return;
-		INetworkDynamics dynamics = (INetworkDynamics) network;
-		Float ratio = dynamics.differentialcreate$getRatios()
-			.get(kbe);
-		if (ratio == null)
-			return;
-		cir.setReturnValue(ratio * dynamics.differentialcreate$getSpeed());
 	}
-
 }
