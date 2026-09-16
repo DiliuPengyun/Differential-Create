@@ -1,0 +1,12 @@
+{
+  "type": "create:compacting",
+  "ingredients": [
+    { "tag": "c:plates/iron" },
+    { "item": "minecraft:leather" },
+    { "tag": "c:dusts/obsidian" },
+    { "item": "minecraft:slime_ball" }
+  ],
+  "results": [
+    { "id": "differentialcreate:composite_friction_plate", "count": 2 }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "parent": "minecraft:block/block",
+  "render_type": "minecraft:cutout_mipped",
+  "textures": {
+    "frame": "create:block/funnel/brass_funnel_frame",
+    "bearing": "create:block/brass_gearbox",
+    "side": "create:block/brass_casing",
+    "brass": "create:block/brass_block",
+    "steel": "create:block/axis",
+    "lining": "minecraft:block/gray_terracotta",
+    "indicator": "minecraft:block/black_terracotta",
+    "particle": "create:block/brass_casing",
+    "shaft": "create:block/axis",
+    "shaft_end": "create:block/axis_top"
+  },
+  "elements": [
+    {"name": "full brass casing", "from": [0, 0, 0], "to": [16, 16, 16], "faces": {"down": {"uv": [0, 0, 16, 16], "texture": "#frame"}, "up": {"uv": [0, 0, 16, 16], "rotation": 180, "texture": "#frame"}, "north": {"texture": "#side"}, "south": {"texture": "#side"}, "west": {"texture": "#side"}, "east": {"texture": "#side"}}},
+    {"name": "upper recessed bearing", "from": [1.95, 16, 1.95], "to": [14.05, 15, 14.05], "faces": {"north": {"uv": [2, 15, 14, 16], "texture": "#bearing"}, "east": {"uv": [0, 2, 1, 14], "rotation": 270, "texture": "#bearing"}, "south": {"uv": [2, 0, 14, 1], "rotation": 180, "texture": "#bearing"}, "west": {"uv": [15, 2, 16, 14], "rotation": 90, "texture": "#bearing"}, "up": {"uv": [2, 2, 14, 14], "rotation": 180, "texture": "#bearing"}}},
+    {"name": "lower recessed bearing", "from": [1.95, 1, 1.95], "to": [14.05, 0, 14.05], "faces": {"north": {"uv": [2, 15, 14, 16], "rotation": 180, "texture": "#bearing"}, "east": {"uv": [15, 2, 16, 14], "rotation": 270, "texture": "#bearing"}, "south": {"uv": [2, 0, 14, 1], "texture": "#bearing"}, "west": {"uv": [0, 2, 1, 14], "rotation": 90, "texture": "#bearing"}, "down": {"uv": [2, 2, 14, 14], "texture": "#bearing"}}},
+    {"name": "adjuster backplate", "from": [5, 5, 16], "to": [11, 11, 16.2], "faces": {"down": {"texture": "#lining"}, "up": {"texture": "#lining"}, "north": {"texture": "#lining"}, "south": {"texture": "#lining"}, "west": {"texture": "#lining"}, "east": {"texture": "#lining"}}},
+    {"name": "adjuster bezel", "from": [5.5, 5.5, 16.2], "to": [10.5, 10.5, 16.4], "faces": {"down": {"texture": "#brass"}, "up": {"texture": "#brass"}, "north": {"texture": "#brass"}, "south": {"texture": "#brass"}, "west": {"texture": "#brass"}, "east": {"texture": "#brass"}}},
+    {"name": "pressure adjuster", "from": [6.5, 6.5, 16.4], "to": [9.5, 9.5, 16.6], "faces": {"down": {"texture": "#steel"}, "up": {"texture": "#steel"}, "north": {"texture": "#steel"}, "south": {"texture": "#steel"}, "west": {"texture": "#steel"}, "east": {"texture": "#steel"}}},
+    {"name": "adjuster slot", "from": [7.6, 6.8, 16.6], "to": [8.4, 9.2, 16.65], "faces": {"down": {"texture": "#lining"}, "up": {"texture": "#lining"}, "north": {"texture": "#lining"}, "south": {"texture": "#lining"}, "west": {"texture": "#lining"}, "east": {"texture": "#lining"}}},
+    {"name": "redstone indicator", "from": [11.5, 11.5, 16], "to": [13, 13, 16.2], "faces": {"down": {"texture": "#indicator"}, "up": {"texture": "#indicator"}, "north": {"texture": "#indicator"}, "south": {"texture": "#indicator"}, "west": {"texture": "#indicator"}, "east": {"texture": "#indicator"}}},
+    {"name": "adjuster backplate", "from": [-0.1999999999999993, 5, 5], "to": [0, 11, 11], "faces": {"down": {"texture": "#lining"}, "up": {"texture": "#lining"}, "north": {"texture": "#lining"}, "south": {"texture": "#lining"}, "west": {"texture": "#lining"}, "east": {"texture": "#lining"}}},
+    {"name": "adjuster bezel", "from": [-0.3999999999999986, 5.5, 5.5], "to": [-0.1999999999999993, 10.5, 10.5], "faces": {"down": {"texture": "#brass"}, "up": {"texture": "#brass"}, "north": {"texture": "#brass"}, "south": {"texture": "#brass"}, "west": {"texture": "#brass"}, "east": {"texture": "#brass"}}},
+    {"name": "pressure adjuster", "from": [-0.6000000000000014, 6.5, 6.5], "to": [-0.3999999999999986, 9.5, 9.5], "faces": {"down": {"texture": "#steel"}, "up": {"texture": "#steel"}, "north": {"texture": "#steel"}, "south": {"texture": "#steel"}, "west": {"texture": "#steel"}, "east": {"texture": "#steel"}}},
+    {"name": "adjuster slot", "from": [-0.6499999999999986, 6.8, 7.6], "to": [-0.6000000000000014, 9.2, 8.4], "faces": {"down": {"texture": "#lining"}, "up": {"texture": "#lining"}, "north": {"texture": "#lining"}, "south": {"texture": "#lining"}, "west": {"texture": "#lining"}, "east": {"texture": "#lining"}}},
+    {"name": "redstone indicator", "from": [-0.1999999999999993, 11.5, 11.5], "to": [0, 13, 13], "faces": {"down": {"texture": "#indicator"}, "up": {"texture": "#indicator"}, "north": {"texture": "#indicator"}, "south": {"texture": "#indicator"}, "west": {"texture": "#indicator"}, "east": {"texture": "#indicator"}}},
+    {"name": "adjuster backplate", "from": [5, 5, -0.1999999999999993], "to": [11, 11, 0], "faces": {"down": {"texture": "#lining"}, "up": {"texture": "#lining"}, "north": {"texture": "#lining"}, "south": {"texture": "#lining"}, "west": {"texture": "#lining"}, "east": {"texture": "#lining"}}},
+    {"name": "adjuster bezel", "from": [5.5, 5.5, -0.3999999999999986], "to": [10.5, 10.5, -0.1999999999999993], "faces": {"down": {"texture": "#brass"}, "up": {"texture": "#brass"}, "north": {"texture": "#brass"}, "south": {"texture": "#brass"}, "west": {"texture": "#brass"}, "east": {"texture": "#brass"}}},
+    {"name": "pressure adjuster", "from": [6.5, 6.5, -0.6000000000000014], "to": [9.5, 9.5, -0.3999999999999986], "faces": {"down": {"texture": "#steel"}, "up": {"texture": "#steel"}, "north": {"texture": "#steel"}, "south": {"texture": "#steel"}, "west": {"texture": "#steel"}, "east": {"texture": "#steel"}}},
+    {"name": "adjuster slot", "from": [7.6, 6.8, -0.6499999999999986], "to": [8.4, 9.2, -0.6000000000000014], "faces": {"down": {"texture": "#lining"}, "up": {"texture": "#lining"}, "north": {"texture": "#lining"}, "south": {"texture": "#lining"}, "west": {"texture": "#lining"}, "east": {"texture": "#lining"}}},
+    {"name": "redstone indicator", "from": [3, 11.5, -0.1999999999999993], "to": [4.5, 13, 0], "faces": {"down": {"texture": "#indicator"}, "up": {"texture": "#indicator"}, "north": {"texture": "#indicator"}, "south": {"texture": "#indicator"}, "west": {"texture": "#indicator"}, "east": {"texture": "#indicator"}}},
+    {"name": "adjuster backplate", "from": [16, 5, 5], "to": [16.2, 11, 11], "faces": {"down": {"texture": "#lining"}, "up": {"texture": "#lining"}, "north": {"texture": "#lining"}, "south": {"texture": "#lining"}, "west": {"texture": "#lining"}, "east": {"texture": "#lining"}}},
+    {"name": "adjuster bezel", "from": [16.2, 5.5, 5.5], "to": [16.4, 10.5, 10.5], "faces": {"down": {"texture": "#brass"}, "up": {"texture": "#brass"}, "north": {"texture": "#brass"}, "south": {"texture": "#brass"}, "west": {"texture": "#brass"}, "east": {"texture": "#brass"}}},
+    {"name": "pressure adjuster", "from": [16.4, 6.5, 6.5], "to": [16.6, 9.5, 9.5], "faces": {"down": {"texture": "#steel"}, "up": {"texture": "#steel"}, "north": {"texture": "#steel"}, "south": {"texture": "#steel"}, "west": {"texture": "#steel"}, "east": {"texture": "#steel"}}},
+    {"name": "adjuster slot", "from": [16.6, 6.8, 7.6], "to": [16.65, 9.2, 8.4], "faces": {"down": {"texture": "#lining"}, "up": {"texture": "#lining"}, "north": {"texture": "#lining"}, "south": {"texture": "#lining"}, "west": {"texture": "#lining"}, "east": {"texture": "#lining"}}},
+    {"name": "redstone indicator", "from": [16, 11.5, 3], "to": [16.2, 13, 4.5], "faces": {"down": {"texture": "#indicator"}, "up": {"texture": "#indicator"}, "north": {"texture": "#indicator"}, "south": {"texture": "#indicator"}, "west": {"texture": "#indicator"}, "east": {"texture": "#indicator"}}},
+    {"name": "inventory shaft", "from": [6, 0, 6], "to": [10, 16, 10], "faces": {"down": {"texture": "#shaft_end"}, "up": {"texture": "#shaft_end"}, "north": {"texture": "#shaft"}, "south": {"texture": "#shaft"}, "west": {"texture": "#shaft"}, "east": {"texture": "#shaft"}}}
+  ]
+}

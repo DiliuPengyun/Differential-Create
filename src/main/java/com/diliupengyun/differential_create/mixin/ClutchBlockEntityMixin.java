@@ -31,6 +31,8 @@ public abstract class ClutchBlockEntityMixin implements IClutchDynamics {
 	@Unique
 	private float differentialcreate$freeOutputSpeed;
 	@Unique
+	private double differentialcreate$previousTorqueLimit = -1;
+	@Unique
 	private boolean differentialcreate$locked;
 
 	/**
@@ -93,6 +95,16 @@ public abstract class ClutchBlockEntityMixin implements IClutchDynamics {
 	@Override
 	public void differentialcreate$setFreeOutputSpeed(float speed) {
 		this.differentialcreate$freeOutputSpeed = speed;
+	}
+
+	@Override
+	public double differentialcreate$getPreviousTorqueLimit() {
+		return differentialcreate$previousTorqueLimit;
+	}
+
+	@Override
+	public void differentialcreate$setPreviousTorqueLimit(double limit) {
+		differentialcreate$previousTorqueLimit = limit;
 	}
 
 	@Override

@@ -87,6 +87,7 @@ public final class NetworkDynamics {
 			clutch.differentialcreate$setLocked(tag.getBoolean("DCClutchLocked"));
 			float outputSpeed = tag.getFloat("DCClutchFreeOutputSpeed");
 			clutch.differentialcreate$setFreeOutputSpeed(Float.isFinite(outputSpeed) ? outputSpeed : 0);
+			clutch.differentialcreate$setPreviousTorqueLimit(-1);
 		}
 		if (clientPacket || !tag.contains("Network")) return;
 		CompoundTag network = tag.getCompound("Network");

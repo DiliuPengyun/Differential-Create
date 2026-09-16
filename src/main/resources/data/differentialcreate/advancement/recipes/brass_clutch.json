@@ -1,0 +1,15 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_friction_plate": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": { "items": [{ "items": "differentialcreate:composite_friction_plate" }] }
+    },
+    "has_recipe": {
+      "trigger": "minecraft:recipe_unlocked",
+      "conditions": { "recipe": "differentialcreate:crafting/brass_clutch" }
+    }
+  },
+  "requirements": [["has_friction_plate", "has_recipe"]],
+  "rewards": { "recipes": ["differentialcreate:crafting/brass_clutch"] }
+}

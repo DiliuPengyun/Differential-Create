@@ -124,6 +124,7 @@ public final class InertiaRegistry {
 		inertialess(AllBlocks.BRASS_ENCASED_LARGE_COGWHEEL.get());
 		inertialess(AllBlocks.GEARBOX.get());
 		inertialess(AllBlocks.CLUTCH.get());
+		inertialess(com.diliupengyun.differential_create.content.ModContent.BRASS_CLUTCH.get());
 		inertialess(AllBlocks.GEARSHIFT.get());
 		inertialess(AllBlocks.ENCASED_CHAIN_DRIVE.get());
 		inertialess(AllBlocks.ADJUSTABLE_CHAIN_GEARSHIFT.get());

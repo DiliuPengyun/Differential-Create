@@ -32,6 +32,11 @@ public interface IClutchDynamics {
 
 	void differentialcreate$setFreeOutputSpeed(float speed);
 
+	/** Last control-pass ceiling, not persisted; identifies actual engage-to-open transitions. */
+	double differentialcreate$getPreviousTorqueLimit();
+
+	void differentialcreate$setPreviousTorqueLimit(double limit);
+
 	/** Persistent rigid connection, released by redstone or excess load torque. */
 	boolean differentialcreate$isLocked();
 

@@ -49,19 +49,10 @@ public final class KineticGoggleInfo {
 			if (overRange) tooltip.add(Component.translatable("gui.differentialcreate.gauge.over_range").withStyle(ChatFormatting.YELLOW));
 			return;
 		}
-		if (kbe instanceof ClutchBlockEntity clutchBlock) {
+		if (kbe instanceof ClutchBlockEntity) {
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.speed", fmt1(kbe.getSpeed())));
 			// Clutch: coupling torque and slip (synced from the server)
 			IClutchDynamics clutch = (IClutchDynamics) kbe;
-			int signal = ClutchPhysics.signal(clutchBlock);
-			String state = signal == 15 ? "open" : clutch.differentialcreate$isLocked() ? "locked"
-				: Math.abs(clutch.differentialcreate$getLastDeltaOmega()) > PhysicsTuning.CLUTCH_LOCK_EPSILON_RPM
-					? "slipping" : "synchronizing";
-			tooltip.add(Component.translatable("gui.differentialcreate.goggles.clutch_state",
-				Component.translatable("gui.differentialcreate.goggles.clutch_state." + state)));
-			tooltip.add(Component.translatable("gui.differentialcreate.goggles.clutch_engagement",
-				percent(ClutchControl.engagement(signal)), signal));
-			tooltip.add(Component.translatable("gui.differentialcreate.goggles.clutch_limit", fmt(ClutchControl.torqueLimit(signal))));
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.clutch_torque",
 				fmt(clutch.differentialcreate$getLastCouplingTorque())));
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.clutch_slip",

@@ -1,5 +1,6 @@
 package com.diliupengyun.differential_create.kinetics;
 
+import com.diliupengyun.differential_create.content.BrassClutchBlockEntity;
 import com.simibubi.create.content.kinetics.KineticNetwork;
 import com.simibubi.create.content.kinetics.base.IRotate;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
@@ -21,7 +22,29 @@ public final class ClutchPhysics {
 		IClutchDynamics state = (IClutchDynamics) clutch;
 		// Override Create's binary POWERED result in both directions: a weak
 		// signal can still hold a rigid connection when its torque limit allows it.
-		cir.setReturnValue(signal(clutch) == 15 || !state.differentialcreate$isLocked() ? 0f : 1f);
+		cir.setReturnValue(torqueLimit(clutch) == 0 || !state.differentialcreate$isLocked() ? 0f : 1f);
+	}
+
+	public static double manualEngagement(ClutchBlockEntity clutch) {
+		return clutch instanceof BrassClutchBlockEntity brass ? brass.manualEngagement() : 1;
+	}
+
+	public static double engagement(ClutchBlockEntity clutch) {
+		return ClutchControl.engagement(manualEngagement(clutch), signal(clutch));
+	}
+
+	public static double torqueLimit(ClutchBlockEntity clutch) {
+		double rating = clutch instanceof BrassClutchBlockEntity ? PhysicsTuning.BRASS_CLUTCH_TORQUE : PhysicsTuning.CLUTCH_TORQUE;
+		return ClutchControl.torqueLimit(rating, manualEngagement(clutch), signal(clutch));
+	}
+
+	public static void manualEngagementChanged(ClutchBlockEntity clutch) {
+		if (clutch.getLevel() == null || clutch.getLevel().isClientSide) return;
+		IClutchDynamics state = (IClutchDynamics) clutch;
+		state.differentialcreate$setLockTimer(0);
+		// The regular coupling pass checks the new limit and preserves a lock if
+		// it still supports the load; it captures/splits an opened clutch once.
+		// Editing a setting while redstone holds it open must not move its free output.
 	}
 
 	public static int signal(ClutchBlockEntity clutch) {
@@ -41,7 +64,7 @@ public final class ClutchPhysics {
 		INetworkDynamics da = (INetworkDynamics) network;
 		for (ClutchBlockEntity clutch : da.differentialcreate$data().clutches) {
 			if (clutch.isRemoved()) continue;
-			double limit = ClutchControl.torqueLimit(signal(clutch));
+			double limit = torqueLimit(clutch);
 			KineticBlockEntity far = output(clutch);
 			if (limit == 0 || far == null || !far.hasNetwork()) continue;
 			KineticNetwork other = far.getOrCreateNetwork();
@@ -87,7 +110,9 @@ public final class ClutchPhysics {
 			state.differentialcreate$setRedstoneSignal(signal);
 			state.differentialcreate$setLockTimer(0);
 		}
-		double limit = ClutchControl.torqueLimit(signal);
+		double limit = torqueLimit(clutch);
+		double previousLimit = state.differentialcreate$getPreviousTorqueLimit();
+		state.differentialcreate$setPreviousTorqueLimit(limit);
 		KineticBlockEntity far = output(clutch);
 		if (far != null)
 			state.differentialcreate$setFreeOutputSpeed(far.getSpeed());
@@ -95,7 +120,7 @@ public final class ClutchPhysics {
 			boolean wasLocked = state.differentialcreate$isLocked();
 			// The bare half-shaft has J = 0 and no load, just like an isolated
 			// shaft network. Capture its release speed and retain that balance.
-			if (far == null && (wasLocked || previousSignal >= 0 && previousSignal < 15))
+			if (far == null && (wasLocked || previousLimit > 0))
 				state.differentialcreate$setFreeOutputSpeed(clutch.getSpeed());
 			if (state.differentialcreate$isLocked()) {
 				state.differentialcreate$setLocked(false);

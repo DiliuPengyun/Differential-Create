@@ -1,0 +1,6 @@
+{
+  "parent": "differentialcreate:block/brass_clutch/block",
+  "textures": {
+    "indicator": "minecraft:block/redstone_block"
+  }
+}

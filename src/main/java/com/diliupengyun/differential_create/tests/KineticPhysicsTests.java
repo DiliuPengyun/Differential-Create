@@ -62,6 +62,29 @@ public final class KineticPhysicsTests {
 	private static final String TEMPLATE = "physics_test";
 	private static final int TOTAL_CHECKS = 14;
 
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "creative_inventory", timeoutTicks = 100)
+	public static void creativeInventory(GameTestHelper helper) {
+		CreativeInventoryTests.run(helper);
+	}
+
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "brass_controls", timeoutTicks = 300)
+	public static void brassClutchControls(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		BrassClutchTests.controls(helper);
+	}
+
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "brass_load", timeoutTicks = 600)
+	public static void brassClutchLoad(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		BrassClutchTests.load(helper);
+	}
+
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "brass_recipes", timeoutTicks = 500)
+	public static void brassClutchRecipes(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		BrassClutchTests.recipes(helper);
+	}
+
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "speed_gauge", timeoutTicks = 200)
 	public static void speedGaugeRange(GameTestHelper helper) {
 		forceImpactChunks(helper);

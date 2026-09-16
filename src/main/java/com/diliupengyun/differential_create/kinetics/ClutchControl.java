@@ -9,6 +9,14 @@ public final class ClutchControl {
 	}
 
 	public static double torqueLimit(int signal) {
-		return PhysicsTuning.CLUTCH_TORQUE * engagement(signal);
+		return torqueLimit(PhysicsTuning.CLUTCH_TORQUE, 1, signal);
+	}
+
+	public static double engagement(double manual, int signal) {
+		return Math.clamp(manual, 0, 1) * engagement(signal);
+	}
+
+	public static double torqueLimit(double rating, double manual, int signal) {
+		return rating * engagement(manual, signal);
 	}
 }

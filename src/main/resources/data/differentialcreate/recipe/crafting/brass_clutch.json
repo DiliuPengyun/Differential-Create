@@ -1,0 +1,14 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "redstone",
+  "ingredients": [
+    { "item": "create:clutch" },
+    { "item": "create:brass_casing" },
+    { "item": "create:precision_mechanism" },
+    { "item": "differentialcreate:composite_friction_plate" },
+    { "item": "differentialcreate:composite_friction_plate" },
+    { "item": "differentialcreate:composite_friction_plate" },
+    { "item": "differentialcreate:composite_friction_plate" }
+  ],
+  "result": { "id": "differentialcreate:brass_clutch", "count": 1 }
+}

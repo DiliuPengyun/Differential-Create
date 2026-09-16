@@ -1,0 +1,95 @@
+{
+  "parent": "minecraft:block/block",
+  "gui_light": "front",
+  "textures": {
+    "steel": "minecraft:block/iron_block",
+    "friction": "minecraft:block/brown_terracotta",
+    "particle": "minecraft:block/brown_terracotta"
+  },
+  "display": {
+    "gui": {
+      "rotation": [
+        35,
+        225,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.05,
+        1.05,
+        1.05
+      ]
+    },
+    "ground": {
+      "translation": [
+        0,
+        3,
+        0
+      ],
+      "scale": [
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    "firstperson_righthand": {
+      "rotation": [
+        0,
+        45,
+        0
+      ],
+      "scale": [
+        0.65,
+        0.65,
+        0.65
+      ]
+    },
+    "thirdperson_righthand": {
+      "rotation": [
+        75,
+        45,
+        0
+      ],
+      "translation": [
+        0,
+        2.5,
+        0
+      ],
+      "scale": [
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    "fixed": {
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    }
+  },
+  "elements": [
+    {"name": "steel backing", "from": [5, 7, 2], "to": [11, 8, 4], "faces": {"down": {"texture": "#steel"}, "up": {"texture": "#steel"}, "north": {"texture": "#steel"}, "south": {"texture": "#steel"}, "west": {"texture": "#steel"}, "east": {"texture": "#steel"}}},
+    {"name": "friction pad", "from": [5.35, 8, 2.25], "to": [10.65, 8.6, 3.75], "faces": {"down": {"texture": "#friction"}, "up": {"texture": "#friction"}, "north": {"texture": "#friction"}, "south": {"texture": "#friction"}, "west": {"texture": "#friction"}, "east": {"texture": "#friction"}}},
+    {"name": "steel backing", "from": [3, 7, 4], "to": [13, 8, 6], "faces": {"down": {"texture": "#steel"}, "up": {"texture": "#steel"}, "north": {"texture": "#steel"}, "south": {"texture": "#steel"}, "west": {"texture": "#steel"}, "east": {"texture": "#steel"}}},
+    {"name": "friction pad", "from": [3.35, 8, 4.25], "to": [12.65, 8.6, 5.75], "faces": {"down": {"texture": "#friction"}, "up": {"texture": "#friction"}, "north": {"texture": "#friction"}, "south": {"texture": "#friction"}, "west": {"texture": "#friction"}, "east": {"texture": "#friction"}}},
+    {"name": "steel backing", "from": [2, 7, 6], "to": [6, 8, 10], "faces": {"down": {"texture": "#steel"}, "up": {"texture": "#steel"}, "north": {"texture": "#steel"}, "south": {"texture": "#steel"}, "west": {"texture": "#steel"}, "east": {"texture": "#steel"}}},
+    {"name": "friction pad", "from": [2.35, 8, 6.25], "to": [5.65, 8.6, 9.75], "faces": {"down": {"texture": "#friction"}, "up": {"texture": "#friction"}, "north": {"texture": "#friction"}, "south": {"texture": "#friction"}, "west": {"texture": "#friction"}, "east": {"texture": "#friction"}}},
+    {"name": "steel backing", "from": [10, 7, 6], "to": [14, 8, 10], "faces": {"down": {"texture": "#steel"}, "up": {"texture": "#steel"}, "north": {"texture": "#steel"}, "south": {"texture": "#steel"}, "west": {"texture": "#steel"}, "east": {"texture": "#steel"}}},
+    {"name": "friction pad", "from": [10.35, 8, 6.25], "to": [13.65, 8.6, 9.75], "faces": {"down": {"texture": "#friction"}, "up": {"texture": "#friction"}, "north": {"texture": "#friction"}, "south": {"texture": "#friction"}, "west": {"texture": "#friction"}, "east": {"texture": "#friction"}}},
+    {"name": "steel backing", "from": [3, 7, 10], "to": [13, 8, 12], "faces": {"down": {"texture": "#steel"}, "up": {"texture": "#steel"}, "north": {"texture": "#steel"}, "south": {"texture": "#steel"}, "west": {"texture": "#steel"}, "east": {"texture": "#steel"}}},
+    {"name": "friction pad", "from": [3.35, 8, 10.25], "to": [12.65, 8.6, 11.75], "faces": {"down": {"texture": "#friction"}, "up": {"texture": "#friction"}, "north": {"texture": "#friction"}, "south": {"texture": "#friction"}, "west": {"texture": "#friction"}, "east": {"texture": "#friction"}}},
+    {"name": "steel backing", "from": [5, 7, 12], "to": [11, 8, 14], "faces": {"down": {"texture": "#steel"}, "up": {"texture": "#steel"}, "north": {"texture": "#steel"}, "south": {"texture": "#steel"}, "west": {"texture": "#steel"}, "east": {"texture": "#steel"}}},
+    {"name": "friction pad", "from": [5.35, 8, 12.25], "to": [10.65, 8.6, 13.75], "faces": {"down": {"texture": "#friction"}, "up": {"texture": "#friction"}, "north": {"texture": "#friction"}, "south": {"texture": "#friction"}, "west": {"texture": "#friction"}, "east": {"texture": "#friction"}}}
+  ]
+}

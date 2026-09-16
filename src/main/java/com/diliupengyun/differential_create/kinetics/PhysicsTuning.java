@@ -22,12 +22,15 @@ public final class PhysicsTuning {
 	public static final double FAN_ANCHOR_RPM = 64;
 
 	/**
-	 * Maximum torque a fully engaged clutch transmits while slipping, su/RPM
+	 * Maximum torque a fully engaged starter clutch transmits, su/RPM.
 	 * (DESIGN.md §6 clutch rework). Tuning entry: higher means stiffer
 	 * engagement and larger shock torque on the driven side. Redstone scales
 	 * this limit linearly by (15 - signal) / 15.
 	 */
 	public static final double CLUTCH_TORQUE = 32;
+
+	/** Heavy-duty clutch rating, scaled by its manual pressure and the redstone release. */
+	public static final double BRASS_CLUTCH_TORQUE = 1024;
 
 	/** Speed difference below which a clutch counts as synchronous, RPM. */
 	public static final double CLUTCH_LOCK_EPSILON_RPM = 0.5;
