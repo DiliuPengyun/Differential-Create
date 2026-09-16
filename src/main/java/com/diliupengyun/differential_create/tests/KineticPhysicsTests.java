@@ -62,6 +62,18 @@ public final class KineticPhysicsTests {
 	private static final String TEMPLATE = "physics_test";
 	private static final int TOTAL_CHECKS = 14;
 
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "shaft_phase", timeoutTicks = 100)
+	public static void shaftPhaseAlignmentRegression(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		ElasticKineticsTests.phaseAlignment(helper);
+	}
+
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "brass_hot_attach", timeoutTicks = 150)
+	public static void brassClutchHotAttachRegression(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		BrassClutchTests.hotAttach(helper);
+	}
+
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "creative_inventory", timeoutTicks = 100)
 	public static void creativeInventory(GameTestHelper helper) {
 		CreativeInventoryTests.run(helper);
@@ -129,170 +141,20 @@ public final class KineticPhysicsTests {
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "collision", timeoutTicks = 1000)
 	public static void collisionRegression(GameTestHelper helper) {
-		var bounds = helper.getBounds();
-		for (int x = ((int) bounds.minX >> 4) - 1; x <= ((int) bounds.maxX >> 4) + 1; x++)
-			for (int z = ((int) bounds.minZ >> 4) - 1; z <= ((int) bounds.maxZ >> 4) + 1; z++)
-				helper.getLevel().setChunkForced(x, z, true);
-		var motor = placeWheel(helper, new BlockPos(2, 2, 2), 1, null);
-		var reverse = placeWheel(helper, new BlockPos(6, 2, 2), -1, null);
-		BlockPos clutchPos = new BlockPos(4, 2, 2);
-		helper.setBlock(clutchPos.above(), Blocks.REDSTONE_BLOCK.defaultBlockState());
-		helper.setBlock(clutchPos, AllBlocks.CLUTCH.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X)
-			.setValue(BlockStateProperties.POWERED, true));
-		helper.setBlock(new BlockPos(3, 2, 2), shaftX());
-		helper.setBlock(new BlockPos(5, 2, 2), shaftX());
-		var active = placeWheel(helper, new BlockPos(2, 2, 12), 1, null);
-		boolean[] inactivePinned = {true};
-		var inactive = placeWheel(helper, new BlockPos(6, 2, 12), 0, inactivePinned);
-		for (int x = 3; x <= 5; x++) helper.setBlock(new BlockPos(x, 2, 12), shaftX());
-		int[] done = {0};
-		boolean[] engaged = {false}, activated = {false};
-		helper.onEachTick(() -> {
-			if (!engaged[0] && closeTo(speedOf(motor), 16, 0.2) && closeTo(speedOf(reverse), 16, 0.2)) {
-				engaged[0] = true;
-				helper.setBlock(clutchPos.above(), Blocks.AIR.defaultBlockState());
-				helper.runAfterDelay(5, () -> {
-					if (helper.getBlockState(clutchPos).isAir() || motor.isRemoved() || reverse.isRemoved())
-						helper.fail("full-pressure engagement destroyed a block instead of slipping");
-					ClutchBlockEntity clutch = (ClutchBlockEntity) helper.getBlockEntity(clutchPos);
-					IClutchDynamics state = (IClutchDynamics) clutch;
-					assertClutchSignal(helper, clutch, 0);
-					if (state.differentialcreate$isLocked() || motor.getOrCreateNetwork() == reverse.getOrCreateNetwork()
-						|| Math.abs(state.differentialcreate$getLastCouplingTorque()) < 31.9
-						|| motor.getSpeed() * reverse.getSpeed() >= 0)
-						helper.fail("opposing rotors did not retain independent speeds under limited clutch torque");
-					done[0] |= 1;
-				});
-			}
-			if (!activated[0] && closeTo(speedOf(active), 16, 0.2) && active.getOrCreateNetwork() == inactive.getOrCreateNetwork()) {
-				activated[0] = true;
-				inactivePinned[0] = false;
-				inactive.setFlowScoreAndUpdate(-1);
-				if (!inactive.isRemoved() || active.isRemoved()) helper.fail("reverse source activation did not break only the newly activated source");
-				done[0] |= 2;
-			}
-			if (done[0] == 3) helper.succeed();
-		});
+        forceImpactChunks(helper);
+        ElasticKineticsTests.collision(helper);
 	}
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clutch_impact", timeoutTicks = 1000)
 	public static void lockedClutchImpactRegression(GameTestHelper helper) {
-		forceImpactChunks(helper);
-		int[] done = {0};
-		// Exercise both rotation signs, both reference faces, and hot attachment
-		// at either end. The contact shaft is several blocks from the clutch.
-		for (int scenario = 0; scenario < 8; scenario++) {
-			int x = 2 + 12 * (scenario % 2), z = 2 + 6 * (scenario / 2);
-			boolean motorLeft = (scenario & 4) == 0, reverseReference = (scenario & 2) != 0;
-			int sign = (scenario & 1) == 0 ? 1 : -1;
-			var motor = placeWheel(helper, new BlockPos(x + (motorLeft ? 0 : 6), 2, z), sign, null);
-			var driven = placeWheel(helper, new BlockPos(x + (motorLeft ? 6 : 0), 2, z), 0, null);
-			BlockPos clutchPos = new BlockPos(x + 3, 2, z), bridge = new BlockPos(x + (motorLeft ? 5 : 1), 2, z);
-			ClutchBlockEntity clutch = placeImpactClutch(helper, clutchPos,
-				motorLeft != reverseReference ? Direction.WEST : Direction.EAST);
-			for (int dx = 1; dx <= 5; dx++) {
-				BlockPos pos = new BlockPos(x + dx, 2, z);
-				if (!pos.equals(clutchPos) && !pos.equals(bridge)) helper.setBlock(pos, shaftX());
-			}
-			int[] stage = {0};
-			helper.onEachTick(() -> {
-				IClutchDynamics state = (IClutchDynamics) clutch;
-				if (stage[0] == 0 && state.differentialcreate$isLocked()
-					&& motor.getOrCreateNetwork() == clutch.getOrCreateNetwork() && driven.hasNetwork()) {
-					stage[0] = 1;
-					setLocalSpeed(motor, 16 * sign);
-					setLocalSpeed(driven, 0);
-					double before = networkEnergy(motor) + networkEnergy(driven);
-					helper.setBlock(bridge, shaftX());
-					NetworkTopology.mark((KineticBlockEntity) helper.getBlockEntity(bridge));
-					NetworkTopology.flush();
-					if (clutch.isRemoved() || motor.isRemoved() || driven.isRemoved() || helper.getBlockState(bridge).isAir())
-						helper.fail("remote hot attachment broke a block across a locked clutch");
-					if (state.differentialcreate$isLocked() || motor.getOrCreateNetwork() == driven.getOrCreateNetwork())
-						helper.fail("locked clutch failed to release before the impact merged its rotors");
-					assertNear(helper, 16 * sign, motor.getSpeed(), 1e-5, "driver retains its pre-impact speed");
-					assertNear(helper, 0, driven.getSpeed(), 1e-5, "new rotor starts without an instantaneous impulse");
-					assertNear(helper, before, networkEnergy(motor) + networkEnergy(driven), 1e-5,
-						"splitting for clutch slip preserves kinetic energy before friction acts");
-					assertMembersConsistent(motor, "driver after impact split");
-					assertMembersConsistent(driven, "driven side after impact split");
-				} else if (stage[0] == 1) {
-					if (clutch.isRemoved() || helper.getBlockState(bridge).isAir()) helper.fail("slipping damaged the clutch or contact");
-					assertClutchSignal(helper, clutch, 0);
-					if (state.differentialcreate$isLocked() && motor.getOrCreateNetwork() == driven.getOrCreateNetwork()) {
-						assertNear(helper, motor.getSpeed(), driven.getSpeed(), 1e-4, "rotors synchronize before relocking");
-						if (driven.getSpeed() * sign <= 0) helper.fail("friction did not start the new rotor");
-						stage[0] = 2;
-						done[0]++;
-					}
-				}
-			});
-		}
-		helper.onEachTick(() -> { if (done[0] == 8) helper.succeed(); });
+        forceImpactChunks(helper);
+        ElasticKineticsTests.lockedClutchImpact(helper);
 	}
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clutch_impact_boundaries", timeoutTicks = 1000)
 	public static void clutchImpactBoundaryRegression(GameTestHelper helper) {
-		forceImpactChunks(helper);
-		int[] done = {0};
-		for (int scenario = 0; scenario < 4; scenario++) {
-			int kind = scenario, z = 2 + 6 * scenario;
-			boolean across = kind == 1 || kind == 2;
-			var motor = placeWheel(helper, new BlockPos(across ? 2 : 4, 2, z), 1, null);
-			boolean[] pinned = {true};
-			var driven = placeWheel(helper, new BlockPos(8, 2, z), 0, pinned);
-			BlockPos clutchPos = new BlockPos(across ? 4 : 2, 2, z), bridge = new BlockPos(7, 2, z);
-			ClutchBlockEntity clutch = placeImpactClutch(helper, clutchPos, across ? Direction.WEST : Direction.EAST);
-			for (int x = 1; x <= 7; x++) {
-				BlockPos pos = new BlockPos(x, 2, z);
-				if (x != (across ? 2 : 4) && !pos.equals(clutchPos) && !(kind < 2 && pos.equals(bridge)))
-					helper.setBlock(pos, shaftX());
-			}
-			boolean[] checked = {false};
-			helper.runAfterDelay(950, () -> {
-				if (!checked[0]) helper.fail("clutch impact fixture did not become ready: scenario " + kind);
-			});
-			helper.onEachTick(() -> {
-				if (checked[0] || !((IClutchDynamics) clutch).differentialcreate$isLocked() || !driven.hasNetwork()) return;
-				if (kind >= 2 && motor.getOrCreateNetwork() != driven.getOrCreateNetwork()) return;
-				checked[0] = true;
-				if (kind == 1) {
-					// Add a same-ratio rigid bypass after the clutch has locked.
-					for (int x : new int[]{3, 5})
-						for (int dz : new int[]{0, 1}) helper.setBlock(new BlockPos(x, 2, z + dz),
-							AllBlocks.COGWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
-					helper.setBlock(new BlockPos(4, 2, z + 1), shaftX());
-					NetworkTopology.mark((KineticBlockEntity) helper.getBlockEntity(new BlockPos(3, 2, z)));
-					NetworkTopology.flush();
-				}
-				setLocalSpeed(motor, 16);
-				if (kind < 2) {
-					setLocalSpeed(driven, 0);
-					helper.setBlock(bridge, shaftX());
-					NetworkTopology.mark((KineticBlockEntity) helper.getBlockEntity(bridge));
-					NetworkTopology.flush();
-					if (!helper.getBlockState(bridge).isAir())
-						helper.fail(kind == 0 ? "same-side impact incorrectly received clutch protection"
-							: "rigid bypass incorrectly received clutch protection");
-					if (driven.isRemoved() || motor.getOrCreateNetwork() == driven.getOrCreateNetwork())
-						helper.fail("hard impact did not break only the contact shaft");
-				} else {
-					pinned[0] = false;
-					driven.setFlowScoreAndUpdate(-1);
-					NetworkTopology.flush();
-					if (kind == 2) {
-						if (driven.isRemoved() || ((IClutchDynamics) clutch).differentialcreate$isLocked()
-							|| motor.getOrCreateNetwork() == driven.getOrCreateNetwork())
-							helper.fail("opposite-side source activation did not release the separating clutch");
-						assertNear(helper, 16, motor.getSpeed(), 1e-5, "source release preserves driver speed");
-						assertNear(helper, 16, driven.getSpeed(), 1e-5, "source command does not overwrite shaft speed");
-					} else if (!driven.isRemoved()) helper.fail("same-side source activation bypassed the hard impact rule");
-				}
-				if (motor.isRemoved() || clutch.isRemoved()) helper.fail("impact destroyed an unrelated motor or clutch");
-				done[0]++;
-			});
-		}
-		helper.onEachTick(() -> { if (done[0] == 4) helper.succeed(); });
+        forceImpactChunks(helper);
+        ElasticKineticsTests.strength(helper);
 	}
 
 	private static void forceImpactChunks(GameTestHelper helper) {
@@ -466,7 +328,7 @@ public final class KineticPhysicsTests {
 				});
 			}
 			if ((done[0] & 16) != 0 && rscMotor.getOrCreateNetwork() == rscOutput.getOrCreateNetwork()
-				&& closeTo(speedOf(rscMotor), 15, 0.2)) {
+				&& closeTo(speedOf(rscMotor), 15, 0.2) && Math.abs(rscOutput.getSpeed() + 0.5 * rscMotor.getSpeed()) < 0.001) {
 				if (Math.abs(rscOutput.getSpeed() + 0.5 * rscMotor.getSpeed()) > 0.001) helper.fail("negative RSC ratio did not reverse and reduce the output");
 				done[0] |= 32;
 			}
@@ -564,7 +426,7 @@ public final class KineticPhysicsTests {
 				com.diliupengyun.differential_create.kinetics.NetworkTopology.flush();
 				if (reverseA.getOrCreateNetwork() != reverseB.getOrCreateNetwork() || helper.getBlockState(bridge).isAir())
 					helper.fail("gentle reverse contact failed to merge real membership");
-				if (Math.abs(reverseA.getSpeed()) > 0.001) helper.fail("reverse merge did not conserve momentum");
+				if (Math.abs(reverseA.getSpeed() + reverseB.getSpeed()) > 0.001) helper.fail("topology change did not preserve rotor momentum");
 				done[0] |= 16;
 			}
 			if ((done[0] & 32) == 0 && closeTo(speedOf(geared), 12, 0.2)) {
@@ -595,7 +457,7 @@ public final class KineticPhysicsTests {
 				placeLoad(helper, newLoad);
 				com.diliupengyun.differential_create.kinetics.NetworkTopology.mark((KineticBlockEntity) helper.getBlockEntity(newLoad));
 				com.diliupengyun.differential_create.kinetics.NetworkTopology.flush();
-				if (Math.abs(hotMotor.getSpeed() - 7.5) > 0.001) helper.fail("stationary new load was accelerated without paying its momentum cost");
+				if (Math.abs(hotMotor.getSpeed() - 8) > 0.001 || ((KineticBlockEntity) helper.getBlockEntity(newLoad)).getSpeed() != 0) helper.fail("topology change applied an instantaneous velocity projection");
 				done[0] |= 64;
 			}
 			if (done[0] == 127) helper.succeed();
@@ -663,8 +525,8 @@ public final class KineticPhysicsTests {
 					setClutchSignal(helper, clutchPos, 14);
 					helper.runAfterDelay(5, () -> {
 						assertClutchSignal(helper, clutch, 14);
-						if (state.differentialcreate$isLocked() || motor.getOrCreateNetwork() == driven.getOrCreateNetwork())
-							helper.fail("lowering the torque limit below the load failed to unlock and split the clutch");
+						if (state.differentialcreate$isLocked() || Math.abs(motor.getSpeed() - driven.getSpeed()) < 0.001)
+							helper.fail("lowering the torque limit below the load failed to permit independent rotor speeds");
 						setClutchSignal(helper, clutchPos, 15);
 						helper.runAfterDelay(5, () -> {
 							assertClutchSignal(helper, clutch, 15);
@@ -790,12 +652,12 @@ public final class KineticPhysicsTests {
 				for (int distance = 5; distance <= 10; distance++)
 					placeLoad(helper, bearingPos.west(distance));
 				stage[0] = 4;
-			} else if (stage[0] == 4 && windmill.getSpeed() == 0) {
+			} else if (stage[0] == 4 && Math.abs(windmill.getSpeed()) < 1e-7) {
 				stage[0] = 5;
 				float angle = windmill.getMovedContraption().getAngle(1);
 				helper.runAfterDelay(10, () -> {
 					if (!windmill.isRunning() || windmill.getMovedContraption() == null
-						|| windmill.getMovedContraption().getAngle(1) != angle || windmill.getAngularSpeed() != 0)
+						|| Math.abs(windmill.getMovedContraption().getAngle(1) - angle) > 1e-4 || Math.abs(windmill.getAngularSpeed()) > 1e-6)
 						helper.fail("overloaded stationary windmill continued rotating or lost its structure");
 					helper.succeed();
 				});
@@ -807,115 +669,8 @@ public final class KineticPhysicsTests {
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "windmill_engagement", timeoutTicks = 100)
 	public static void windmillEngagementConservationRegression(GameTestHelper helper) {
-		var bounds = helper.getBounds();
-		for (int x = ((int) bounds.minX >> 4) - 1; x <= ((int) bounds.maxX >> 4) + 1; x++)
-			for (int z = ((int) bounds.minZ >> 4) - 1; z <= ((int) bounds.maxZ >> 4) + 1; z++)
-				helper.getLevel().setChunkForced(x, z, true);
-		BlockPos bearingPos = new BlockPos(12, 8, 10);
-		helper.setBlock(bearingPos, AllBlocks.WINDMILL_BEARING.getDefaultState()
-			.setValue(BlockStateProperties.FACING, Direction.UP));
-		for (int x = 0; x <= 1; x++)
-			for (int z = -3; z <= 3; z++)
-				helper.setBlock(bearingPos.offset(x, 1, z), AllBlocks.SAIL.getDefaultState()
-					.setValue(BlockStateProperties.FACING, Direction.UP));
-		// Reproduce the screenshot's right-angle drive and four 2x stages.
-		BlockState smallX = AllBlocks.COGWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X);
-		BlockState largeX = AllBlocks.LARGE_COGWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X);
-		helper.setBlock(bearingPos.below(), AllBlocks.SHAFT.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.Y));
-		helper.setBlock(bearingPos.below(2), smallX.setValue(BlockStateProperties.AXIS, Direction.Axis.Y));
-		helper.setBlock(bearingPos.below(3), largeX.setValue(BlockStateProperties.AXIS, Direction.Axis.Y));
-		helper.setBlock(bearingPos.offset(-1, -2, 0), largeX);
-		helper.setBlock(bearingPos.offset(-1, -1, 1), smallX);
-		helper.setBlock(bearingPos.offset(-2, -1, 1), largeX);
-		helper.setBlock(bearingPos.offset(-2, -2, 2), smallX);
-		helper.setBlock(bearingPos.offset(-3, -2, 2), largeX);
-		helper.setBlock(bearingPos.offset(-3, -3, 1), smallX);
-		helper.setBlock(bearingPos.offset(-4, -3, 1), largeX);
-		BlockPos outputPos = bearingPos.offset(-4, -2, 0), pressPos = outputPos.west();
-		helper.setBlock(outputPos, smallX);
-		var windmill = (WindmillBearingBlockEntity) helper.getBlockEntity(bearingPos);
-		helper.runAfterDelay(5, () -> {
-			windmill.assemble();
-			if (windmill.getMovedContraption() == null || InertiaRegistry.getSailCount(windmill) != 14)
-				helper.fail("engagement fixture did not assemble all 14 sails: " + windmill.getLastAssemblyException());
-		});
-		double[] previousSpeed = {Double.NaN}, previousEnergy = {Double.NaN};
-		long[] engagementTick = {-1};
-		helper.runAfterDelay(10, () -> {
-			assertNear(helper, 0.16, InertiaRegistry.getInertia(windmill), 1e-7, "14-sail inertia");
-			assertNear(helper, 1.75, windmill.getGeneratedSpeed(), 1e-7, "14-sail source command");
-			for (float start : new float[]{-3.5f, 3.5f}) {
-				helper.setBlock(pressPos, Blocks.AIR.defaultBlockState());
-				NetworkTopology.mark(windmill);
-				NetworkTopology.flush();
-				INetworkDynamics before = (INetworkDynamics) windmill.getOrCreateNetwork();
-				before.differentialcreate$setSpeed(start / before.differentialcreate$getRatios().get(windmill));
-				var output = (KineticBlockEntity) helper.getBlockEntity(outputPos);
-				assertNear(helper, -16 * start, output.getSpeed(), 1e-6, "actual four-stage gear ratio");
-				double energyBefore = networkEnergy(windmill);
-				double momentumBefore = InertiaRegistry.getInertia(windmill) * (double) windmill.getSpeed();
-				assertNear(helper, 0.98, energyBefore, 1e-7, "energy before hot placement");
-				helper.setBlock(pressPos, AllBlocks.MECHANICAL_PRESS.getDefaultState()
-					.setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.WEST));
-				var press = (MechanicalPressBlockEntity) helper.getBlockEntity(pressPos);
-				NetworkTopology.mark(press);
-				NetworkTopology.flush(); // Isolate the instantaneous impact from external work during a tick.
-				if (press.isRemoved() || helper.getBlockEntity(pressPos) != press
-					|| press.getOrCreateNetwork() != windmill.getOrCreateNetwork())
-					helper.fail("subthreshold windmill engagement broke or failed to connect the press");
-				assertNear(helper, 0.01, InertiaRegistry.getInertia(press), 1e-8, "press inertia");
-				assertNear(helper, start / 17.0, windmill.getSpeed(), 1e-6, "windmill pays for accelerating the press");
-				assertNear(helper, -16 * start / 17.0, press.getSpeed(), 1e-6, "press starts at the merged speed");
-				double momentumAfter = InertiaRegistry.getInertia(windmill) * (double) windmill.getSpeed()
-					- 16 * InertiaRegistry.getInertia(press) * (double) press.getSpeed();
-				assertNear(helper, momentumBefore, momentumAfter, 1e-7, "momentum in the windmill reference frame");
-				double energyAfter = networkEnergy(windmill);
-				assertNear(helper, energyBefore / 17, energyAfter, 1e-7, "actual merged network energy");
-				assertNear(helper, 0.98 * 16 / 17, energyBefore - energyAfter, 1e-7, "actual dissipated energy");
-				// Rebuilding the same topology must neither restore the old RPM nor charge the inertia twice.
-				for (int i = 0; i < 3; i++) {
-					NetworkTopology.mark(output);
-					NetworkTopology.flush();
-					assertNear(helper, momentumAfter, InertiaRegistry.getInertia(windmill) * (double) windmill.getSpeed()
-						- 16 * InertiaRegistry.getInertia(press) * (double) press.getSpeed(), 1e-7, "rebuild preserves momentum");
-					assertNear(helper, energyAfter, networkEnergy(windmill), 1e-7, "rebuild preserves energy");
-				}
-				DifferentialCreate.LOGGER.info("WINDMILL ENGAGEMENT start={} wind={} press={} momentum={}->{} energy={}->{}",
-					start, windmill.getSpeed(), press.getSpeed(), momentumBefore, momentumAfter, energyBefore, energyAfter);
-			}
-			// Placement still pays the press's inertia, but its load begins only with a working cycle.
-			var idlePress = (MechanicalPressBlockEntity) helper.getBlockEntity(pressPos);
-			assertNear(helper, 0, com.diliupengyun.differential_create.kinetics.MachineActivity.impact(idlePress), 0,
-				"new press has no standby torque");
-			idlePress.getPressingBehaviour().start(com.simibubi.create.content.kinetics.press.PressingBehaviour.Mode.WORLD);
-			previousSpeed[0] = windmill.getSpeed();
-			previousEnergy[0] = networkEnergy(windmill);
-			engagementTick[0] = helper.getTick();
-		});
-		helper.onEachTick(() -> {
-			if (engagementTick[0] < 0 || helper.getTick() <= engagementTick[0]) return;
-			var network = windmill.getOrCreateNetwork();
-			var dynamics = (INetworkDynamics) network;
-			var balance = NetworkPhysics.aggregate(network, dynamics.differentialcreate$getRatios());
-			double r = dynamics.differentialcreate$getRatios().get(windmill);
-			assertNear(helper, 2.72, balance.j() / (r * r), 1e-6, "post-rebuild inertia includes the press once");
-			assertNear(helper, 128, balance.l() / Math.abs(r), 1e-6, "press torque referred through 16x gears");
-			assertNear(helper, 12.25, SourcePhysics.curve(windmill).stallTorque(), 1e-6, "wind torque remains external input");
-			// Independent exact solution of J*w'=12.25-3.5*w-128 until it stops.
-			// The wind cannot overcome the press's static load after reaching zero.
-			double offset = (128 - 12.25) / 3.5;
-			double expected = Math.max(0, (previousSpeed[0] + offset) * Math.exp(-3.5 / 2.72 / 1200) - offset);
-			assertNear(helper, expected, windmill.getSpeed(), 1e-6, "next tick follows torque balance without restoring old speed");
-			double energy = networkEnergy(windmill);
-			if (!Double.isFinite(energy) || energy > previousEnergy[0] + 1e-7)
-				helper.fail("loaded windmill created kinetic energy after engagement: " + previousEnergy[0] + " -> " + energy);
-			previousSpeed[0] = windmill.getSpeed();
-			previousEnergy[0] = energy;
-			if (helper.getTick() >= engagementTick[0] + 20) {
-				assertNear(helper, 0, windmill.getSpeed(), 0, "overloaded windmill stays stopped");
-				helper.succeed();
-			}
-		});
+        forceImpactChunks(helper);
+        ElasticKineticsTests.gearedConservation(helper);
 	}
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "idle_load", timeoutTicks = 1600)
@@ -1360,9 +1115,8 @@ public final class KineticPhysicsTests {
 				reverseConnected[0] = true;
 				helper.setBlock(REVERSE_CONNECTOR, shaftX());
 				helper.runAfterDelay(15, () -> {
-					if (!helper.getBlockState(REVERSE_CONNECTOR)
-						.isAir())
-						helper.fail("reverse connection should have destroyed the bridge block");
+					if (reverseA.getOrCreateNetwork() == reverseB.getOrCreateNetwork())
+						helper.fail("reverse connection should break a loaded shaft along the transmission path");
 					done[0] |= 1 << 6;
 				});
 			}

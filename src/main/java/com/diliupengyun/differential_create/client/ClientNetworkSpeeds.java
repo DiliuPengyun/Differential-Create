@@ -8,6 +8,7 @@ import java.util.Set;
 import com.diliupengyun.differential_create.kinetics.NetworkPhysics;
 import com.diliupengyun.differential_create.kinetics.NetworkStatePayload;
 import com.diliupengyun.differential_create.kinetics.NetworkStructurePayload;
+import com.diliupengyun.differential_create.kinetics.RotorStatePayload;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 
 import dev.engine_room.flywheel.lib.visualization.VisualizationHelper;
@@ -17,12 +18,10 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
 
 /**
- * Client-side mirror of the server's kinetic network speeds. Structure
- * packets install the member→network mapping and ratios; state packets
- * deliver speed and the complete torque equation, advanced with the same
- * piecewise analytical solution as the server. Member speeds are r_i × ω of
- * their network, so all members of a network are strictly proportional —
- * no per-member jitter or angle drift between connected blocks.
+ * Client-side mirror of local rotor states. The server aligns assembly
+ * phases across shaft/gear contacts while keeping clutch halves independent.
+ * Structure and aggregate state packets provide a fallback until the local
+ * rotor packet arrives; they cannot replace the angles of slipping rotors.
  * <p>
  * Only runs on the client; lookups degrade gracefully to "no data" so
  * block entities never synced yet fall back to their vanilla field.
@@ -38,6 +37,8 @@ public final class ClientNetworkSpeeds {
 
 	/** Extrapolated state of one network: shared ω plus the ratio table. */
 	private static final class Entry {
+		final Map<BlockPos, Rotor> rotors = new HashMap<>();
+		double kineticEnergy = Double.NaN;
 		final Map<BlockPos, Float> ratios = new HashMap<>();
 		float speed;
 		NetworkPhysics.Balance balance = new NetworkPhysics.Balance(0, 0, 0, 0, 0);
@@ -83,6 +84,22 @@ public final class ClientNetworkSpeeds {
 		}
 	}
 
+	private static final class Rotor {
+		float speed, torque;
+		double angle;
+		RotationFrame frame;
+	}
+
+	public static void applyRotors(ResourceKey<Level> dimension, RotorStatePayload payload) {
+		Entry entry = networks.computeIfAbsent(dimension, $ -> new HashMap<>())
+			.computeIfAbsent(payload.networkId(), $ -> new Entry());
+		entry.kineticEnergy = payload.energy();
+		for (var update : payload.rotors()) {
+			Rotor rotor = entry.rotors.computeIfAbsent(update.pos(), $ -> new Rotor());
+			rotor.speed = update.speed(); rotor.torque = update.torque(); rotor.angle = update.angle();
+		}
+	}
+
 	public static void applyStructure(ResourceKey<Level> dimension, long networkId,
 		List<NetworkStructurePayload.Entry> entries) {
 		Map<Long, Entry> levelNetworks = networks.computeIfAbsent(dimension, $ -> new HashMap<>());
@@ -115,6 +132,7 @@ public final class ClientNetworkSpeeds {
 		}
 		entry.rotationDirty = true;
 		entry.ratios.clear();
+		entry.rotors.keySet().retainAll(entries.stream().map(NetworkStructurePayload.Entry::pos).toList());
 		Map<BlockPos, Long> memberMap = memberToNetwork.computeIfAbsent(dimension, $ -> new HashMap<>());
 		for (NetworkStructurePayload.Entry structureEntry : entries) {
 			entry.ratios.put(structureEntry.pos(), structureEntry.ratio());
@@ -158,6 +176,13 @@ public final class ClientNetworkSpeeds {
 			int renderTick = minecraft.levelRenderer.getTicks();
 			levelNetworks.forEach((id, entry) -> {
 				if (!entry.hasState) return;
+				entry.rotors.forEach((pos, rotor) -> {
+					boolean frozen = level.tickRateManager().isFrozen();
+					double advance = frozen ? 0 : rotor.speed * .3;
+					rotor.frame = new RotationFrame(renderTick, rotor.angle, advance);
+					rotor.angle += advance;
+				});
+				if (!entry.rotors.isEmpty()) entry.rotationDirty = true;
 				if (level.tickRateManager().isFrozen())
 					entry.freeze(renderTick);
 				else
@@ -178,20 +203,22 @@ public final class ClientNetworkSpeeds {
 	}
 
 	/**
-	 * Physical speed of a member on the client (ratio × extrapolated network
-	 * ω), or null when nothing was synced for this block entity yet — the
+	 * Physical speed of a member, falling back to the extrapolated network
+	 * reference, or null when nothing was synced for this block entity yet — the
 	 * caller falls back to the vanilla field then.
 	 */
 	public static Float speedOf(KineticBlockEntity kbe) {
 		Entry entry = entryOf(kbe);
 		if (entry == null)
 			return null;
+		Rotor rotor = entry.rotors.get(kbe.getBlockPos());
+		if (rotor != null) return rotor.speed;
 		Float ratio = entry.ratios.get(kbe.getBlockPos());
 		return ratio == null ? null : ratio * entry.speed;
 	}
 
 	/**
-	 * Accumulated rotation angle of a member (ratio × network θ, degrees),
+	 * Accumulated assembly-aligned rotation angle of a member in degrees,
 	 * or null when unsynced. Drives the continuous-animation offset
 	 * compensation in the render hooks.
 	 */
@@ -202,6 +229,10 @@ public final class ClientNetworkSpeeds {
 
 	public static RotationFrame rotationOf(KineticBlockEntity kbe) {
 		Entry entry = entryOf(kbe);
+		if (entry != null) {
+			Rotor rotor = entry.rotors.get(kbe.getBlockPos());
+			if (rotor != null && rotor.frame != null) return rotor.frame;
+		}
 		if (entry == null || entry.renderFrame == null)
 			return null;
 		Float ratio = entry.ratios.get(kbe.getBlockPos());
@@ -225,7 +256,14 @@ public final class ClientNetworkSpeeds {
 
 	public static Double energyOf(KineticBlockEntity be) {
 		Entry entry = entryOf(be);
+		if (entry != null && Double.isFinite(entry.kineticEnergy)) return entry.kineticEnergy;
 		return entry == null ? null : 0.5 * entry.balance.j() * entry.speed * entry.speed;
+	}
+
+	public static Float transmittedTorqueOf(KineticBlockEntity be) {
+		Entry entry = entryOf(be);
+		Rotor rotor = entry == null ? null : entry.rotors.get(be.getBlockPos());
+		return rotor == null ? null : rotor.torque;
 	}
 
 }

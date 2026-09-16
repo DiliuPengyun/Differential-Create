@@ -22,8 +22,6 @@ import com.simibubi.create.content.kinetics.transmission.ClutchBlockEntity;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.sounds.SoundEvents;
-import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
@@ -72,47 +70,6 @@ public final class NetworkTopology {
 
 	public static void clear() { pending.clear(); }
 
-	/** Output-side torque of a locked clutch. Alternate rigid paths carry the load directly. */
-	public static double clutchTorque(ClutchBlockEntity clutch, KineticNetwork network) {
-		KineticBlockEntity output = ClutchPhysics.output(clutch);
-		if (output == null) return 0;
-		INetworkDynamics dynamics = (INetworkDynamics) network;
-		NetworkData data = dynamics.differentialcreate$data();
-		Map<KineticBlockEntity, Float> side = data.clutchSides.get(clutch);
-		if (side == null) {
-			side = new HashMap<>();
-			ArrayDeque<KineticBlockEntity> queue = new ArrayDeque<>();
-			queue.add(output);
-			while (!queue.isEmpty()) {
-				KineticBlockEntity from = queue.removeFirst();
-				if (side.containsKey(from)) continue;
-				if (from == clutch) {
-					data.clutchSides.put(clutch, Map.of());
-					return 0;
-				}
-				Float r = dynamics.differentialcreate$getRatios().get(from);
-				if (r == null) continue;
-				side.put(from, r);
-				for (BlockPos pos : locations(from)) {
-					if (!from.getLevel().isLoaded(pos)) continue;
-					BlockEntity block = from.getLevel().getBlockEntity(pos);
-					if (!(block instanceof KineticBlockEntity to) || (from == output && to == clutch)) continue;
-					if (connection(from, to) != 0) queue.add(to);
-				}
-			}
-			data.clutchSides.put(clutch, side);
-		}
-		NetworkPhysics.Balance all = dynamics.differentialcreate$data().balance;
-		NetworkPhysics.Balance out = NetworkPhysics.aggregate(network, side, data.clutchBalances.get(clutch));
-		data.clutchBalances.put(clutch, out);
-		double w = dynamics.differentialcreate$getSpeed();
-		double acceleration = all.j() > 0 ? (all.t0() - all.k() * w - all.l() * Math.signum(w)
-			- all.fanDrag() * w * Math.abs(w)) / all.j() : 0;
-		double reaction = out.j() * acceleration - out.t0() + out.k() * w
-			+ out.l() * Math.signum(w) + out.fanDrag() * w * Math.abs(w);
-		return reaction / dynamics.differentialcreate$getRatios().get(clutch);
-	}
-
 	private static List<BlockPos> locations(KineticBlockEntity be) {
 		List<BlockPos> positions = new ArrayList<>();
 		for (Direction direction : Direction.values())
@@ -149,46 +106,6 @@ public final class NetworkTopology {
 		if (a instanceof ClutchBlockEntity clutch && ClutchPhysics.output(clutch) == b) return clutch;
 		if (b instanceof ClutchBlockEntity clutch && ClutchPhysics.output(clutch) == a) return clutch;
 		return null;
-	}
-
-	/**
-	 * A source reversal may release surrounding clutches only when its own
-	 * rigid side can survive the impact. A shaft bypass stays in that side.
-	 */
-	public static boolean slipForSourceImpact(KineticBlockEntity source, double commandedSpeed) {
-		INetworkDynamics dynamics = (INetworkDynamics) source.getOrCreateNetwork();
-		Map<KineticBlockEntity, Float> ratios = dynamics.differentialcreate$getRatios();
-		Map<KineticBlockEntity, Float> side = new HashMap<>();
-		Set<ClutchBlockEntity> boundaries = new LinkedHashSet<>();
-		ArrayDeque<KineticBlockEntity> queue = new ArrayDeque<>();
-		queue.add(source);
-		while (!queue.isEmpty()) {
-			KineticBlockEntity from = queue.removeFirst();
-			Float ratio = ratios.get(from);
-			if (ratio == null || side.putIfAbsent(from, ratio) != null) continue;
-			for (BlockPos pos : locations(from)) {
-				if (!from.getLevel().isLoaded(pos)
-					|| !(from.getLevel().getBlockEntity(pos) instanceof KineticBlockEntity to)
-					|| !ratios.containsKey(to) || connection(from, to) == 0) continue;
-				ClutchBlockEntity clutch = separatingClutch(from, to);
-				if (clutch != null) boundaries.add(clutch);
-				else queue.add(to);
-			}
-		}
-		double rest = 0;
-		for (var entry : side.entrySet())
-			if (entry.getKey() != source)
-				rest += InertiaRegistry.getInertia(entry.getKey()) * entry.getValue() * entry.getValue();
-		double loss = RotationMath.mergeLoss(rest, dynamics.differentialcreate$getSpeed(),
-			InertiaRegistry.getInertia(source), commandedSpeed, ratios.get(source));
-		if (loss > PhysicsTuning.MERGE_BREAK_ENERGY) return false;
-		boolean released = false;
-		for (ClutchBlockEntity clutch : boundaries) {
-			if (side.containsKey(clutch) == side.containsKey(ClutchPhysics.output(clutch))) continue;
-			ClutchPhysics.startSlipping(clutch);
-			released = true;
-		}
-		return released;
 	}
 
 	private record Edge(KineticBlockEntity a, KineticBlockEntity b, float ratio, ClutchBlockEntity clutch) {}
@@ -247,7 +164,8 @@ public final class NetworkTopology {
 			KineticNetwork net = be.hasNetwork() ? be.getOrCreateNetwork() : null;
 			old.put(be, net);
 			double local = net == null ? 0 : NetworkDynamics.localSpeed(be, net);
-			groups.put(be, new Group(be, local));
+			ElasticKinetics.state(be).physicalSpeed = local;
+            groups.put(be, new Group(be, local));
 			for (BlockPos pos : locations(be)) {
 				if (!level.isLoaded(pos) || !(level.getBlockEntity(pos) instanceof KineticBlockEntity next)
 					|| !nodes.contains(next) || be.getBlockPos().compareTo(next.getBlockPos()) >= 0)
@@ -257,48 +175,34 @@ public final class NetworkTopology {
 					edges.add(new Edge(be, next, ratio, separatingClutch(be, next)));
 			}
 		}
-		// Resolve hard connections within each side before joining locked clutch
-		// faces. Remote inertia can then make the clutch slip without destroying
-		// a newly placed shaft. A rigid bypass still participates in hard impacts.
-		edges.sort(Comparator.comparing((Edge edge) -> edge.clutch != null)
-			.thenComparing(edge -> old.get(edge.a) != old.get(edge.b))
-			.thenComparing(edge -> edge.a.getBlockPos()).thenComparing(edge -> edge.b.getBlockPos()));
+		// Network membership and nominal ratios are metadata. Never project physical rotor speeds.
 		for (Edge edge : edges) {
 			Group a = groups.get(edge.a), b = groups.get(edge.b);
+			if (a == b) continue;
 			double q = a.ratios.get(edge.a) * edge.ratio / b.ratios.get(edge.b);
-			if (a == b) {
-				if (Math.abs(q - 1) > 1e-4)
-					a.jammed = true; // A contradictory gear loop has no rotational freedom.
-				continue;
-			}
-			double loss = RotationMath.mergeLoss(a.inertia, a.speed, b.inertia, b.speed, q);
-			if (edge.clutch != null) {
-				double delta = a.ratios.get(edge.a) * a.speed * edge.ratio - b.ratios.get(edge.b) * b.speed;
-				if (a.inertia > 0 && b.inertia > 0 && (Math.abs(delta) >= PhysicsTuning.CLUTCH_LOCK_EPSILON_RPM
-					|| loss > PhysicsTuning.CLUTCH_LOCK_ENERGY)) {
-					ClutchPhysics.startSlipping(edge.clutch);
-					continue;
-				}
-			} else if (old.get(edge.a) != old.get(edge.b) && loss > PhysicsTuning.MERGE_BREAK_ENERGY) {
-				KineticBlockEntity broken = old.get(edge.a) == null ? edge.a : old.get(edge.b) == null ? edge.b : edge.b;
-				level.destroyBlock(broken.getBlockPos(), true);
-				pending.computeIfAbsent(level, $ -> new LinkedHashSet<>()).addAll(nodes);
-				return; // No membership or speed has been committed yet.
-			}
 			if (ORDER.compare(a.anchor, b.anchor) > 0) {
 				Group swap = a; a = b; b = swap; q = 1 / q;
 			}
+			// Reference speed is only a legacy summary; member velocities remain independent.
 			a.speed = RotationMath.mergedSpeed(a.inertia, a.speed, b.inertia, b.speed, q);
 			a.inertia += b.inertia * q * q;
-			a.jammed |= b.jammed;
 			for (var member : b.ratios.entrySet()) {
 				a.ratios.put(member.getKey(), (float) (member.getValue() * q));
 				groups.put(member.getKey(), a);
 			}
-			if (loss > 1e-5)
-				level.playSound(null, edge.a.getBlockPos(), SoundEvents.PISTON_CONTRACT, SoundSource.BLOCKS, 0.4f, 0.8f);
+		}
+		for (KineticBlockEntity be : nodes) {
+			Set<BlockPos> retained = new HashSet<>();
+			for (Edge edge : edges) if (edge.a == be) retained.add(edge.b.getBlockPos());
+			ElasticKinetics.state(be).elasticConnections.keySet().removeIf(pos -> level.isLoaded(pos) && !retained.contains(pos));
 		}
 		install(level, nodes, oldNetworks, new LinkedHashSet<>(groups.values()));
+        for (Edge edge : edges) {
+            var data = ((INetworkDynamics) edge.a.getOrCreateNetwork()).differentialcreate$data();
+            data.connections.add(new ElasticKinetics.Connection(edge.a, edge.b, edge.ratio, edge.clutch));
+        }
+        for (Group group : new LinkedHashSet<>(groups.values()))
+            ElasticKinetics.alignAngles(group.anchor.getOrCreateNetwork());
 	}
 
 	private static void install(Level level, Set<KineticBlockEntity> nodes, Set<KineticNetwork> oldNetworks,
@@ -351,7 +255,7 @@ public final class NetworkTopology {
 				dynamics.differentialcreate$data().initialized = true;
 				dynamics.differentialcreate$data().anchor = group.savedAnchor;
 				dynamics.differentialcreate$data().jammed = group.jammed;
-				dynamics.differentialcreate$setSpeed(group.jammed ? 0 : group.speed);
+				dynamics.differentialcreate$setSpeed(group.speed);
 				dynamics.differentialcreate$setLastNonZeroTarget(16);
 				dynamics.differentialcreate$getRatios().putAll(group.ratios);
 				for (var entry : group.ratios.entrySet()) {

@@ -6,13 +6,15 @@ package com.diliupengyun.differential_create.kinetics;
  */
 public final class PhysicsTuning {
 
-	/**
-	 * Kinetic energy dissipated by an inelastic network merge above which the
-	 * contact block breaks off instead (DESIGN.md §6.3), in su/RPM (J·RPM²).
-	 * Two water wheels (J=0.15 each) at ±16 RPM dissipate 38.4 and break.
-	 * At 16 and 14 RPM they dissipate 0.15 and remain connected.
-	 */
-	public static final double MERGE_BREAK_ENERGY = 1.0;
+	/** Torque per calibrated turn; 128 torque twists one contact by only 0.0046 degrees. */
+	public static final double TORSIONAL_STIFFNESS = 10_000_000;
+	/** Viscous torque per RPM across the elastic part of a connection. */
+	public static final double TORSIONAL_DAMPING = 128;
+	/** Local-shaft structural limits, used during both transients and steady operation. */
+	public static final double TRANSMISSION_STRENGTH = 8192;
+	public static final double MACHINE_STRENGTH = 32768;
+	/** Numerical resolution, not a material contact duration (64 steps per normal tick). */
+	public static final double TORSION_MAX_STEP = RotationMath.TICK_MINUTES / 64;
 
 	/**
 	 * Fan load anchor (DESIGN.md §3.3): at this local speed (RPM) an encased
@@ -37,12 +39,6 @@ public final class PhysicsTuning {
 
 	/** Consecutive synchronous ticks before the clutch locks structurally. */
 	public static final int CLUTCH_LOCK_TICKS = 20;
-
-	/**
-	 * Maximum residual synchronization loss allowed when a clutch locks.
-	 * Larger mismatches keep slipping; they do not destroy the clutch.
-	 */
-	public static final double CLUTCH_LOCK_ENERGY = 4 * MERGE_BREAK_ENERGY;
 
 	private PhysicsTuning() {}
 

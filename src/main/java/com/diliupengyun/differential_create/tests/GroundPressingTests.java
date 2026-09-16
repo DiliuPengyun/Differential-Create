@@ -144,7 +144,8 @@ final class GroundPressingTests {
 			sequence.thenExecute(() -> { f.setSpeed(speed); before[0] = f.energy(); f.drop(Items.IRON_INGOT, 1); });
 			f.cycle(sequence).thenExecute(() -> {
 				double work = before[0] - f.energy();
-				helper.assertTrue(Math.abs(work - 12.8) < 1e-7, "full press work at " + speed + " RPM: " + work + " expected 12.8");
+				// Small extra work is passive contact damping; elastic storage is included by energy().
+				helper.assertTrue(Math.abs(work - 12.8) < 1e-4, "full press work plus contact loss at " + speed + " RPM: " + work + " expected approximately 12.8");
 				com.diliupengyun.differential_create.DifferentialCreate.LOGGER.info("PRESS_WORK initialRpm={} consumed={} expected=12.8", speed, work);
 			});
 		}
@@ -157,7 +158,7 @@ final class GroundPressingTests {
 			f.setSpeed(256); before[0] = f.energy();
 		});
 		f.cycle(sequence).thenExecute(() -> {
-			helper.assertTrue(Math.abs(before[0] - f.energy() - 12.8) < 1e-7, "depot pressing must use the same cycle work");
+			helper.assertTrue(Math.abs(before[0] - f.energy() - 12.8) < 1e-4, "depot pressing must use the same cycle work with small contact loss");
 			com.simibubi.create.content.logistics.depot.DepotBlockEntity depot = helper.getBlockEntity(new BlockPos(6, 1, 4));
 			var inventory = depot.getBehaviour(com.simibubi.create.content.logistics.depot.DepotBehaviour.TYPE).itemHandler;
 			int sheets = 0;
@@ -193,7 +194,8 @@ final class GroundPressingTests {
 		});
 		f.cycle(sequence).thenExecute(() -> {
 			double work = before[0] - f.energy();
-			helper.assertTrue(Math.abs(work - 12.8) < 2e-6, "large-inertia press must debit a full cycle: " + work);
+			// Seven geared flywheels also dissipate work in their shaft contacts (below 0.01% of the cycle).
+			helper.assertTrue(work >= 12.8 - 2e-6 && work < 12.801, "large-inertia press must debit a full cycle including contact loss: " + work);
 			com.diliupengyun.differential_create.DifferentialCreate.LOGGER.info("PRESS_WORK seven16xFlywheels consumed={} expected=12.8", work);
 			f.count(AllItems.IRON_SHEET.get(), 1);
 		}).thenSucceed();
@@ -322,7 +324,9 @@ final class GroundPressingTests {
 		private int ingots() { return count(Items.IRON_INGOT) + count(Items.COPPER_INGOT) + count(Items.GOLD_INGOT); }
 
 		private double energy() {
-			return press.getOrCreateNetwork().members.keySet().stream()
+			double springs = ((INetworkDynamics) press.getOrCreateNetwork()).differentialcreate$data().connections.stream()
+				.mapToDouble(edge -> .5 * edge.stiffness() * edge.twist * edge.twist).sum();
+			return springs + press.getOrCreateNetwork().members.keySet().stream()
 				.mapToDouble(member -> { double speed = com.diliupengyun.differential_create.kinetics.NetworkDynamics.preciseSpeed(member); return 0.5 * InertiaRegistry.getInertia(member) * speed * speed; }).sum();
 		}
 	}

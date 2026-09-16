@@ -8,6 +8,8 @@
   "gui.differentialcreate.goggles.hold_for_energy": "Hold [%s] for energy view",
   "gui.differentialcreate.goggles.release_for_dynamics": "Release [%s] for dynamics view",
   "gui.differentialcreate.goggles.torque": "Torque: %s su/RPM",
+  "gui.differentialcreate.goggles.transmitted_torque": "Transmitted torque: %s su/RPM",
+  "gui.differentialcreate.goggles.strength": "Structural strength: %s su/RPM",
   "gui.differentialcreate.goggles.no_load_speed": "No-load Speed: %s RPM",
   "gui.differentialcreate.goggles.load_factor": "Load Factor: %s",
   "gui.differentialcreate.goggles.speed": "Speed: %s RPM",

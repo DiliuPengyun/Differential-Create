@@ -94,6 +94,9 @@ public abstract class KineticNetworkMixin implements INetworkDynamics {
 	@Override
 	public void differentialcreate$setSpeed(double speed) {
 		this.differentialcreate$speed = speed;
+		if (!differentialcreate$data.publishingReference)
+			differentialcreate$ratios.forEach((be, ratio) ->
+				((com.diliupengyun.differential_create.kinetics.IMemberDynamics) be).differentialcreate$member().physicalSpeed = ratio * speed);
 	}
 
 	@Override

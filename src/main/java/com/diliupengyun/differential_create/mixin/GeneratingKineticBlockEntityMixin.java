@@ -21,28 +21,6 @@ public abstract class GeneratingKineticBlockEntityMixin {
 	private void differentialcreate$updateSource(CallbackInfo ci) {
 		GeneratingKineticBlockEntity self = (GeneratingKineticBlockEntity) (Object) this;
 		if (self.getLevel() != null && !self.getLevel().isClientSide) {
-			var member = ((com.diliupengyun.differential_create.kinetics.IMemberDynamics) self).differentialcreate$member();
-			float command = self.getGeneratedSpeed();
-			boolean activated = Float.isFinite(member.sourceCommand) && Math.signum(command) != Math.signum(member.sourceCommand);
-			member.sourceCommand = command;
-			if (activated && self.hasNetwork() && self.getSpeed() * command < 0) {
-				var network = self.getOrCreateNetwork();
-				var dynamics = (INetworkDynamics) network;
-				float ratio = dynamics.differentialcreate$getRatios().getOrDefault(self, 0f);
-				if (ratio != 0) {
-					double sourceInertia = InertiaRegistry.getInertia(self);
-					double rest = Math.max(0, NetworkPhysics.aggregate(network, dynamics.differentialcreate$getRatios()).j()
-						- sourceInertia * ratio * ratio);
-					double loss = RotationMath.mergeLoss(rest, dynamics.differentialcreate$getSpeed(), sourceInertia,
-						SourcePhysics.curve(self).noLoadSpeed(), ratio);
-					if (loss > PhysicsTuning.MERGE_BREAK_ENERGY
-						&& !NetworkTopology.slipForSourceImpact(self, SourcePhysics.curve(self).noLoadSpeed())) {
-						self.getLevel().destroyBlock(self.getBlockPos(), true);
-						ci.cancel();
-						return;
-					}
-				}
-			}
 			NetworkTopology.mark(self);
 			self.sendData();
 		}

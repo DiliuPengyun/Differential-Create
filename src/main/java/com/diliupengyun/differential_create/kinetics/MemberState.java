@@ -3,6 +3,14 @@ package com.diliupengyun.differential_create.kinetics;
 import net.minecraft.core.BlockPos;
 
 public final class MemberState {
+	/** Independent physical rotor state; Create's network is now topology/metadata only. */
+	public double physicalSpeed = Double.NaN;
+	/** Integrated render angle in turns, with its assembly zero aligned on non-clutch connections. */
+	public double angle;
+	public double lastInertia = Double.NaN;
+	public double transmittedTorque;
+	public record SavedConnection(double ratio, double twist) {}
+	public final java.util.Map<BlockPos, SavedConnection> elasticConnections = new java.util.HashMap<>();
 	public float savedRatio = Float.NaN;
 	public float savedNominal = 16;
 	public BlockPos savedAnchor;

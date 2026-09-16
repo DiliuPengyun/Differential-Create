@@ -47,6 +47,78 @@ import net.neoforged.neoforge.items.IItemHandler;
 final class BrassClutchTests {
 	private BrassClutchTests() {}
 
+	static void hotAttach(GameTestHelper helper) {
+		var clutches = new ArrayList<ClutchBlockEntity>();
+		var flywheels = new ArrayList<KineticBlockEntity>();
+		for (int sign : new int[]{1, -1}) {
+			int z = sign == 1 ? 3 : 11;
+			motor(helper, new BlockPos(2, 3, z), sign * 256);
+			helper.setBlock(new BlockPos(3, 3, z), AllBlocks.SHAFT.getDefaultState()
+				.setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+			BlockPos pos = new BlockPos(4, 3, z);
+			helper.setBlock(pos, ModContent.BRASS_CLUTCH.getDefaultState()
+				.setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+			ClutchBlockEntity clutch = helper.getBlockEntity(pos);
+			clutch.source = helper.absolutePos(pos.west());
+			NetworkTopology.mark(clutch);
+			clutches.add(clutch);
+		}
+		helper.startSequence().thenExecuteAfter(40, () -> {
+			for (int i = 0; i < clutches.size(); i++) {
+				var clutch = clutches.get(i);
+				near(helper, 512, Math.abs(clutch.getSpeed()), .1, "brass clutch input is already at high speed");
+				helper.assertTrue(state(clutch).differentialcreate$isLocked(), "bare output synchronized before attachment");
+				BlockPos pos = new BlockPos(5, 3, i == 0 ? 3 : 11);
+				helper.setBlock(pos, AllBlocks.FLYWHEEL.getDefaultState()
+					.setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+				KineticBlockEntity flywheel = helper.getBlockEntity(pos);
+				NetworkTopology.mark(flywheel);
+				flywheels.add(flywheel);
+			}
+			NetworkTopology.flush();
+			for (int i = 0; i < flywheels.size(); i++) {
+				var flywheel = flywheels.get(i);
+				var clutch = clutches.get(i);
+				near(helper, 0, flywheel.getSpeed(), 0, "new flywheel retains its stationary initial state");
+				helper.assertTrue(ClutchPhysics.output(clutch) == flywheel, "flywheel is connected to the output face: source="
+					+ clutch.source + ", clutch=" + clutch.getBlockPos() + ", flywheel=" + flywheel.getBlockPos());
+				helper.assertTrue(clutch.getOrCreateNetwork() == flywheel.getOrCreateNetwork(), "attached flywheel participates in the contact graph");
+			}
+		}).thenWaitUntil(() -> {
+			// Block placement and the server physics step occur in different phases.
+			for (int i = 0; i < flywheels.size(); i++) {
+				var flywheel = flywheels.get(i);
+				var clutch = clutches.get(i);
+				helper.assertTrue(Math.abs(flywheel.getSpeed()) > 0, "wait for the first physical step after attachment: input="
+					+ clutch.getSpeed() + ", output=" + flywheel.getSpeed() + ", torque="
+					+ state(clutch).differentialcreate$getLastCouplingTorque() + ", shaft="
+					+ helper.getLevel().getBlockState(clutch.getBlockPos().west()) + ", output face=" + ClutchPhysics.output(clutch));
+			}
+		}).thenExecute(() -> {
+			for (int i = 0; i < clutches.size(); i++) {
+				var clutch = clutches.get(i);
+				var flywheel = flywheels.get(i);
+				helper.assertFalse(clutch.isRemoved() || flywheel.isRemoved(), "hot attachment preserves the clutch and flywheel");
+				helper.assertTrue(flywheel.getSpeed() * clutch.getSpeed() > 0 && Math.abs(flywheel.getSpeed()) < 2,
+					"flywheel starts accelerating in the driven direction with finite friction torque: input="
+					+ clutch.getSpeed() + ", output=" + flywheel.getSpeed() + ", torque="
+					+ state(clutch).differentialcreate$getLastCouplingTorque());
+				helper.assertFalse(state(clutch).differentialcreate$isLocked(), "hot attachment makes the friction surface slip");
+				near(helper, 1024, Math.abs(state(clutch).differentialcreate$getLastCouplingTorque()), .1,
+					"brass clutch remains within its friction capacity");
+			}
+		}).thenExecuteAfter(20, () -> {
+			for (int i = 0; i < clutches.size(); i++) {
+				var clutch = clutches.get(i);
+				var flywheel = flywheels.get(i);
+				helper.assertFalse(clutch.isRemoved() || flywheel.isRemoved(), "continued high-speed slip stays stable");
+				helper.assertTrue(Math.abs(flywheel.getSpeed()) > 20 && Math.abs(flywheel.getSpeed()) < 40,
+					"attached flywheel gains speed gradually over subsequent ticks");
+				assertCompactGoggles(helper, clutch);
+			}
+		}).thenSucceed();
+	}
+
 	static void controls(GameTestHelper helper) {
 		var clutches = new ArrayList<BrassClutchBlockEntity>();
 		var drivers = new ArrayList<KineticBlockEntity>();
@@ -222,7 +294,7 @@ final class BrassClutchTests {
 			for (int i = 0; i < 2; i++) {
 				var clutch = clutches.get(i);
 				helper.assertFalse(state(clutch).differentialcreate$isLocked(), "reducing pressure below load releases the lock");
-				helper.assertFalse(motors.get(i).getOrCreateNetwork() == outputs.get(i).getOrCreateNetwork(), "overload splits networks");
+				helper.assertTrue(Math.abs(motors.get(i).getSpeed() - outputs.get(i).getSpeed()) > .001, "overload permits independent rotor speeds");
 				near(helper, 102.4, Math.abs(state(clutch).differentialcreate$getLastCouplingTorque()), .02, "slip obeys the manual ceiling");
 				setting((BrassClutchBlockEntity) clutch).setValue(50);
 				signal(helper, clutch, 15);
@@ -335,7 +407,7 @@ final class BrassClutchTests {
 
 	private static void assertLoaded(GameTestHelper helper, ClutchBlockEntity clutch, KineticBlockEntity motor, KineticBlockEntity output) {
 		helper.assertFalse(clutch.isRemoved(), "brass clutch survives engagement");
-		helper.assertTrue(state(clutch).differentialcreate$isLocked(), "brass clutch locks under 128 torque");
+		helper.assertTrue(state(clutch).differentialcreate$isLocked(), "brass clutch locks under 128 torque: slip=" + state(clutch).differentialcreate$getLastDeltaOmega() + ", torque=" + state(clutch).differentialcreate$getLastCouplingTorque());
 		helper.assertTrue(motor.getOrCreateNetwork() == output.getOrCreateNetwork(), "loaded clutch connects both networks");
 		helper.assertTrue(Math.abs(output.getSpeed()) > 10, "loaded factory reaches operating speed");
 		near(helper, NetworkDynamics.preciseSpeed(motor), NetworkDynamics.preciseSpeed(output), .001, "partial pressure still permits full synchronization");

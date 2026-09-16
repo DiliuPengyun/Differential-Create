@@ -4,12 +4,15 @@ import com.diliupengyun.differential_create.client.PortRotation;
 import com.diliupengyun.differential_create.client.RotationFrame;
 import com.diliupengyun.differential_create.client.InstanceRotation;
 import com.diliupengyun.differential_create.client.FreeShaftRotation;
+import com.diliupengyun.differential_create.kinetics.ShaftPhases;
+import java.util.List;
 
 /** Exercises the production animation math without a GPU or a Minecraft client. */
 public final class RenderingRegression {
 	private static int checks;
 
 	public static void run() {
+		assemblyPhases();
 		largeCogOffsets();
 		freeClutchOutput();
 		PortRotation wheel = new PortRotation();
@@ -61,6 +64,35 @@ public final class RenderingRegression {
 		RotationFrame resumed = new RotationFrame(102, 123.6, 4.8);
 		angle(123.6, shader(resumed, 102, 0), "resume starts at the frozen phase");
 		System.out.println("Rendering regression: " + checks + " checks passed");
+	}
+
+	private static void assemblyPhases() {
+		// A spinning flywheel existed before the shaft. Their arbitrary angle
+		// origins must be reconciled even if they already have the same RPM.
+		double[] oldAngles = {17.1375, 0, -41.8, -2.25, 300};
+		var contacts = List.of(new ShaftPhases.Contact(0, 1, 1, 0),
+			new ShaftPhases.Contact(1, 2, -2, .0001), new ShaftPhases.Contact(3, 4, 1, 0));
+		double[] aligned = ShaftPhases.align(oldAngles, contacts);
+		near(oldAngles[0], aligned[0], 0, "existing flywheel keeps its phase when a shaft is placed");
+		near(aligned[0], aligned[1], 0, "new shaft shares the flywheel assembly zero");
+		near(.0001, -2 * aligned[1] - aligned[2], 1e-12, "geared contact retains physical spring twist");
+		near(oldAngles[3], aligned[3], 0, "opposite clutch half retains its independent phase");
+		near(aligned[3], aligned[4], 0, "output shafts align with their own clutch half");
+		near(0, oldAngles[1], 0, "assembly calculation does not overwrite its input");
+		double[] rebuilt = ShaftPhases.align(aligned, contacts);
+		for (int i = 0; i < aligned.length; i++)
+			near(aligned[i], rebuilt[i], 1e-12, "unchanged topology does not move the visible phase");
+		var reversed = ShaftPhases.align(new double[]{aligned[0], -100},
+			List.of(new ShaftPhases.Contact(1, 0, -.5, .00005)));
+		near(-2 * aligned[0] - .0001, reversed[1], 1e-12, "traversing a gear contact backwards preserves sign and preload");
+		var split = ShaftPhases.align(aligned, List.of(new ShaftPhases.Contact(0, 1, 1, 0)));
+		near(aligned[2], split[2], 0, "detached component retains its last angle");
+		for (float tick : new float[]{100, 100.25f, 101}) {
+			var wheel = new RotationFrame(100, aligned[0] * 360, 4.8);
+			var shaft = new RotationFrame(100, aligned[1] * 360, 4.8);
+			angle(wheel.angleAt(tick) + 22.5, shader(shaft, tick, 22.5f),
+				"ordinary wheel rendering and instanced shaft rendering agree after hot placement");
+		}
 	}
 
 	private static void freeClutchOutput() {

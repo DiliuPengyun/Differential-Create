@@ -108,8 +108,18 @@ public final class KineticGoggleInfo {
 			return;
 		}
 
-		// Transmission members carry no load of their own: just the speed
+		// Transmission members show their local speed and transmitted torque.
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.speed", fmt1(local)));
+		// Keep the nullable client reading boxed: a Float/float conditional
+		// unboxes it before the null check while rotor packets are still pending.
+		Float transmitted;
+		if (kbe.getLevel() != null && kbe.getLevel().isClientSide)
+			transmitted = ClientNetworkSpeeds.transmittedTorqueOf(kbe);
+		else
+			transmitted = (float) ElasticKinetics.state(kbe).transmittedTorque;
+		if (transmitted != null)
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.transmitted_torque", fmt(transmitted)));
+		tooltip.add(Component.translatable("gui.differentialcreate.goggles.strength", fmt(ElasticKinetics.strengthOf(kbe))));
 	}
 
 	private static void appendEnergy(KineticBlockEntity kbe, List<Component> tooltip) {

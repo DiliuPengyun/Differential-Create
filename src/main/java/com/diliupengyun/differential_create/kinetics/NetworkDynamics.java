@@ -19,6 +19,8 @@ public final class NetworkDynamics {
 	}
 
 	public static double localSpeed(KineticBlockEntity be, KineticNetwork network) {
+		double local = ElasticKinetics.state(be).physicalSpeed;
+		if (Double.isFinite(local)) return local;
 		INetworkDynamics dynamics = (INetworkDynamics) network;
 		Float r = dynamics.differentialcreate$getRatios().get(be);
 		return r == null ? 0 : r * dynamics.differentialcreate$getSpeed();
@@ -66,6 +68,16 @@ public final class NetworkDynamics {
 			tag.putFloat("DCClutchFreeOutputSpeed", clutch.differentialcreate$getFreeOutputSpeed());
 		}
 		if (clientPacket || be.getLevel() == null || be.getLevel().isClientSide || !be.hasNetwork()) return;
+		MemberState local = ElasticKinetics.state(be);
+		tag.putDouble("DCLocalSpeed", preciseSpeed(be));
+		tag.putDouble("DCShaftAngle", local.angle);
+		var contacts = new net.minecraft.nbt.ListTag();
+		local.elasticConnections.forEach((pos, saved) -> {
+			var contact = new CompoundTag();
+			contact.putLong("Pos", pos.asLong()); contact.putDouble("Ratio", saved.ratio()); contact.putDouble("Twist", saved.twist());
+			contacts.add(contact);
+		});
+		tag.put("DCElasticContacts", contacts);
 		INetworkDynamics dynamics = (INetworkDynamics) be.getOrCreateNetwork();
 		CompoundTag network = tag.getCompound("Network");
 		network.putDouble("DCSpeed", dynamics.differentialcreate$getSpeed());
@@ -90,6 +102,17 @@ public final class NetworkDynamics {
 			clutch.differentialcreate$setPreviousTorqueLimit(-1);
 		}
 		if (clientPacket || !tag.contains("Network")) return;
+		MemberState local = ElasticKinetics.state(be);
+		local.physicalSpeed = tag.contains("DCLocalSpeed") ? tag.getDouble("DCLocalSpeed") : Double.NaN;
+		local.angle = tag.getDouble("DCShaftAngle");
+		if (!Double.isFinite(local.angle)) local.angle = 0;
+		local.elasticConnections.clear();
+		for (var value : tag.getList("DCElasticContacts", net.minecraft.nbt.Tag.TAG_COMPOUND)) {
+			var contact = (CompoundTag) value;
+			double ratio = contact.getDouble("Ratio"), twist = contact.getDouble("Twist");
+			if (Double.isFinite(ratio) && ratio != 0 && Double.isFinite(twist))
+				local.elasticConnections.put(BlockPos.of(contact.getLong("Pos")), new MemberState.SavedConnection(ratio, twist));
+		}
 		CompoundTag network = tag.getCompound("Network");
 		IMemberDynamics member = (IMemberDynamics) be;
 		member.differentialcreate$setPendingNetworkSpeed(network.contains("DCSpeed") ? network.getDouble("DCSpeed")

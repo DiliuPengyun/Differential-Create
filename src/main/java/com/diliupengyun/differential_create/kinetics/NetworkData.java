@@ -6,6 +6,8 @@ import net.minecraft.core.BlockPos;
 public final class NetworkData {
 	public void invalidate() { staticBalance = null; clutchBalances.clear(); }
 	public boolean initialized;
+	public boolean publishingReference;
+	public final java.util.List<ElasticKinetics.Connection> connections = new java.util.ArrayList<>();
 	public boolean jammed;
 	public BlockPos anchor;
 	public NetworkPhysics.Balance staticBalance;

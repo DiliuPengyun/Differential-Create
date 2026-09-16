@@ -5,7 +5,7 @@ import com.simibubi.create.content.kinetics.base.KineticBlockEntityRenderer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.Direction.Axis;
 
-/** Both rendering paths use the network's shared angle and the shader's clock. */
+/** Both rendering paths use the member's assembly-aligned angle and the shader's clock. */
 public final class ClientKineticAngles {
 	private ClientKineticAngles() {}
 
