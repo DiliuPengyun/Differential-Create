@@ -1,6 +1,6 @@
-# Differential Create
+# 微分动力（Differential Create）
 
-Create 6.0.10 的连续动力学附属模组，适用于 Minecraft 1.21.1、NeoForge 21.1.238、Java 21。
+微分动力是 Create 6.0.10 的动力学附属模组，适用于 Minecraft 1.21.1、NeoForge 21.1.238、Java 21。
 
 动力源提供扭矩，负载和惯量决定转速。接入机器会降低转速，失去动力后会继续惰行；扭矩不足时逐渐停转。
 

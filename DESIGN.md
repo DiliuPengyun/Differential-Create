@@ -1,4 +1,4 @@
-# Differential Create — 设计与实现范围
+# 微分动力（Differential Create）— 设计与实现范围
 
 目标版本：Create 6.0.10-281、Minecraft 1.21.1、NeoForge 21.1.238、Java 21。本文按 2026-09-14 修复后的实现更新；验收证据和未覆盖场景见 `FIXES-2026-09-14.md`。
 
