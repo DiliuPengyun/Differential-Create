@@ -1,6 +1,7 @@
 ### Gradle ###
 .gradle
 build/
+*.class
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/**/build/
 
@@ -40,5 +41,26 @@ run-gametest/
 repo/
 !**/src/**/repo/
 
-### GameTest logs ###
-gt-run*.log
+### Logs and crash dumps ###
+*.log
+*.hprof
+
+### Temporary files ###
+*.tmp
+*.bak
+*.swp
+*~
+/tmp/
+/temp/
+
+### Python bytecode ###
+__pycache__/
+*.pyc
+*.pyo
+
+### Local environment ###
+.env
+.env.*
+!.env.example
+!.env.sample
+local.properties
