@@ -11,11 +11,14 @@ public final class RatioValueBehaviour extends KineticScrollValueBehaviour {
 	public RatioValueBehaviour(SmartBlockEntity be, ValueBoxTransform slot) {
 		super(Component.translatable("gui.differentialcreate.ratio_setting"), be, slot);
 		between(-256, 256);
-		withFormatter(v -> String.format(java.util.Locale.ROOT, "%.4g×", v / 16.0));
+		withFormatter(RatioValueBehaviour::formatRatio);
 	}
 	@Override public MutableComponent formatSettings(ValueSettings settings) {
-		return Component.literal(String.format(java.util.Locale.ROOT, "%.4g× %s", settings.value() / 16.0,
-			settings.row() == 0 ? "⟳" : "⟲"));
+		int value = settings.row() == 0 ? -settings.value() : settings.value();
+		return Component.literal(formatRatio(value) + " " + (settings.row() == 0 ? "⟳" : "⟲"));
+	}
+	private static String formatRatio(int value) {
+		return String.format(java.util.Locale.ROOT, value == 0 ? "%.4g×" : "%+.4g×", value / 16.0);
 	}
 	@Override public void setValueSettings(Player player, ValueSettings settings, boolean ctrlHeld) {
 		int value = Math.max(0, settings.value());

@@ -11,6 +11,6 @@ public abstract class PoweredShaftBlockEntityMixin {
 	@Inject(method = "getGeneratedSpeed", at = @At("HEAD"), cancellable = true)
 	private void differentialcreate$continuousSteam(CallbackInfoReturnable<Float> cir) {
 		PoweredShaftBlockEntity self = (PoweredShaftBlockEntity) (Object) this;
-		cir.setReturnValue((float) (com.diliupengyun.differential_create.kinetics.SourcePhysics.steamCurve(self).noLoadSpeed() / 2));
+		cir.setReturnValue((float) com.diliupengyun.differential_create.kinetics.SourcePhysics.steamCurve(self).generatedSpeed());
 	}
 }

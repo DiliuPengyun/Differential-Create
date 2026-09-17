@@ -11,6 +11,11 @@ public final class PhysicsRegression {
 	private static int checks;
 	public static void main(String[] args) {
 		TorsionRegression.run();
+		ClutchEngagementRegression.run();
+		SolverPrecisionRegression.run();
+		ShaftReplacementRegression.run();
+		SteamDriveRegression.run();
+		LoadFactorRegression.run();
 		shaftTravel();
 		near(32, ClutchControl.torqueLimit(0), 0, "unpowered clutch retains full torque capacity");
 		near(0, ClutchControl.torqueLimit(15), 0, "full redstone completely releases the clutch");

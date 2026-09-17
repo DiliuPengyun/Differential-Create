@@ -8,7 +8,10 @@ public final class MemberState {
 	/** Integrated render angle in turns, with its assembly zero aligned on non-clutch connections. */
 	public double angle;
 	public double lastInertia = Double.NaN;
+	/** Signed contact torque on this member, preferring its source-side connection. */
 	public double transmittedTorque;
+	/** Contact chosen for the current readout; rebuilt on each physical commit. */
+	public BlockPos torqueContact;
 	public record SavedConnection(double ratio, double twist) {}
 	public final java.util.Map<BlockPos, SavedConnection> elasticConnections = new java.util.HashMap<>();
 	public float savedRatio = Float.NaN;

@@ -38,6 +38,22 @@ public final class ElasticKinetics {
         }
     }
     public static MemberState state(KineticBlockEntity be) { return ((IMemberDynamics) be).differentialcreate$member(); }
+    private static void recordTorque(KineticBlockEntity be, KineticBlockEntity neighbour, double torque) {
+        MemberState member = state(be);
+        BlockPos contact = neighbour.getBlockPos();
+        boolean input = contact.equals(be.source);
+        boolean selectedInput = member.torqueContact != null && member.torqueContact.equals(be.source);
+        // A shaft's two reaction torques have opposite signs. Use one defined port,
+        // rather than whichever edge happens to be visited last. Without an inlet,
+        // retain the strongest contact, breaking equal-magnitude ties by position.
+        boolean stronger = Math.abs(torque) > Math.abs(member.transmittedTorque);
+        boolean tie = Math.abs(torque) == Math.abs(member.transmittedTorque);
+        if (member.torqueContact == null || input && !selectedInput
+            || input == selectedInput && (stronger || tie && contact.compareTo(member.torqueContact) < 0)) {
+            member.transmittedTorque = torque;
+            member.torqueContact = contact;
+        }
+    }
     public static double strengthOf(KineticBlockEntity be) {
         return InertiaRegistry.getInertia(be) == 0 ? PhysicsTuning.TRANSMISSION_STRENGTH : PhysicsTuning.MACHINE_STRENGTH;
     }
@@ -120,13 +136,14 @@ public final class ElasticKinetics {
                 state.physicalSpeed = result.speed()[i];
                 state.angle += result.angle()[i];
                 state.transmittedTorque = 0;
+                state.torqueContact = null;
             }
             for (int e = 0; e < connections.size(); e++) {
                 Connection edge = connections.get(e);
                 edge.twist = result.twist()[e]; edge.torque = result.torque()[e]; edge.slipping = result.slipping()[e];
                 edge.save();
-                state(edge.a).transmittedTorque = Math.max(state(edge.a).transmittedTorque, Math.abs(edge.ratio * edge.torque));
-                state(edge.b).transmittedTorque = Math.max(state(edge.b).transmittedTorque, Math.abs(edge.torque));
+                recordTorque(edge.a, edge.b, -edge.ratio * edge.torque);
+                recordTorque(edge.b, edge.a, edge.torque);
             }
         }
         public void fracture() {
@@ -160,7 +177,8 @@ public final class ElasticKinetics {
             double load = MachineActivity.impact(be), drag = 0;
             if (be instanceof EncasedFanBlockEntity) { drag = load / Math.pow(PhysicsTuning.FAN_ANCHOR_RPM, 2); load = 0; }
             bodies.add(new TorsionSolver.Body(InertiaRegistry.getInertia(be), be.isSource() ? curve.stallTorque() : 0,
-                be.isSource() ? curve.damping() : 0, load, drag));
+                be.isSource() ? curve.damping() : 0, load, drag,
+                be.isSource() ? curve.powerLimit() : Double.POSITIVE_INFINITY));
         }
         connections.removeIf(edge -> !indices.containsKey(edge.a) || !indices.containsKey(edge.b));
         List<TorsionSolver.Link> links = new ArrayList<>();

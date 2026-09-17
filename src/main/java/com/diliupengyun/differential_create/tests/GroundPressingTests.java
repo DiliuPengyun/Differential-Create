@@ -144,8 +144,8 @@ final class GroundPressingTests {
 			sequence.thenExecute(() -> { f.setSpeed(speed); before[0] = f.energy(); f.drop(Items.IRON_INGOT, 1); });
 			f.cycle(sequence).thenExecute(() -> {
 				double work = before[0] - f.energy();
-				// Small extra work is passive contact damping; elastic storage is included by energy().
-				helper.assertTrue(Math.abs(work - 12.8) < 1e-4, "full press work plus contact loss at " + speed + " RPM: " + work + " expected approximately 12.8");
+				// Undamped contacts only store energy; energy() includes that elastic storage.
+				helper.assertTrue(Math.abs(work - 12.8) < 1e-4, "full press work at " + speed + " RPM: " + work + " expected approximately 12.8");
 				com.diliupengyun.differential_create.DifferentialCreate.LOGGER.info("PRESS_WORK initialRpm={} consumed={} expected=12.8", speed, work);
 			});
 		}

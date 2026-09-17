@@ -2,6 +2,9 @@ package com.diliupengyun.differential_create.tests;
 
 import com.diliupengyun.differential_create.DifferentialCreate;
 import com.diliupengyun.differential_create.kinetics.INetworkDynamics;
+import com.diliupengyun.differential_create.kinetics.ElasticKinetics;
+import com.diliupengyun.differential_create.kinetics.NetworkDynamics;
+import com.diliupengyun.differential_create.kinetics.RotationMath;
 import com.diliupengyun.differential_create.kinetics.ClutchControl;
 import com.diliupengyun.differential_create.kinetics.ClutchPhysics;
 import com.diliupengyun.differential_create.kinetics.IClutchDynamics;
@@ -62,10 +65,22 @@ public final class KineticPhysicsTests {
 	private static final String TEMPLATE = "physics_test";
 	private static final int TOTAL_CHECKS = 14;
 
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "load_factor", timeoutTicks = 100)
+	public static void networkLoadFactor(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		LoadFactorTests.run(helper);
+	}
+
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "shaft_phase", timeoutTicks = 100)
 	public static void shaftPhaseAlignmentRegression(GameTestHelper helper) {
 		forceImpactChunks(helper);
 		ElasticKineticsTests.phaseAlignment(helper);
+	}
+
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "massless_speed", timeoutTicks = 100)
+	public static void masslessSpeedReadoutRegression(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		ElasticKineticsTests.masslessSpeedReadout(helper);
 	}
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "brass_hot_attach", timeoutTicks = 150)
@@ -143,6 +158,18 @@ public final class KineticPhysicsTests {
 	public static void collisionRegression(GameTestHelper helper) {
         forceImpactChunks(helper);
         ElasticKineticsTests.collision(helper);
+	}
+
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "repeated_shaft_fracture", timeoutTicks = 120)
+	public static void repeatedShaftFractureRegression(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		ElasticKineticsTests.repeatedShaftFracture(helper);
+	}
+
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "powered_shaft_replacement", timeoutTicks = 900)
+	public static void poweredShaftReplacementRegression(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		ElasticKineticsTests.poweredShaftReplacement(helper);
 	}
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clutch_impact", timeoutTicks = 1000)
@@ -260,7 +287,8 @@ public final class KineticPhysicsTests {
 			helper.fail("windmill sail area did not increase its torque characteristic");
 		for (int count = 1; count <= 36; count++) {
 			var steam = com.diliupengyun.differential_create.kinetics.SourcePhysics.steamCurve(1024, 3, count, 1);
-			if (Math.abs(steam.noLoadSpeed() - 384.0 / count) > 1e-9 || Math.abs(steam.stallTorque() - 1536) > 1e-9)
+			if (Math.abs(steam.maximumPower() - 262144 * Math.min(1, 3.0 / count)) > 1e-9
+				|| Math.abs(steam.stallTorque() - 1024) > 1e-9 || steam.damping() != 0)
 				helper.fail("steam volume sharing or boiler pressure calibration failed for " + count + " engines");
 		}
 		var bounds = helper.getBounds();
@@ -315,7 +343,7 @@ public final class KineticPhysicsTests {
 				if (basin.getOutputInventory().getStackInSlot(slot).is(com.simibubi.create.AllItems.ANDESITE_ALLOY.get())) done[0] |= 4;
 			if (!changingRatio[0] && closeTo(speedOf(rscMotor), 12, 0.2)) {
 				changingRatio[0] = true;
-				if (Math.abs(rscOutput.getSpeed() - 2 * rscMotor.getSpeed()) > 0.001) helper.fail("RSC 2x setting is not a physical ratio");
+				assertPhaseRatio(helper, rscMotor, rscOutput, 2, "RSC 2x setting preserves the geared angle with elastic twist");
 				if (!(rsc.targetSpeed instanceof com.diliupengyun.differential_create.kinetics.RatioValueBehaviour))
 					helper.fail("RSC still uses the RPM input control");
 				done[0] |= 8;
@@ -328,8 +356,8 @@ public final class KineticPhysicsTests {
 				});
 			}
 			if ((done[0] & 16) != 0 && rscMotor.getOrCreateNetwork() == rscOutput.getOrCreateNetwork()
-				&& closeTo(speedOf(rscMotor), 15, 0.2) && Math.abs(rscOutput.getSpeed() + 0.5 * rscMotor.getSpeed()) < 0.001) {
-				if (Math.abs(rscOutput.getSpeed() + 0.5 * rscMotor.getSpeed()) > 0.001) helper.fail("negative RSC ratio did not reverse and reduce the output");
+				&& closeTo(speedOf(rscMotor), 15, 0.2)) {
+				assertPhaseRatio(helper, rscMotor, rscOutput, -.5, "negative RSC ratio reverses and reduces the output angle");
 				done[0] |= 32;
 			}
 			// Fan impact=2 at 64 RPM; r=16 refers C=2*16^3/64^2=2.
@@ -431,7 +459,7 @@ public final class KineticPhysicsTests {
 			}
 			if ((done[0] & 32) == 0 && closeTo(speedOf(geared), 12, 0.2)) {
 				KineticBlockEntity small = (KineticBlockEntity) helper.getBlockEntity(smallPos);
-				if (Math.abs(small.getSpeed() + 2 * geared.getSpeed()) > 0.001) helper.fail("large-to-small gearing did not produce -2 ratio");
+				assertPhaseRatio(helper, geared, small, -2, "large-to-small gearing preserves its signed angle ratio");
 				var tag = small.saveWithoutMetadata(helper.getLevel().registryAccess());
 				var saved = tag.getCompound("Network");
 				if (!saved.contains("DCRatio") || !saved.contains("DCAnchor")) helper.fail("save omitted the physical reference frame");
@@ -575,6 +603,10 @@ public final class KineticPhysicsTests {
 			setClutchSignal(helper, clutchPos, signal);
 			var cog = (KineticBlockEntity) helper.getBlockEntity(cogPos);
 			var load = (KineticBlockEntity) helper.getBlockEntity(loadPos);
+			double[] angles = new double[2];
+			helper.runAfterDelay(360, () -> {
+				angles[0] = ElasticKinetics.state(cog).angle; angles[1] = ElasticKinetics.state(load).angle;
+			});
 			helper.runAfterDelay(400, () -> {
 				if (clutch.isRemoved()) helper.fail("loaded clutch broke during a start from rest");
 				IClutchDynamics state = (IClutchDynamics) clutch;
@@ -583,16 +615,19 @@ public final class KineticPhysicsTests {
 					helper.fail("8-torque load never synchronized: signal=" + signal + ", input=" + cog.getSpeed()
 						+ ", output=" + load.getSpeed() + ", slip=" + state.differentialcreate$getLastDeltaOmega()
 						+ ", torque=" + state.differentialcreate$getLastCouplingTorque());
-				if (Math.abs(cog.getSpeed() - load.getSpeed()) > 0.01 || !closeTo(speedOf(load), 24, 0.05))
-					helper.fail("loaded geared shafts did not settle together at 24 RPM");
-				if (Math.abs(Math.abs(state.differentialcreate$getLastCouplingTorque()) - 8) > 0.05)
-					helper.fail("synchronized clutch did not carry the 8-torque load");
+				double inputAverage = (ElasticKinetics.state(cog).angle - angles[0]) / (40 * RotationMath.TICK_MINUTES);
+				double outputAverage = (ElasticKinetics.state(load).angle - angles[1]) / (40 * RotationMath.TICK_MINUTES);
+				assertNear(helper, inputAverage, outputAverage, .01, "elastic oscillations preserve mean clutch synchronization");
+				assertNear(helper, 24, Math.abs(outputAverage), .05, "working load advances at the expected mean speed");
+				assertNear(helper, 8, MachineActivity.impact(load), 0, "clutch continues driving the real eight-torque load");
+				helper.assertTrue(Math.abs(state.differentialcreate$getLastCouplingTorque()) <= ClutchPhysics.torqueLimit(clutch) + 1e-5,
+					"oscillating transmitted torque respects the clutch capacity");
 			});
 		}
 		helper.runAfterDelay(401, helper::succeed);
 	}
 
-	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "windmill_rotation", timeoutTicks = 1400)
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "windmill_rotation", timeoutTicks = 2800)
 	public static void windmillRotationRegression(GameTestHelper helper) {
 		prepareWorkingLoads(helper);
 		var bounds = helper.getBounds();
@@ -621,7 +656,7 @@ public final class KineticPhysicsTests {
 			if (((BearingContraption) windmill.getMovedContraption().getContraption()).getSailBlocks() != 32)
 				helper.fail("windmill fixture did not capture all 32 sails");
 		});
-		int[] stage = {0};
+		int[] stage = {0}, stationaryTicks = {0};
 		helper.onEachTick(() -> {
 			if (helper.getTick() < 10) return;
 			if (windmill.isRemoved() || !windmill.isRunning() || windmill.getMovedContraption() == null)
@@ -652,7 +687,8 @@ public final class KineticPhysicsTests {
 				for (int distance = 5; distance <= 10; distance++)
 					placeLoad(helper, bearingPos.west(distance));
 				stage[0] = 4;
-			} else if (stage[0] == 4 && Math.abs(windmill.getSpeed()) < 1e-7) {
+			// Source drag damps the remaining elastic modes more slowly without contact damping.
+			} else if (stage[0] == 4 && (stationaryTicks[0] = Math.abs(windmill.getSpeed()) < 1e-7 ? stationaryTicks[0] + 1 : 0) >= 20) {
 				stage[0] = 5;
 				float angle = windmill.getMovedContraption().getAngle(1);
 				helper.runAfterDelay(10, () -> {
@@ -858,10 +894,11 @@ public final class KineticPhysicsTests {
 				drive[0] = false;
 				motor.setFlowScoreAndUpdate(0);
 				NetworkTopology.flush();
-				double speed = motor.getSpeed(), energy = networkEnergy(motor);
+				double speed = ((INetworkDynamics) motor.getOrCreateNetwork()).differentialcreate$getSpeed(), energy = networkEnergy(motor);
 				helper.runAfterDelay(40, () -> {
-					assertNear(helper, speed, motor.getSpeed(), 1e-5, "zero-load machines coast without free acceleration or braking");
-					assertNear(helper, energy, networkEnergy(motor), 1e-5, "standby coasting conserves energy");
+					assertNear(helper, speed, ((INetworkDynamics) motor.getOrCreateNetwork()).differentialcreate$getSpeed(), 1e-8,
+						"zero-load machines conserve mean angular momentum while oscillating");
+					assertNear(helper, energy, networkEnergy(motor), 1e-7, "standby coasting conserves kinetic plus elastic energy");
 					helper.succeed();
 				});
 			}
@@ -888,10 +925,19 @@ public final class KineticPhysicsTests {
 	private static double networkEnergy(KineticBlockEntity member) {
 		double energy = 0;
 		for (KineticBlockEntity be : member.getOrCreateNetwork().members.keySet()) {
-			double speed = be.getSpeed();
+			double speed = NetworkDynamics.preciseSpeed(be);
 			energy += 0.5 * InertiaRegistry.getInertia(be) * speed * speed;
 		}
+		for (var edge : ((INetworkDynamics) member.getOrCreateNetwork()).differentialcreate$data().connections)
+			energy += .5 * edge.stiffness() * edge.twist * edge.twist;
 		return energy;
+	}
+
+	private static void assertPhaseRatio(GameTestHelper helper, KineticBlockEntity input, KineticBlockEntity output,
+			double ratio, String message) {
+		var ratios = ((INetworkDynamics) input.getOrCreateNetwork()).differentialcreate$getRatios();
+		assertNear(helper, ratio, ratios.get(output) / ratios.get(input), 1e-9, message + " nominal ratio");
+		assertNear(helper, ratio * ElasticKinetics.state(input).angle, ElasticKinetics.state(output).angle, .001, message);
 	}
 
 	private static void assertNear(GameTestHelper helper, double expected, double actual, double tolerance, String what) {
@@ -1104,8 +1150,8 @@ public final class KineticPhysicsTests {
 					done[0] |= 1 << 4;
 				});
 				helper.runAfterDelay(20, () -> {
-					assertSpeed((KineticBlockEntity) helper.getBlockEntity(COAST_LOADED_SHAFT), 0, 0.01,
-						"coasting loaded network stopped");
+					for (int x = 4; x <= 6; x++) assertSpeed((KineticBlockEntity) helper.getBlockEntity(new BlockPos(x, 2, 24)),
+						0, 0.01, "coasting working machines stop even if the massless shaft retains elastic motion");
 					done[0] |= 1 << 5;
 				});
 			}
@@ -1211,7 +1257,7 @@ public final class KineticPhysicsTests {
 						for (BlockPos pos : List.of(UNIFORM_WHEEL, new BlockPos(9, 2, 20), new BlockPos(10, 2, 20),
 							new BlockPos(11, 2, 20), new BlockPos(12, 2, 20))) {
 							float speed = ((KineticBlockEntity) helper.getBlockEntity(pos)).getSpeed();
-							if (Math.abs(speed) > 0.01f)
+							if (InertiaRegistry.getInertia((KineticBlockEntity) helper.getBlockEntity(pos)) > 0 && Math.abs(speed) > 0.01f)
 								helper.fail("member at " + pos + " still shows " + speed + " RPM after standstill");
 						}
 					} else {
@@ -1220,7 +1266,7 @@ public final class KineticPhysicsTests {
 							helper.fail("coasting network did not stop: " + dcSpeed);
 						for (KineticBlockEntity member : network.members.keySet()) {
 							float speed = member.getSpeed();
-							if (Math.abs(speed) > 0.01f)
+							if (InertiaRegistry.getInertia(member) > 0 && Math.abs(speed) > 0.01f)
 								helper.fail("member " + member.getBlockPos() + " still shows " + speed
 									+ " RPM at standstill");
 						}
@@ -1310,24 +1356,24 @@ public final class KineticPhysicsTests {
 		return actual != null && Math.abs(actual - expected) <= tolerance;
 	}
 
-	/** Asserts every member of the wheel's network spins at exactly r_i × ω. */
+	/** The published reference is a momentum average; local elastic motion may differ. */
 	private static void assertMembersConsistent(KineticBlockEntity anyMember, String what) {
 		KineticNetwork network = anyMember.getOrCreateNetwork();
 		if (network == null)
 			throw new GameTestAssertException(what + ": no network");
 		INetworkDynamics dynamics = (INetworkDynamics) network;
-		double omega = dynamics.differentialcreate$getSpeed();
+		double omega = dynamics.differentialcreate$getSpeed(), momentum = 0, inertia = 0;
 		for (KineticBlockEntity member : network.members.keySet()) {
 			Float ratio = dynamics.differentialcreate$getRatios()
 				.get(member);
 			if (ratio == null)
 				throw new GameTestAssertException(what + ": missing ratio for " + member.getBlockPos());
-			double expected = ratio * omega;
-			float actual = member.getSpeed();
-			if (Math.abs(actual - expected) > 0.01f)
-				throw new GameTestAssertException(
-					what + ": member " + member.getBlockPos() + " at " + actual + " RPM, expected " + expected);
+			double j = InertiaRegistry.getInertia(member), actual = NetworkDynamics.preciseSpeed(member);
+			if (!Double.isFinite(actual)) throw new GameTestAssertException(what + ": non-finite local speed");
+			momentum += j * ratio * actual; inertia += j * ratio * ratio;
 		}
+		if (inertia > 0 && Math.abs(momentum / inertia - omega) > 1e-8)
+			throw new GameTestAssertException(what + ": reference speed lost the physical momentum average");
 	}
 
 	private static void assertSpeed(KineticBlockEntity kbe, double expected, double tolerance, String what) {

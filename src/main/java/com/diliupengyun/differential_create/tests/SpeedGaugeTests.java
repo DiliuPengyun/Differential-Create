@@ -105,7 +105,7 @@ final class SpeedGaugeTests {
 			helper.assertTrue(hasKey(tooltip, "gui.differentialcreate.gauge.over_range"), "goggles identify an exceeded instrument range");
 			helper.assertTrue(hasKey(tooltip, "gui.differentialcreate.gauge.range"), "goggles show the selected range");
 			helper.assertTrue(tooltip.stream().anyMatch(line -> line.getContents() instanceof TranslatableContents contents
-				&& contents.getKey().equals("gui.differentialcreate.goggles.speed") && contents.getArgs()[0].equals("2048.0")),
+				&& contents.getKey().equals("gui.differentialcreate.goggles.speed") && contents.getArgs()[0].equals("+2048.0")),
 				"goggles retain the full RPM above the selected range");
 		}).thenExecuteFor(20, () -> {
 			helper.assertTrue(gauge.dialState == 1 && gauge.prevDialState == 1, "over-range pointer remains steady without random wobble");

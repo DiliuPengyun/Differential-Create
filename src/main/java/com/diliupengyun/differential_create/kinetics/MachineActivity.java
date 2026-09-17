@@ -14,6 +14,7 @@ import com.simibubi.create.content.kinetics.crafter.MechanicalCrafterBlockEntity
 import com.simibubi.create.content.kinetics.crusher.CrushingWheelBlockEntity;
 import com.simibubi.create.content.kinetics.crusher.CrushingWheelControllerBlockEntity;
 import com.simibubi.create.content.kinetics.deployer.DeployerBlockEntity;
+import com.simibubi.create.content.kinetics.fan.EncasedFanBlockEntity;
 import com.simibubi.create.content.kinetics.drill.DrillBlockEntity;
 import com.simibubi.create.content.kinetics.mechanicalArm.ArmBlockEntity;
 import com.simibubi.create.content.kinetics.millstone.MillstoneBlockEntity;
@@ -75,6 +76,12 @@ public final class MachineActivity {
 	/** Keep Create's rated stress value separate from this tick's physical torque. */
 	public static float impact(KineticBlockEntity be) {
 		return manages(be) && !active(be) ? 0 : Math.max(0, be.calculateStressApplied());
+	}
+
+	/** Actual sustained shaft resistance at this speed; accelerating inertia is separate. */
+	public static double loadTorque(KineticBlockEntity be, double speed) {
+		double impact = impact(be);
+		return be instanceof EncasedFanBlockEntity ? impact * Math.pow(speed / PhysicsTuning.FAN_ANCHOR_RPM, 2) : impact;
 	}
 
 	/** Sample only machines with an operation state; invalidate balances only on transitions. */

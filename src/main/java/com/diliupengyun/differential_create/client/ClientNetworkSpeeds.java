@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Set;
 
 import com.diliupengyun.differential_create.kinetics.NetworkPhysics;
+import com.diliupengyun.differential_create.kinetics.LoadFactor;
 import com.diliupengyun.differential_create.kinetics.NetworkStatePayload;
 import com.diliupengyun.differential_create.kinetics.NetworkStructurePayload;
 import com.diliupengyun.differential_create.kinetics.RotorStatePayload;
@@ -39,6 +40,7 @@ public final class ClientNetworkSpeeds {
 	private static final class Entry {
 		final Map<BlockPos, Rotor> rotors = new HashMap<>();
 		double kineticEnergy = Double.NaN;
+		LoadFactor.Reading loadFactor = LoadFactor.Reading.UNKNOWN;
 		final Map<BlockPos, Float> ratios = new HashMap<>();
 		float speed;
 		NetworkPhysics.Balance balance = new NetworkPhysics.Balance(0, 0, 0, 0, 0);
@@ -94,6 +96,7 @@ public final class ClientNetworkSpeeds {
 		Entry entry = networks.computeIfAbsent(dimension, $ -> new HashMap<>())
 			.computeIfAbsent(payload.networkId(), $ -> new Entry());
 		entry.kineticEnergy = payload.energy();
+		entry.loadFactor = payload.loadFactor();
 		for (var update : payload.rotors()) {
 			Rotor rotor = entry.rotors.computeIfAbsent(update.pos(), $ -> new Rotor());
 			rotor.speed = update.speed(); rotor.torque = update.torque(); rotor.angle = update.angle();
@@ -131,6 +134,7 @@ public final class ClientNetworkSpeeds {
 			}
 		}
 		entry.rotationDirty = true;
+		entry.loadFactor = LoadFactor.Reading.UNKNOWN;
 		entry.ratios.clear();
 		entry.rotors.keySet().retainAll(entries.stream().map(NetworkStructurePayload.Entry::pos).toList());
 		Map<BlockPos, Long> memberMap = memberToNetwork.computeIfAbsent(dimension, $ -> new HashMap<>());
@@ -264,6 +268,11 @@ public final class ClientNetworkSpeeds {
 		Entry entry = entryOf(be);
 		Rotor rotor = entry == null ? null : entry.rotors.get(be.getBlockPos());
 		return rotor == null ? null : rotor.torque;
+	}
+
+	public static LoadFactor.Reading loadFactorOf(KineticBlockEntity be) {
+		Entry entry = entryOf(be);
+		return entry == null ? LoadFactor.Reading.UNKNOWN : entry.loadFactor;
 	}
 
 }

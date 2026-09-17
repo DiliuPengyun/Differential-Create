@@ -105,10 +105,10 @@ public final class InertiaRegistry {
 		overrides = new HashMap<>();
 
 		// Power sources. τ = J/K: water wheel K = 4 su/RPM², large wheel
-		// K = 32, steam engine K = 4 — targets in comments
+		// K = 32. Steam has no internal damping; its startup depends on its finite torque.
 		overrides.put(AllBlocks.WATER_WHEEL.get(), 0.15f); // τ ≈ 0.0375 min ≈ 2.3 s
 		overrides.put(AllBlocks.LARGE_WATER_WHEEL.get(), 0.4f); // τ ≈ 0.0125 min ≈ 0.75 s
-		overrides.put(AllBlocks.POWERED_SHAFT.get(), 0.1f); // steam engine shaft: τ ≈ 1.5 s (approved)
+		overrides.put(AllBlocks.POWERED_SHAFT.get(), 0.1f); // retained rotor inertia, including after steam shuts off
 		overrides.put(AllBlocks.WINDMILL_BEARING.get(), 0.02f); // base + per-sail SAIL_INERTIA
 		overrides.put(AllBlocks.FLYWHEEL.get(), 0.5f);
 

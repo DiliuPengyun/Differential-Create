@@ -3,13 +3,32 @@ package com.diliupengyun.differential_create.kinetics;
 import com.simibubi.create.api.stress.BlockStressValues;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.steamEngine.PoweredShaftBlockEntity;
+import com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlock;
+import com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlockEntity;
 import com.simibubi.create.content.contraptions.bearing.WindmillBearingBlockEntity;
+import com.simibubi.create.content.fluids.tank.BoilerData;
 
 /** Shared source characteristics for simulation and goggles. */
 public final class SourcePhysics {
-	public record Curve(double noLoadSpeed, double damping) {
-		public double stallTorque() { return noLoadSpeed * damping; }
-		public double torque(double speed) { return damping * (noLoadSpeed - speed); }
+	private static final Curve INACTIVE = new Curve(0, 0);
+	public record Curve(double stallTorque, double damping, double powerLimit) {
+		public Curve(double noLoadSpeed, double damping) {
+			this(noLoadSpeed * damping, damping, Double.POSITIVE_INFINITY);
+		}
+		public boolean powerLimited() { return Double.isFinite(powerLimit); }
+		public double torque(double speed) { return DriveTorque.torque(stallTorque, powerLimit, speed) - damping * speed; }
+		public double noLoadSpeed() {
+			return stallTorque == 0 ? 0 : damping > 0 ? stallTorque / damping : Math.copySign(Double.POSITIVE_INFINITY, stallTorque);
+		}
+		public double powerThresholdSpeed() { return stallTorque == 0 ? 0 : powerLimit / Math.abs(stallTorque); }
+		/** A finite direction/connection command for Create, never an assigned physical speed. */
+		public double generatedSpeed() {
+			return powerLimited() ? Math.signum(stallTorque) * powerThresholdSpeed() : noLoadSpeed() / 2;
+		}
+		public double maximumPower() {
+			return powerLimited() ? powerLimit : damping > 0 ? stallTorque * stallTorque / (4 * damping) : 0;
+		}
+		public double tangentDamping(double speed) { return damping + DriveTorque.slope(stallTorque, powerLimit, speed); }
 	}
 	private SourcePhysics() {}
 
@@ -25,26 +44,29 @@ public final class SourcePhysics {
 	}
 
 	public static Curve steamCurve(PoweredShaftBlockEntity shaft) {
-		double capacity = shaft.capacityKey == null ? 0 : BlockStressValues.getCapacity(shaft.capacityKey);
-		double level = Math.max(0, shaft.engineEfficiency);
-		int engines = 1;
-		if (shaft.enginePos != null && shaft.getLevel() != null) {
-			var pos = shaft.getBlockPos().subtract(shaft.enginePos);
-			if (shaft.getLevel().isLoaded(pos) && shaft.getLevel().getBlockEntity(pos)
-				instanceof com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlockEntity engine) {
-				var tank = engine.getTank();
-				if (tank != null) {
-					var boiler = tank.boiler;
-					int size = tank.getTotalTankSize();
-					level = boiler.isPassive(size) ? 0.125 : Math.max(0, Math.min(boiler.activeHeat,
-						Math.min(boiler.getMaxHeatLevelForBoilerSize(size), boiler.getMaxHeatLevelForWaterSupply())));
-					engines = Math.max(1, boiler.attachedEngines);
-				}
-			}
-		}
-		// Pressure scales with boiler level; steam volume is shared by all engines.
-		// Level 1, one engine: w0=128, k=4, stall=512 at Create's default capacity.
-		return steamCurve(capacity, level, engines, shaft.movementDirection);
+		var world = shaft.getLevel();
+		if (world == null || shaft.enginePos == null || shaft.isRemoved()) return INACTIVE;
+		var pos = shaft.getBlockPos().subtract(shaft.enginePos);
+		if (!world.isLoaded(pos) || !(world.getBlockEntity(pos) instanceof SteamEngineBlockEntity engine)
+			|| engine.isRemoved() || !(engine.getBlockState().getBlock() instanceof SteamEngineBlock)
+			|| !SteamEngineBlock.getShaftPos(engine.getBlockState(), pos).equals(shaft.getBlockPos())
+			|| !SteamEngineBlock.isShaftValid(engine.getBlockState(), shaft.getBlockState())) return INACTIVE;
+		var tank = engine.getTank();
+		if (tank == null) return INACTIVE;
+		// Resolve current supply and capacity from the live engine, never a saved efficiency.
+		return steamCurve(BlockStressValues.getCapacity(engine.getBlockState().getBlock()),
+			steamLevel(tank.boiler, tank.getTotalTankSize()), tank.boiler.attachedEngines, shaft.movementDirection);
+	}
+
+	public static double steamLevel(BoilerData boiler, int size) {
+		return boiler.isPassive(size) ? 0.125 : Math.max(0, Math.min(boiler.activeHeat,
+			Math.min(boiler.getMaxHeatLevelForBoilerSize(size), boiler.getMaxHeatLevelForWaterSupply())));
+	}
+
+	/** Available continuous shaft power, limited by boiler supply and installed engine intake capacity. */
+	public static double steamPeakPower(double capacity, BoilerData boiler, int size) {
+		Curve curve = steamCurve(capacity, steamLevel(boiler, size), boiler.attachedEngines, 1);
+		return boiler.attachedEngines * curve.maximumPower();
 	}
 
 	public static Curve windCurve(double generatedSpeed, double capacity, int sails) {
@@ -52,8 +74,12 @@ public final class SourcePhysics {
 	}
 
 	public static Curve steamCurve(double capacity, double boilerLevel, int engines, int direction) {
-		int count = Math.max(1, engines);
-		double level = Math.max(0, boilerLevel);
-		return new Curve(128 * level / count * direction, level == 0 ? 0 : capacity / 256 * count);
+		if (!(capacity > 0) || !(boilerLevel > 0) || engines <= 0 || direction == 0) return INACTIVE;
+		double torqueLimit = PhysicsTuning.STEAM_TORQUE_PER_CAPACITY * capacity;
+		double ratedPower = torqueLimit * PhysicsTuning.STEAM_RATED_RPM;
+		// Fixed nominal cylinder pressure/displacement gives finite torque even at standstill.
+		// Each engine accepts at most one boiler level; scarce supply is shared equally.
+		return new Curve(Math.signum(direction) * torqueLimit, 0,
+			ratedPower * Math.min(1, boilerLevel / engines));
 	}
 }

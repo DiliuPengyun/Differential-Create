@@ -6,10 +6,15 @@ package com.diliupengyun.differential_create.kinetics;
  */
 public final class PhysicsTuning {
 
+	/** Constant-power threshold at full per-engine supply, not a no-load speed or hard limit. */
+	public static final double STEAM_RATED_RPM = 256;
+	/** Cylinder torque per capacity unit; the default engine capacity gives 1024 su/RPM. */
+	public static final double STEAM_TORQUE_PER_CAPACITY = 1;
+
 	/** Torque per calibrated turn; 128 torque twists one contact by only 0.0046 degrees. */
 	public static final double TORSIONAL_STIFFNESS = 10_000_000;
-	/** Viscous torque per RPM across the elastic part of a connection. */
-	public static final double TORSIONAL_DAMPING = 128;
+	/** No viscous contact loss: unloaded elastic connections may keep oscillating. */
+	public static final double TORSIONAL_DAMPING = 0;
 	/** Local-shaft structural limits, used during both transients and steady operation. */
 	public static final double TRANSMISSION_STRENGTH = 8192;
 	public static final double MACHINE_STRENGTH = 32768;

@@ -40,8 +40,16 @@ public final class NetworkPhysics {
 			Float r = ratios.get(source);
 			if (source.isRemoved() || r == null) continue;
 			SourcePhysics.Curve curve = SourcePhysics.curve(source);
-			torque += r * curve.stallTorque();
-			damping += r * r * curve.damping();
+			if (!curve.powerLimited()) {
+				torque += r * curve.stallTorque();
+				damping += r * r * curve.damping();
+				continue;
+			}
+			// Local tangent for diagnostics/client fallback only. TorsionSolver evaluates the
+			// actual nonlinear source at every substep; this slope is not internal friction.
+			double speed = NetworkDynamics.preciseSpeed(source), slope = curve.tangentDamping(speed);
+			torque += r * (curve.torque(speed) + slope * speed);
+			damping += r * r * slope;
 		}
 		return new Balance(torque, damping, base.l, base.j, base.fanDrag);
 	}
