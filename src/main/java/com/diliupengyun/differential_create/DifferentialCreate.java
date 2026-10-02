@@ -41,8 +41,8 @@ public class DifferentialCreate {
         NeoForge.EVENT_BUS.register(NetworkSpeedTicker.class);
         // Clientbound per-network speed sync (structure + state packets)
         modEventBus.addListener((net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent event) -> {
-            // Rotor snapshots include the server's actual steam bypass flow.
-            event.registrar("7")
+            // Bearing poses and rotor states describe the same physical instant.
+            event.registrar("8")
                 .playToClient(com.diliupengyun.differential_create.kinetics.RotorStatePayload.TYPE,
                     com.diliupengyun.differential_create.kinetics.RotorStatePayload.STREAM_CODEC,
                     com.diliupengyun.differential_create.kinetics.RotorStatePayload::handle)

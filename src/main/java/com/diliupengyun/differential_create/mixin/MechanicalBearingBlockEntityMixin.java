@@ -4,6 +4,9 @@ import java.util.List;
 import com.diliupengyun.differential_create.kinetics.ISequenceContext;
 import com.diliupengyun.differential_create.kinetics.ElasticKinetics;
 import com.diliupengyun.differential_create.kinetics.InertiaRegistry;
+import com.diliupengyun.differential_create.kinetics.BearingAngle;
+import com.diliupengyun.differential_create.kinetics.IBearingMotion;
+import com.simibubi.create.content.contraptions.ControlledContraptionEntity;
 import com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
 import com.simibubi.create.foundation.item.TooltipHelper;
@@ -27,7 +30,7 @@ import net.minecraft.network.chat.Component;
 
 /** Mechanical bearings assemble manually; new structures start at rest on the physical rotor. */
 @Mixin(MechanicalBearingBlockEntity.class)
-public abstract class MechanicalBearingBlockEntityMixin {
+public abstract class MechanicalBearingBlockEntityMixin implements IBearingMotion {
 	@Shadow protected double sequencedAngleLimit;
 	@Shadow protected boolean assembleNextTick;
 	@Shadow protected float angle;
@@ -39,6 +42,34 @@ public abstract class MechanicalBearingBlockEntityMixin {
 	@Unique private boolean differentialcreate$wasRunningBeforeAssembly;
 	@Unique private float differentialcreate$angleBeforeSpeedChange;
 	@Unique private boolean differentialcreate$retainPhysicalAngle;
+	@Unique private ControlledContraptionEntity differentialcreate$trackedRoot;
+	@Unique private BearingAngle differentialcreate$structureAngle;
+	@Unique private double differentialcreate$appliedTravel;
+
+	@Unique private void differentialcreate$trackStructure() {
+		var root = ((MechanicalBearingBlockEntity) (Object) this).getMovedContraption();
+		if (root != differentialcreate$trackedRoot || differentialcreate$structureAngle == null) {
+			differentialcreate$trackedRoot = root;
+			differentialcreate$structureAngle = new BearingAngle();
+		}
+		differentialcreate$structureAngle.align(angle);
+	}
+
+	@Override public double differentialcreate$syncedAngle() {
+		differentialcreate$trackStructure();
+		Double pending = ContraptionMotion.syncAngular(differentialcreate$trackedRoot);
+		return differentialcreate$structureAngle.withPending(angle, pending == null ? 0 : pending);
+	}
+
+	@Redirect(method = "tick", at = @At(value = "INVOKE",
+		target = "Lcom/simibubi/create/content/contraptions/bearing/MechanicalBearingBlockEntity;getAngularSpeed()F"))
+	private float differentialcreate$rememberAppliedTravel(MechanicalBearingBlockEntity self) {
+		float travel = self.getAngularSpeed();
+		if (!self.getLevel().isClientSide)
+			differentialcreate$appliedTravel = sequencedAngleLimit < 0 ? travel
+				: Math.clamp((double) travel, -sequencedAngleLimit, sequencedAngleLimit);
+		return travel;
+	}
 	@Inject(method = "attach", at = @At("RETURN"))
 	private void differentialcreate$recoverPaidTravel(com.simibubi.create.content.contraptions.ControlledContraptionEntity root, CallbackInfo ci) {
 		var self = (MechanicalBearingBlockEntity) (Object) this;
@@ -51,7 +82,14 @@ public abstract class MechanicalBearingBlockEntityMixin {
 	@Inject(method = "tick", at = @At("RETURN"))
 	private void differentialcreate$consumeOutputTravel(CallbackInfo ci) {
 		var self = (MechanicalBearingBlockEntity) (Object) this;
-		if (self.getLevel() != null && !self.getLevel().isClientSide) ContraptionMotion.consume(self.getMovedContraption());
+		if (self.getLevel() != null && !self.getLevel().isClientSide) {
+			// Record the native tick before consuming its already-paid output.
+			// Assembly/reload establishes a fresh origin; no shaft phase is assumed.
+			if (self.getMovedContraption() != differentialcreate$trackedRoot) differentialcreate$trackStructure();
+			else if (differentialcreate$structureAngle != null)
+				differentialcreate$structureAngle.advance(angle, differentialcreate$appliedTravel);
+			ContraptionMotion.consume(self.getMovedContraption());
+		}
 	}
 	@Redirect(method = "onSpeedChanged", at = @At(value = "INVOKE",
 		target = "Lcom/simibubi/create/content/contraptions/Contraption;stop(Lnet/minecraft/world/level/Level;)V"))
@@ -92,6 +130,7 @@ public abstract class MechanicalBearingBlockEntityMixin {
 	private void differentialcreate$attachRestingStructure(CallbackInfo ci) {
 		var self = (MechanicalBearingBlockEntity) (Object) this;
 		if (self.getLevel().isClientSide || differentialcreate$wasRunningBeforeAssembly || !self.isRunning()) return;
+		differentialcreate$trackStructure();
 		if (!isWindmill()) {
 			// Reset only the newly assembled output. The upstream rotor keeps its
 			// speed; the ordinary elastic contact handles acceleration and fracture.
@@ -118,6 +157,10 @@ public abstract class MechanicalBearingBlockEntityMixin {
 	@Inject(method = "tick", at = @At("HEAD"))
 	private void differentialcreate$assembleOnRequest(CallbackInfo ci) {
 		var self = (MechanicalBearingBlockEntity) (Object) this;
+		if (!self.getLevel().isClientSide) {
+			differentialcreate$appliedTravel = 0;
+			differentialcreate$trackStructure();
+		}
 		if (self.getLevel().isClientSide || isWindmill() || !assembleNextTick) return;
 		// MechanicalBearingBlock sets this flag on right-click. Consume it before
 		// Create's automatic placement branch, and allow assembly at zero RPM.

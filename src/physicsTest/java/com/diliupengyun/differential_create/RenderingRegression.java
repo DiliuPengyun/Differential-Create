@@ -6,9 +6,11 @@ import com.diliupengyun.differential_create.client.InstanceRotation;
 import com.diliupengyun.differential_create.client.FreeShaftRotation;
 import com.diliupengyun.differential_create.client.ClutchAnimationCache;
 import com.diliupengyun.differential_create.client.RotorAnimation;
+import com.diliupengyun.differential_create.client.BearingAnimation;
 import com.diliupengyun.differential_create.client.ShaftModelOffset;
 import com.diliupengyun.differential_create.kinetics.ShaftPhases;
 import com.diliupengyun.differential_create.kinetics.TorsionSolver;
+import com.diliupengyun.differential_create.kinetics.BearingAngle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -26,6 +28,8 @@ public final class RenderingRegression {
 		freeClutchOutput();
 		clutchAnimationCache();
 		rotorSamples();
+		bearingPoses();
+		bearingSampleBuffer();
 		reducedDriveOscillation();
 		PortRotation wheel = new PortRotation();
 		PortRotation shaft = new PortRotation();
@@ -76,6 +80,139 @@ public final class RenderingRegression {
 		RotationFrame resumed = new RotationFrame(102, 123.6, 4.8);
 		angle(123.6, shader(resumed, 102, 0), "resume starts at the frozen phase");
 		System.out.println("Rendering regression: " + checks + " checks passed");
+	}
+
+	private static void bearingPoses() {
+		var server = new BearingAngle();
+		server.align(350);
+		server.advance(10, 20);
+		near(370, server.withPending(10, 0), 0, "server retains forward turns across the native wrap");
+		server.advance(350, -20);
+		near(350, server.withPending(350, 0), 0, "server retains a real reversal");
+		server.advance(170, 900);
+		near(1250, server.withPending(170, 0), 0, "native whole turns survive a high-speed tick");
+		server.advance(-10, -1260);
+		near(-10, server.withPending(-10, 0), 0, "reverse whole turns survive a high-speed tick");
+		server.advance(5, 15);
+		near(5, server.withPending(5, 0), 0, "a sequence limit uses applied travel rather than shaft speed");
+		server.advance(5, 0);
+		near(5, server.withPending(5, 0), 0, "a stalled structure stays still while the shaft can turn");
+		server.align(147.90634155273438);
+		double paid = 5.751013325853354;
+		near(153.65735487858774, server.withPending(147.90634155273438, paid), 1e-12,
+			"zero endpoint RPM still includes the final paid contact motion");
+		near(153.65735487858774, server.withPending(147.90634155273438, paid), 1e-12,
+			"repeated snapshots neither consume nor duplicate pending motion");
+		server.advance(153.6573486328125, (float) paid);
+		near(153.6573486328125, server.withPending(153.6573486328125, 0), 1e-12,
+			"the next native tick consumes that same movement once");
+
+		var client = new BearingAnimation();
+		client.receive(17, 147.90634155273438);
+		client.advance(100, 100, false);
+		client.receive(17, 153.65735487858774);
+		client.advance(101, 101, false);
+		near(147.90634155273438, client.frame(17).angle(), 0, "startup waits for the one-sample reserve");
+		client.receive(17, 153.65735487858774);
+		client.advance(102, 102, false);
+		RotationFrame contact = client.frame(17);
+		for (float partial : new float[]{0, .25f, .5f, .75f, 1}) {
+			near(147.90634155273438 + paid * partial, BearingAnimation.angleAt(contact, partial), 1e-5,
+				"the stopped drill completes its contact segment at every render fraction");
+		}
+		client.advance(103, 103, false);
+		near(0, client.frame(17).degreesPerTick(), 0, "no endpoint-RPM prediction or lazy angle correction follows the stop");
+		client.receive(17, 147.90634155273438);
+		client.advance(104, 104, false);
+		check(client.frame(17).degreesPerTick() < 0, "a genuine backward physical sample remains visible");
+		client.receive(17, 867.90634155273438);
+		client.advance(105, 105, false);
+		near(720, client.frame(17).degreesPerTick(), 1e-10, "two full turns are not replaced with the shortest arc");
+		near(327.90634155273438, BearingAnimation.angleAt(client.frame(17), .25f), 1e-5,
+			"high-speed partial-tick pose is reduced only after interpolation");
+		client.advance(106, 105.25, true);
+		near(0, client.frame(17).degreesPerTick(), 0, "tick freeze stops the contraption at its visible pose");
+		client.receive(18, 0);
+		check(client.frame(17) == null && client.frame(18) == null, "reassembly cannot reuse the previous entity's animation");
+		client.advance(107, 107, false);
+		near(0, client.frame(18).angle(), 0, "a newly assembled structure has its own zero angle");
+		client.receive(18, 1e12 + .125);
+		client.advance(108, 108, false);
+		client.receive(18, 1e12 + .125);
+		client.advance(109, 109, false);
+		near((1e12 + .125) % 360, BearingAnimation.angleAt(client.frame(18), 1), 1e-5,
+			"large accumulated angles are reduced before conversion to float");
+		client.receive(18, 1e12 + .125);
+		client.advance(110, 110, false);
+		near(0, client.frame(18).degreesPerTick(), 0, "a held snapshot keeps the rebuilt animation stationary");
+	}
+
+	private static void bearingSampleBuffer() {
+		// Alternating 0/2 arrivals reproduced the reported 0/38.4-degree ticks
+		// at a steady 64 RPM. Server history must instead play one tick at a time.
+		for (int scenario = 0; scenario < 4; scenario++) {
+			double[] poses = new double[401];
+			poses[0] = 350;
+			for (int sample = 1; sample < poses.length; sample++) {
+				double travel = switch (scenario) {
+					case 0 -> 19.2;
+					case 1 -> -19.2;
+					case 2 -> 720;
+					default -> sample < 61 ? 19.2 : sample == 61 ? 5.751013325853354
+						: sample <= 100 ? 0 : sample <= 200 ? -19.2 : 0;
+				};
+				poses[sample] = poses[sample - 1] + travel;
+			}
+			var client = new BearingAnimation();
+			client.receive(7, poses[0]); client.advance(0, 0, false);
+			client.receive(7, poses[1]); client.advance(1, 1, false);
+			near(0, client.frame(7).degreesPerTick(), 0, "one confirmed interval preloads the jitter reserve");
+			for (int tick = 2; tick <= 400; tick++) {
+				if (tick == 2) client.receive(7, poses[2]);
+				else if ((tick & 1) == 0) {
+					client.receive(7, poses[tick - 1]); client.receive(7, poses[tick]);
+				}
+				client.advance(tick, tick, false);
+				var frame = client.frame(7);
+				double previous = poses[tick - 2], next = poses[tick - 1];
+				near(previous, frame.angle(), 1e-10, "arrival batching cannot skip a confirmed physical pose");
+				near(next, frame.angleAt(tick + 1), 1e-10, "arrival batching cannot double or erase an interval");
+				for (float partial : new float[]{0, .13f, .5f, .9f, 1}) {
+					double visible = frame.angleAt(tick + (double) partial);
+					check(visible >= Math.min(previous, next) - 1e-10 && visible <= Math.max(previous, next) + 1e-10,
+						"buffered render fractions stay between confirmed endpoints at stops and reversals");
+				}
+			}
+			client.advance(401, 401, false);
+			near(poses[400], client.frame(7).angleAt(402), 1e-10, "the reserve drains to the exact final contact pose");
+			for (int tick = 402; tick < 412; tick++) {
+				client.advance(tick, tick, false);
+				near(0, client.frame(7).degreesPerTick(), 0, "a genuine prolonged packet gap never extrapolates motion");
+			}
+		}
+		var frozen = new BearingAnimation();
+		frozen.receive(9, 0); frozen.advance(0, 0, false);
+		frozen.receive(9, 10); frozen.receive(9, 20); frozen.advance(1, 1, false);
+		frozen.advance(2, 1.5, true);
+		near(5, frozen.frame(9).angle(), 0, "freezing a buffered segment preserves its displayed partial pose");
+		frozen.receive(9, 30); frozen.advance(3, 3, true);
+		near(5, frozen.frame(9).angle(), 0, "queued poses cannot move a frozen bearing");
+		frozen.advance(4, 4, false);
+		near(10, frozen.frame(9).angleAt(5), 0, "resume finishes the interrupted segment before its successor");
+		frozen.advance(5, 5, false);
+		near(20, frozen.frame(9).angleAt(6), 0, "freeze preserves the next queued server sample");
+		frozen.receive(10, -20); frozen.advance(6, 6, false);
+		check(frozen.frame(9) == null, "entity replacement drops the previous assembly's queued poses");
+		near(-20, frozen.frame(10).angle(), 0, "the replacement starts at its own confirmed pose");
+		var stalled = new BearingAnimation();
+		stalled.receive(2, 0); stalled.advance(0, 0, false);
+		for (int sample = 1; sample <= 10000; sample++) stalled.receive(2, sample * 720.0);
+		stalled.advance(1, 1, false);
+		near(9999 * 720.0, stalled.frame(2).angleAt(2), 0, "a long render stall restores bounded display delay");
+		stalled.advance(2, 2, false);
+		near(10000 * 720.0, stalled.frame(2).angleAt(3), 0, "burst recovery still reaches the latest authoritative endpoint");
+		stalled.advance(3, 3, false);
+		near(0, stalled.frame(2).degreesPerTick(), 0, "burst recovery does not invent further movement");
 	}
 
 	private static void clutchAnimationCache() {

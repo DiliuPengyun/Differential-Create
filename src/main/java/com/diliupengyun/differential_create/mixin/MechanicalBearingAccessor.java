@@ -2,6 +2,7 @@ package com.diliupengyun.differential_create.mixin;
 
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
+import org.spongepowered.asm.mixin.gen.Invoker;
 
 import com.simibubi.create.content.contraptions.ControlledContraptionEntity;
 import com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity;
@@ -14,6 +15,7 @@ import com.simibubi.create.foundation.blockEntity.behaviour.scrollValue.ScrollOp
  */
 @Mixin(MechanicalBearingBlockEntity.class)
 public interface MechanicalBearingAccessor {
+	@Invoker("applyRotation") void differentialcreate$applyRotation();
 	@Accessor("sequencedAngleLimit") double differentialcreate$angleLimit();
 
 	@Accessor("running")

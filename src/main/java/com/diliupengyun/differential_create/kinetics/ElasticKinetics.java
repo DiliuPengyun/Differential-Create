@@ -140,6 +140,9 @@ public final class ElasticKinetics {
         double travel(KineticBlockEntity be);
         double signedTravel(KineticBlockEntity be);
     }
+    public record WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary, int enteringDirection) {
+        public WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary) { this(shaft, boundary, 0); }
+    }
     public static final class Trial implements Travel {
         public final List<KineticBlockEntity> members;
         public final List<Connection> connections;
@@ -212,6 +215,19 @@ public final class ElasticKinetics {
         }
         public Travel motion(double minutes) {
             return new MotionTrial(indices, solver.motion(minutes, PhysicsTuning.TORSION_MAX_STEP));
+        }
+        public Trial advanceToEvent(double minutes, List<WorkEvent> events) {
+            var limits = new ArrayList<TorsionSolver.EventLimit>(events.size());
+            for (var event : events) {
+                Integer shaft = indices.get(event.shaft());
+                if (shaft == null) continue;
+                var boundary = event.boundary();
+                limits.add(new TorsionSolver.EventLimit(shaft, boundary.travel() * RotationMath.TICK_MINUTES,
+                    boundary.positive() * RotationMath.TICK_MINUTES, boundary.negative() * RotationMath.TICK_MINUTES,
+                    event.enteringDirection()));
+            }
+            var result = solver.advanceToEvent(minutes, PhysicsTuning.TORSION_MAX_STEP, limits);
+            return new Trial(members, connections, indices, result);
         }
     }
     public static Trial sample(List<KineticNetwork> networks, double minutes) {

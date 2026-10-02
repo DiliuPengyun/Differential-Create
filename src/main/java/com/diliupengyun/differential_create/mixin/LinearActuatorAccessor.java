@@ -8,7 +8,9 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 @Mixin(LinearActuatorBlockEntity.class)
 public interface LinearActuatorAccessor {
 	@Accessor("sequencedOffsetLimit") double differentialcreate$offsetLimit();
+	@Accessor("sequencedOffsetLimit") void differentialcreate$setOffsetLimit(double limit);
 	@Accessor("waitingForSpeedChange") boolean differentialcreate$waiting();
+	@Accessor("waitingForSpeedChange") void differentialcreate$setWaiting(boolean waiting);
 	@Invoker("isPassive") boolean differentialcreate$passive();
 	@Invoker("toMotionVector") net.minecraft.world.phys.Vec3 differentialcreate$toMotionVector(float speed);
 	@Invoker("getExtensionRange") int differentialcreate$extensionRange();

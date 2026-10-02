@@ -16,6 +16,7 @@ public final class PhysicsRegression {
 		SolverPrecisionRegression.run();
 		SnapshotRegression.run();
 		BoundarySearchRegression.run();
+		com.diliupengyun.differential_create.kinetics.TreeSolverRegression.run();
 		ShaftReplacementRegression.run();
 		SteamDriveRegression.run();
 		LoadFactorRegression.run();

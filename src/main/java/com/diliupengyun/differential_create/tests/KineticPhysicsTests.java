@@ -93,12 +93,20 @@ public final class KineticPhysicsTests {
 	public static void stationaryContraptionContactRefresh(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.stationaryContactRefresh(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_stall", timeoutTicks = 100)
 	public static void stalledContraptionDrill(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.stalledDrill(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_completion", timeoutTicks = 100)
+	public static void contraptionCompletionTolerance(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.completionTolerance(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_native_stall", timeoutTicks = 100)
+	public static void mixedActorNativeStall(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.mixedActorNativeStall(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_farm", timeoutTicks = 100)
 	public static void movingContraptionFarmTools(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.movingFarmTools(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_roller", timeoutTicks = 100)
 	public static void movingContraptionRoller(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.movingRoller(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_piston", timeoutTicks = 100)
 	public static void movingContraptionPiston(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.movingPiston(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_piston_endpoint", timeoutTicks = 100)
+	public static void pistonDirectionalEndpoint(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.pistonDirectionalEndpoint(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_piston_powered_return", timeoutTicks = 100)
+	public static void pistonPoweredEndpointReturn(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.pistonPoweredEndpointReturn(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_piston_continuity", timeoutTicks = 100)
 	public static void pistonHardTargetContinuity(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.pistonHardTargetContinuity(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_coaxial", timeoutTicks = 100)
@@ -766,7 +774,7 @@ public final class KineticPhysicsTests {
 			if (stage[0] == 0) {
 				// Exercise the actual bearing tick and contraption, independently of
 				// the source command: positive, fractional, zero and back-driven RPM.
-				for (float speed : new float[]{0.5f, 8, 3, 0, -2}) {
+				for (float speed : new float[]{0.5f, 8, 3, 0, -2, 1200, -2400}) {
 					assertBearingStep(helper, windmill, speed);
 					assertBearingStep(helper, mechanical, speed);
 				}
@@ -1054,12 +1062,16 @@ public final class KineticPhysicsTests {
 		float ratio = dynamics.differentialcreate$getRatios().get(bearing);
 		dynamics.differentialcreate$setSpeed(localSpeed / ratio);
 		bearing.setAngle(120);
+		var pose = (com.diliupengyun.differential_create.kinetics.IBearingMotion) bearing;
+		double before = pose.differentialcreate$syncedAngle();
 		bearing.tick();
 		float expected = 120 + localSpeed * 0.3f;
 		float actual = bearing.getMovedContraption().getAngle(1);
-		if (Math.abs(actual - expected) > 1e-4)
+		if (Math.abs(actual - expected % 360) > 1e-4)
 			helper.fail(bearing.getBlockState().getBlock() + " structure angle at " + localSpeed
-				+ " RPM: expected " + expected + ", got " + actual);
+				+ " RPM: expected " + expected % 360 + ", got " + actual);
+		assertNear(helper, before + localSpeed * .3f, pose.differentialcreate$syncedAngle(), 1e-4,
+			"synchronized bearing pose retains signed whole turns and fractional native movement");
 	}
 
 	private static void setClutchSignal(GameTestHelper helper, BlockPos clutchPos, int signal) {

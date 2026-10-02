@@ -20,6 +20,7 @@ import net.minecraft.nbt.CompoundTag;
 
 /** Actor sweeps and the next native controller tick consume the same integrated output travel. */
 public final class ContraptionMotion {
+	private static final double MOTION_EPSILON = 1e-8;
 	private static final Map<AbstractContraptionEntity, Output> outputs = new WeakHashMap<>();
 	private static boolean sampling;
 	private static boolean advancing;
@@ -50,7 +51,10 @@ public final class ContraptionMotion {
 					if (speed != 0) linear = drive.root().getDeltaMovement().scale(1 / speed);
 					if (!(actuator instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity)) {
 						linear = actuator.getMotionVector();
-						if (speed != 0) linear = linear.scale(1 / speed);
+						// Native travel can already be clamped to zero at an endpoint.
+						// Retain the drive direction so offset/sequence limits still
+						// distinguish blocked feed from a stationary cutting stroke.
+						if (speed != 0 && linear.lengthSqr() != 0) linear = linear.scale(1 / speed);
 						else if (actuator instanceof MechanicalPistonBlockEntity) {
 							var facing = actuator.getBlockState().getValue(BlockStateProperties.FACING);
 							linear = Vec3.atLowerCornerOf(facing.getNormal()).scale(-facing.getAxisDirection().getStep()
@@ -87,9 +91,15 @@ public final class ContraptionMotion {
 			angularRate = 0; angularLimit = upperTravel = Double.POSITIVE_INFINITY; lowerTravel = Double.NEGATIVE_INFINITY; ready = true;
 		}
 		void advance(double signed) {
+			// A dwelling actor can pause the native controller while its shaft
+			// keeps turning to pay for the action. That shaft travel is not feed.
+			if (stalled(drive.root())) return;
 			signedTravel = Math.max(lowerTravel, Math.min(upperTravel, signedTravel + signed));
 			angle = Math.max(-angularLimit, Math.min(angularLimit, signedTravel * angularRate));
 		}
+	}
+	private static boolean stalled(AbstractContraptionEntity root) {
+		return root != null && (root.isStalled() || root.getContraption() != null && root.getContraption().stalled);
 	}
 	public static boolean active() { return advancing; }
 	public static boolean managed(AbstractContraptionEntity entity) {
@@ -129,7 +139,7 @@ public final class ContraptionMotion {
 		var o = outputs.get(root);
 		if (o == null || !o.ready || o.consumed) return;
 		var pending = new CompoundTag(); var v = linear(root);
-		pending.putDouble("Angle", o.angle); pending.putDouble("X", v.x); pending.putDouble("Y", v.y); pending.putDouble("Z", v.z);
+		pending.putDouble("Angle", angular(root)); pending.putDouble("X", v.x); pending.putDouble("Y", v.y); pending.putDouble("Z", v.z);
 		tag.put("DCOutputMotion", pending);
 	}
 	public static void load(AbstractContraptionEntity root, CompoundTag tag) {
@@ -137,17 +147,22 @@ public final class ContraptionMotion {
 	}
 	/** Null lets native controllers keep their existing movement when no swept tools are present. */
 	public static Double angular(AbstractContraptionEntity root) {
-		var o = outputs.get(root); return sampling || o == null || !o.ready || o.consumed ? null : o.angle;
+		var o = outputs.get(root); return sampling || o == null || !o.ready || o.consumed ? null : stalled(root) ? 0 : o.angle;
+	}
+	/** Snapshots are queued after integration, just before end() marks the output ready. */
+	public static Double syncAngular(AbstractContraptionEntity root) {
+		var o = outputs.get(root); return sampling || o == null || o.consumed ? null : stalled(root) ? 0 : o.angle;
 	}
 	public static Vec3 linear(AbstractContraptionEntity root) {
 		var o = outputs.get(root); return sampling || o == null || !o.ready || o.consumed ? null
-			: o.translation.scale(Math.max(o.lowerTravel, Math.min(o.upperTravel, o.signedTravel)));
+			: stalled(root) ? Vec3.ZERO : o.translation.scale(Math.max(o.lowerTravel, Math.min(o.upperTravel, o.signedTravel)));
 	}
 	public static ActorContactPath path(ContraptionPhysics.Drive drive, MovementContext context) {
 		var o = outputs.get(drive.root());
 		if (!advancing || o == null || o.ready || drive.root().isStalled() || drive.root().getContraption().stalled
 			|| drive.entity().isStalled() || drive.entity().getContraption().stalled
-			|| allowance(drive) <= 1e-8) return null;
+			|| allowance(drive) <= MOTION_EPSILON) return null;
+		if (drive.shaft() instanceof LinearActuatorBlockEntity actuator && ((LinearActuatorAccessor) actuator).differentialcreate$waiting()) return null;
 		var behaviour = com.simibubi.create.api.behaviour.movement.MovementBehaviour.REGISTRY.get(context.state);
 		Vec3 point = drive.entity().toGlobalVector(Vec3.atCenterOf(context.localPos).add(behaviour.getActiveAreaOffset(context)), 1);
 		if (!drive.rotation()) return ActorContactPath.linear(point(point), point(o.translation));
@@ -170,6 +185,17 @@ public final class ContraptionMotion {
 		double speed = NetworkDynamics.preciseSpeed(drive.shaft());
 		double direction = Math.signum(speed == 0 ? drive.shaft().getTheoreticalSpeed() : speed);
 		return allowance(drive, direction == 0 ? 1 : direction);
+	}
+	/** A blocked feed must refresh its tool load as soon as the shaft turns back inward. */
+	public static int wakeDirection(ContraptionPhysics.Drive drive) {
+		var output = outputs.get(drive.root());
+		if (!advancing || sampling || output == null || output.ready || stalled(drive.root()) || stalled(drive.entity())) return 0;
+		if (drive.shaft() instanceof LinearActuatorBlockEntity actuator && ((LinearActuatorAccessor) actuator).differentialcreate$waiting()) return 0;
+		double speed = NetworkDynamics.preciseSpeed(drive.shaft());
+		double direction = Math.signum(speed == 0 ? drive.shaft().getTheoreticalSpeed() : speed);
+		if (direction == 0) direction = 1;
+		return allowance(drive, direction) <= MOTION_EPSILON && allowance(drive, -direction) > MOTION_EPSILON
+			? (int) -direction : 0;
 	}
 	public static double allowance(ContraptionPhysics.Drive drive, double direction) {
 		var o = outputs.get(drive.root());

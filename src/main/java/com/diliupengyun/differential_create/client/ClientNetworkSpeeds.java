@@ -11,6 +11,8 @@ import com.diliupengyun.differential_create.kinetics.NetworkStatePayload;
 import com.diliupengyun.differential_create.kinetics.NetworkStructurePayload;
 import com.diliupengyun.differential_create.kinetics.RotorStatePayload;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
+import com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity;
+import com.diliupengyun.differential_create.mixin.MechanicalBearingAccessor;
 
 import dev.engine_room.flywheel.lib.visualization.VisualizationHelper;
 import net.minecraft.client.Minecraft;
@@ -91,6 +93,7 @@ public final class ClientNetworkSpeeds {
 		float speed, torque, steamVent;
 		double elasticEnergy = Double.NaN;
 		final RotorAnimation animation = new RotorAnimation();
+		BearingAnimation bearing;
 	}
 
 	public static void applyRotors(ResourceKey<Level> dimension, RotorStatePayload payload) {
@@ -105,6 +108,11 @@ public final class ClientNetworkSpeeds {
 			rotor.steamVent = update.steamVent();
 			rotor.elasticEnergy = update.elasticEnergy();
 			rotor.animation.receive(update.angle());
+			if (update.bearing() == null) rotor.bearing = null;
+			else {
+				if (rotor.bearing == null) rotor.bearing = new BearingAnimation();
+				rotor.bearing.receive(update.bearing().entityId(), update.bearing().angle());
+			}
 		}
 	}
 
@@ -194,6 +202,7 @@ public final class ClientNetworkSpeeds {
 				entry.rotors.forEach((pos, rotor) -> {
 					boolean frozen = level.tickRateManager().isFrozen();
 					rotor.animation.advance(renderTick, partialRenderTick, frozen);
+					if (rotor.bearing != null) rotor.bearing.advance(renderTick, partialRenderTick, frozen);
 				});
 				if (!entry.rotors.isEmpty()) entry.rotationDirty = true;
 				if (level.tickRateManager().isFrozen())
@@ -206,8 +215,16 @@ public final class ClientNetworkSpeeds {
 					// would leave different shader rates/phases on connected shafts.
 					for (BlockPos pos : entry.ratios.keySet())
 						if (level.getBlockEntity(pos) instanceof KineticBlockEntity be
-							&& java.util.Objects.equals(id, be.network))
+							&& java.util.Objects.equals(id, be.network)) {
+							if (be instanceof MechanicalBearingBlockEntity bearing && bearing.getMovedContraption() != null) {
+								RotationFrame frame = bearingRotationOf(bearing, bearing.getMovedContraption().getId());
+								if (frame != null) {
+									bearing.setAngle(BearingAnimation.angleAt(frame, 1));
+									((MechanicalBearingAccessor) bearing).differentialcreate$applyRotation();
+								}
+							}
 							VisualizationHelper.queueUpdate(be);
+						}
 					entry.rotationDirty = false;
 				}
 			});
@@ -257,6 +274,13 @@ public final class ClientNetworkSpeeds {
 			return null;
 		Float ratio = entry.ratios.get(kbe.getBlockPos());
 		return ratio == null ? null : entry.renderFrame.scaled(ratio);
+	}
+
+	/** Only a snapshot for this entity may override its assembly-relative pose. */
+	public static RotationFrame bearingRotationOf(MechanicalBearingBlockEntity bearing, int entityId) {
+		Entry entry = entryOf(bearing);
+		Rotor rotor = entry == null ? null : entry.rotors.get(bearing.getBlockPos());
+		return rotor == null || rotor.bearing == null ? null : rotor.bearing.frame(entityId);
 	}
 
 	private static Entry entryOf(KineticBlockEntity kbe) {

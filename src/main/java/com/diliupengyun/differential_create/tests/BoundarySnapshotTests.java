@@ -51,6 +51,11 @@ final class BoundarySnapshotTests {
                     h.assertTrue(expected == work.differentialcreate$phaseLimit(absolute, signed, 1000),
                         "cached geometry preserves both directions and reversal travel");
                 }
+                var limits = work.differentialcreate$boundary(work.differentialcreate$remainingTravel());
+                h.assertTrue(Double.isInfinite(limits.travel())
+                    && limits.positive() == Math.min(ContraptionMotion.allowance(drive, 1), path.exit(travel, 1))
+                    && limits.negative() == Math.min(ContraptionMotion.allowance(drive, -1), path.exit(travel, -1)),
+                    "idle tools expose both signed contact boundaries independently of work travel");
                 var snapshot = ElasticKinetics.snapshot(networks);
                 double angle = ElasticKinetics.state(be).angle;
                 double progress = context.data.getDouble("DCActorTravel");
@@ -99,8 +104,8 @@ final class BoundarySnapshotTests {
                 h.assertTrue(boundary > 0 && boundary < DT / 8, "benchmark locates a real moving drill's voxel boundary");
                 h.assertTrue(boundary == search(networks, be, tools, false), "reused inputs locate exactly the same contact boundary");
                 double accelerated = acceleratedSearch(networks, be, tools);
-                h.assertTrue(accelerated == boundary,
-                    "displacement-only bisection retains the exact original contact boundary");
+                h.assertTrue(Math.abs(accelerated - boundary) <= 1e-12,
+                    "production event limits locate the same monotone contact as the analytical rotor trajectory");
                 benchmark(networks, be, tools);
             } finally { ContraptionMotion.end(h.getLevel()); }
             root.setAngle(0); be.disassemble(); h.succeed();
@@ -125,33 +130,28 @@ final class BoundarySnapshotTests {
         });
     }
     private static double acceleratedSearch(List<KineticNetwork> networks, MechanicalBearingBlockEntity be, List<ContraptionActorWork> tools) {
-        double[] budgets = tools.stream().mapToDouble(ContraptionActorWork::differentialcreate$remainingTravel).toArray();
+        var limits = tools.stream().map(tool -> {
+            double budget = tool.differentialcreate$remainingTravel();
+            return new ElasticKinetics.WorkEvent(be, tool.differentialcreate$boundary(budget));
+        }).toList();
         var snapshot = ElasticKinetics.snapshot(networks);
-        return ShaftClock.firstBoundary(DT / 8, minutes -> {
-            var trial = snapshot.motion(minutes);
-            double travel = trial.travel(be), signed = trial.signedTravel(be);
-            for (int i = 0; i < tools.size(); i++) {
-                double limit = tools.get(i).differentialcreate$phaseLimit(travel, signed, budgets[i]);
-                if (travel >= limit) return true;
-            }
-            return false;
-        });
+        return snapshot.advanceToEvent(DT / 8, limits).result.duration();
     }
     private static void benchmark(List<KineticNetwork> networks, MechanicalBearingBlockEntity be, List<ContraptionActorWork> tools) {
         for (int i = 0; i < 16; i++) { search(networks, be, tools, true); acceleratedSearch(networks, be, tools); }
-        double[] full = new double[7], motionOnly = new double[7];
-        for (int round = 0; round < full.length; round++) for (int pass = 0; pass < 2; pass++) {
-            boolean displacementOnly = (round + pass) % 2 == 0;
+        double[] legacy = new double[7], production = new double[7];
+        for (int round = 0; round < legacy.length; round++) for (int pass = 0; pass < 2; pass++) {
+            boolean eventLimits = (round + pass) % 2 == 0;
             long start = System.nanoTime();
             for (int i = 0; i < 4; i++) {
-                if (displacementOnly) acceleratedSearch(networks, be, tools);
+                if (eventLimits) acceleratedSearch(networks, be, tools);
                 else search(networks, be, tools, true);
             }
-            (displacementOnly ? motionOnly : full)[round] = (System.nanoTime() - start) / 4e6;
+            (eventLimits ? production : legacy)[round] = (System.nanoTime() - start) / 4e6;
         }
-        Arrays.sort(full); Arrays.sort(motionOnly);
+        Arrays.sort(legacy); Arrays.sort(production);
         System.out.printf(java.util.Locale.ROOT,
-            "Boundary search benchmark: 128 RPM, %d moving drills, full=%.3f ms/search, motion-only=%.3f ms/search, speedup=%.2fx%n",
-            tools.size(), full[3], motionOnly[3], full[3] / motionOnly[3]);
+            "Boundary search benchmark: 128 RPM, %d moving drills, legacy=%.3f ms/search, production=%.3f ms/search, speedup=%.2fx%n",
+            tools.size(), legacy[3], production[3], legacy[3] / production[3]);
     }
 }

@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 import com.simibubi.create.content.kinetics.KineticNetwork;
 import com.simibubi.create.content.kinetics.steamEngine.PoweredShaftBlockEntity;
+import com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -87,8 +88,13 @@ public final class ClientSpeedSync {
 				var member = ElasticKinetics.state(be);
 				float steamVent = be instanceof PoweredShaftBlockEntity shaft
 					? (float) SourcePhysics.steamCurve(shaft).steamVent(member.physicalSpeed) : 0;
+				RotorStatePayload.BearingPose pose = null;
+				if (be instanceof MechanicalBearingBlockEntity bearing && bearing.isRunning()
+					&& bearing.getMovedContraption() != null)
+					pose = new RotorStatePayload.BearingPose(bearing.getMovedContraption().getId(),
+						((IBearingMotion) bearing).differentialcreate$syncedAngle());
 				rotors.add(new RotorStatePayload.Rotor(be.getBlockPos(), (float) member.physicalSpeed,
-					member.angle * 360, (float) member.transmittedTorque, steamVent, elasticEnergy.of(be)));
+					member.angle * 360, (float) member.transmittedTorque, steamVent, elasticEnergy.of(be), pose));
 				// Keep every packet safely below the custom-payload size limit.
 				if (rotors.size() == 2048) {
 					var packet = new RotorStatePayload(server.dimension().location(), network.id, energy, elasticEnergy.total(),

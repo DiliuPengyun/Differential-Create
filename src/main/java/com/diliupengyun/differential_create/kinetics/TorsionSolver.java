@@ -2,6 +2,7 @@ package com.diliupengyun.differential_create.kinetics;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.RecursiveAction;
 
@@ -32,11 +33,32 @@ public final class TorsionSolver {
                          double[] travel, double[] torque, boolean[] slipping, int broken) {}
     /** A discarded boundary probe needs displacement, not recovered algebraic endpoint speeds. */
     public record Motion(double duration, double[] angle, double[] travel) {}
+    /** Budgets in calibrated turns. A negative-direction budget is a positive magnitude. */
+    public record EventLimit(int shaft, double travel, double positiveAngle, double negativeAngle, int enteringDirection) {
+        public EventLimit(int shaft, double travel, double positiveAngle, double negativeAngle) {
+            this(shaft, travel, positiveAngle, negativeAngle, 0);
+        }
+        public EventLimit {
+            if (shaft < 0 || !(travel >= 0) || !(positiveAngle >= 0) || !(negativeAngle >= 0)
+                || enteringDirection < -1 || enteringDirection > 1)
+                throw new IllegalArgumentException("Invalid shaft event budget");
+        }
+    }
+    private static final double EVENT_TRAVEL_TOLERANCE = RotationMath.TICK_MINUTES * 1e-8;
+    private static final double EVENT_TIME_RESOLUTION = 1e-14;
+    // The physical step already rounds smaller inertial endpoint speeds to zero.
+    private static final double EVENT_DIRECTION_SPEED = 1e-9;
+    private static final double EVENT_DIRECTION_TARGET = 1.5e-9;
     private record Step(double[] speed, double[] twist, double[] velocity, double[] torque,
                         boolean[] slipping, int broken) {}
     private static final class ConvergenceFailure extends RuntimeException {
         ConvergenceFailure(String message) { super(message); }
     }
+    /** A numerical guard requests the original algorithm from the captured initial state. */
+    private static final class OriginalRequired extends RuntimeException {
+        private OriginalRequired() { super(null, null, false, false); }
+    }
+    private static final OriginalRequired ORIGINAL_REQUIRED = new OriginalRequired();
     private TorsionSolver() {}
 
     public static Result advance(List<Body> bodies, List<Link> links, double[] initialSpeed,
@@ -49,7 +71,12 @@ public final class TorsionSolver {
 
     /** Compile fixed inputs once; every trial starts from the captured state, regardless of trial order. */
     public static Prepared prepare(List<Body> bodies, List<Link> links, double[] initialSpeed, double[] initialTwist) {
-        return new Prepared(bodies, links, initialSpeed, initialTwist);
+        return new Prepared(bodies, links, initialSpeed, initialTwist, true);
+    }
+
+    /** Same physical model, integration and tolerances; used as a numerical regression reference. */
+    static Prepared prepareReference(List<Body> bodies, List<Link> links, double[] speed, double[] twist) {
+        return new Prepared(bodies, links, speed, twist, false);
     }
 
     public static final class Prepared {
@@ -60,22 +87,36 @@ public final class TorsionSolver {
         private final SpeedFrame frame;
         private final MatrixGraph matrix;
         private final ComponentBatch[] batches;
+        private final boolean[] analyticShafts;
         private final Result[] componentResults;
         private final Throwable[] componentFailures;
         private final IntegrationCache cache = new IntegrationCache();
-        private Prepared(List<Body> bodies, List<Link> links, double[] initialSpeed, double[] initialTwist) {
+        private MatrixGraph referenceMatrix;
+        private IntegrationCache referenceCache;
+        private boolean referenceMode, lastReference;
+        private int fallbacks;
+        private Prepared(List<Body> bodies, List<Link> links, double[] initialSpeed, double[] initialTwist, boolean accelerated) {
             this.bodies = List.copyOf(bodies); this.links = List.copyOf(links);
             this.initialSpeed = initialSpeed.clone(); this.initialTwist = initialTwist.clone();
             components = components(this.bodies, this.links, this.initialSpeed, this.initialTwist);
             frame = components.size() <= 1 ? integrationFrame(this.bodies, this.links) : null;
-            matrix = components.size() <= 1 ? new MatrixGraph(this.bodies.size(), this.links) : null;
+            matrix = components.size() <= 1 ? new MatrixGraph(this.bodies, this.links, accelerated) : null;
             for (var component : components) {
                 component.frame = integrationFrame(component.bodies, component.links);
-                component.matrix = new MatrixGraph(component.bodies.size(), component.links);
+                component.matrix = new MatrixGraph(component.bodies, component.links, accelerated);
+                component.segmentSpeed = new double[component.nodes.size()];
+                component.segmentTwist = new double[component.edges.size()];
             }
             componentResults = new Result[components.size()];
             componentFailures = new Throwable[components.size()];
             batches = parallelBatches(components, componentResults, componentFailures);
+            analyticShafts = new boolean[bodies.size()];
+            if (components.size() <= 1) java.util.Arrays.fill(analyticShafts,
+                this.links.isEmpty() && this.bodies.stream().noneMatch(Body::nonlinearDrive));
+            else for (var component : components) {
+                boolean analytic = component.links.isEmpty() && component.bodies.stream().noneMatch(Body::nonlinearDrive);
+                for (int shaft : component.nodes) analyticShafts[shaft] = analytic;
+            }
         }
         public synchronized Result advance(double duration, double maxStep) {
             return advanceCaptured(duration, maxStep, true);
@@ -84,12 +125,352 @@ public final class TorsionSolver {
             var result = advanceCaptured(duration, maxStep, false);
             return new Motion(result.duration, result.angle, result.travel);
         }
+        /** Legacy monotone-predicate search; production uses explicit shaft limits below.
+         * Keep all probes and the committed result on one algorithm if a branch guard fires.
+         * The predicate observes only detached travel; it must not change world state. */
+        public synchronized Result advanceToEvent(double duration, double maxStep, Predicate<Motion> reached) {
+            if (fallbackRevision() != 0) useReferenceSolver();
+            Result full = advanceCaptured(duration, maxStep, true);
+            if (fallbackRevision() != 0) {
+                boolean alreadyReference = allReference();
+                useReferenceSolver();
+                if (!alreadyReference) full = advanceCaptured(duration, maxStep, true);
+            }
+            for (;;) {
+                if (!reached.test(new Motion(full.duration, full.angle, full.travel))) return full;
+                int revision = fallbackRevision();
+                double boundary = ShaftClock.firstBoundary(full.duration, minutes -> {
+                    Result probe = advanceCaptured(minutes, maxStep, false);
+                    return reached.test(new Motion(probe.duration, probe.angle, probe.travel));
+                });
+                Result result = advanceCaptured(boundary, maxStep, true);
+                if (fallbackRevision() == revision) return result;
+                // A short probe can encounter a contact or conditioning boundary unseen by
+                // the full trial. Discard the entire search, including its original horizon.
+                useReferenceSolver();
+                full = advanceCaptured(duration, maxStep, true);
+            }
+        }
+        /** Follow accepted steps chronologically. Dense motion locates candidates only;
+         * every returned physical state is a real midpoint/analytic solve, never an interpolation. */
+        public synchronized Result advanceToEvent(double duration, double maxStep, List<EventLimit> limits) {
+            if (!Double.isFinite(duration) || duration < 0 || !(maxStep > 0) || !Double.isFinite(maxStep))
+                throw new IllegalArgumentException("Invalid physical interval");
+            limits = List.copyOf(limits);
+            for (var limit : limits) if (limit.shaft >= bodies.size())
+                throw new IllegalArgumentException("Event shaft outside the captured graph");
+            var armed = new ArrayList<EventLimit>(limits.size());
+            boolean directionEvents = false;
+            for (var limit : limits) {
+                int direction = limit.enteringDirection;
+                if (direction * initialSpeed[limit.shaft] > 0) direction = 0;
+                directionEvents |= direction != 0;
+                armed.add(direction == limit.enteringDirection ? limit
+                    : new EventLimit(limit.shaft, limit.travel, limit.positiveAngle, limit.negativeAngle, direction));
+            }
+            limits = List.copyOf(armed);
+            if (limits.isEmpty() || duration == 0) return advanceCaptured(duration, maxStep, true);
+            if (fallbackRevision() != 0) useReferenceSolver();
+            if (tryAbsoluteOnlyFull(duration, limits)) {
+                int revision = fallbackRevision();
+                try {
+                    Result full = advanceCaptured(duration, maxStep, true);
+                    if (fallbackRevision() != revision) {
+                        // The optional full trial may expose a guard after the
+                        // eventual work event. Restart every component together.
+                        useReferenceSolver();
+                        full = advanceCaptured(duration, maxStep, true);
+                    }
+                    boolean untouched = true;
+                    for (var limit : limits) if (Double.isFinite(limit.travel)
+                        && !(full.travel[limit.shaft] < limit.travel - eventTolerance(limit.travel))) {
+                        untouched = false;
+                        break;
+                    }
+                    // Accepted absolute travel is nondecreasing. This actual
+                    // endpoint proves no work event preceded it, including when
+                    // a fracture stopped the full interval early. The initial
+                    // speed estimate below is only a scheduling heuristic.
+                    if (untouched) return full;
+                } catch (ConvergenceFailure failure) {
+                    // A failed optional horizon says nothing about an earlier
+                    // event; retain the chronological search below.
+                    if (fallbackRevision() != revision) useReferenceSolver();
+                }
+            }
+            search: for (;;) {
+                int revision = fallbackRevision();
+                Result state = new Result(0, initialSpeed.clone(), initialTwist.clone(), new double[bodies.size()],
+                    new double[bodies.size()], new double[links.size()], new boolean[links.size()], -1);
+                double stepSize = Math.min(duration, maxStep), correction = 0;
+                double[] physicalSpeed = initialSpeed;
+                if (withinEventBudget(state, limits)) return state;
+                while (state.duration < duration) {
+                    double remaining = duration - state.duration;
+                    double h = remaining <= stepSize + 8 * Math.ulp(duration) ? remaining : stepSize;
+                    double resolution = eventResolution(state, limits);
+                    Result segment;
+                    try {
+                        segment = eventSegment(state, h);
+                        if (segment.broken >= 0) segment = firstFracture(state, segment);
+                    } catch (ConvergenceFailure failure) {
+                        if (h / 2 <= resolution) throw failure;
+                        stepSize = h / 2;
+                        continue;
+                    }
+                    if (fallbackRevision() != revision) { useReferenceSolver(); continue search; }
+                    double[] endSpeed = segment.speed;
+                    if (directionEvents) {
+                        try { endSpeed = recoverEventSpeeds(segment).speed; }
+                        catch (OriginalRequired failure) { fallbacks++; useReferenceSolver(); continue search; }
+                        double acceleration = 0;
+                        for (var limit : limits) if (limit.enteringDirection != 0)
+                            acceleration = Math.max(acceleration, Math.abs(endSpeed[limit.shaft] - physicalSpeed[limit.shaft]) / segment.duration);
+                        if (acceleration > 0) resolution = Math.max(16 * Math.ulp(state.duration),
+                            Math.min(resolution, EVENT_DIRECTION_SPEED / (4 * acceleration)));
+                    }
+                    double candidate = firstMotionEvent(state, segment, limits, physicalSpeed, endSpeed);
+                    // The exact endpoint can be a few ulps beyond the dense evaluation,
+                    // or a few ulps short of a consumer's accumulated decimal budget.
+                    if (!Double.isFinite(candidate) && nearSegmentEvent(state, segment, limits, endSpeed)) candidate = segment.duration;
+                    if (Double.isFinite(candidate)) {
+                        Result boundary;
+                        try { boundary = candidate == segment.duration ? segment
+                            : eventSegment(state, Math.min(segment.duration, Math.max(candidate, resolution))); }
+                        catch (ConvergenceFailure failure) {
+                            if (h / 2 <= resolution) throw failure;
+                            stepSize = h / 2;
+                            continue;
+                        }
+                        if (fallbackRevision() != revision) { useReferenceSolver(); continue search; }
+                        Result reached = accumulate(state, boundary);
+                        if (directionEvents) {
+                            try { reached = recoverEventSpeeds(reached); }
+                            catch (OriginalRequired failure) { fallbacks++; useReferenceSolver(); continue search; }
+                        }
+                        // A dense candidate and its true shortened solve may disagree. Reject
+                        // the original interval instead of committing interpolated energy or
+                        // bisecting a non-monotone family of fresh full-horizon integrations.
+                        if (withinEventBudget(reached, limits)) {
+                            if (directionEvents) return reached;
+                            try { return recoverEventSpeeds(reached); }
+                            catch (OriginalRequired failure) { fallbacks++; useReferenceSolver(); continue search; }
+                        }
+                        Result endpoint = accumulate(state, segment);
+                        if (directionEvents) endpoint = new Result(endpoint.duration, endSpeed, endpoint.twist, endpoint.angle,
+                            endpoint.travel, endpoint.torque, endpoint.slipping, endpoint.broken);
+                        if (withinEventBudget(endpoint, limits) && (nearMotionEvent(endpoint, limits) || candidate == segment.duration)) {
+                            if (directionEvents) return endpoint;
+                            try { return recoverEventSpeeds(endpoint); }
+                            catch (OriginalRequired failure) { fallbacks++; useReferenceSolver(); continue search; }
+                        }
+                        if (h / 2 <= resolution) throw unresolvedEvent(state, reached, limits);
+                        stepSize = h / 2;
+                        continue;
+                    }
+                    double previousTime = state.duration;
+                    state = acceptSegment(state, segment);
+                    physicalSpeed = endSpeed;
+                    if (state.broken >= 0) {
+                        try { return recoverEventSpeeds(state); }
+                        catch (OriginalRequired failure) { fallbacks++; useReferenceSolver(); continue search; }
+                    }
+                    double increment = segment.duration - correction, nextTime = previousTime + increment;
+                    correction = (nextTime - previousTime) - increment;
+                    double time = segment.duration == remaining ? duration : nextTime;
+                    state = new Result(time, state.speed, state.twist, state.angle, state.travel, state.torque, state.slipping, state.broken);
+                    stepSize = Math.min(maxStep, h * 2);
+                }
+                try { return recoverEventSpeeds(state); }
+                catch (OriginalRequired failure) { fallbacks++; useReferenceSolver(); }
+            }
+        }
+        private boolean tryAbsoluteOnlyFull(double duration, List<EventLimit> limits) {
+            for (var limit : limits) {
+                if (Double.isFinite(limit.positiveAngle) || Double.isFinite(limit.negativeAngle)
+                    || limit.enteringDirection != 0) return false;
+                if (Double.isFinite(limit.travel)
+                    && !(limit.travel > 2 * Math.abs(initialSpeed[limit.shaft]) * duration)) return false;
+            }
+            return true;
+        }
+        private MatrixGraph eventMatrix() {
+            if (!referenceMode || matrix.tree == null) return matrix;
+            if (referenceMatrix == null) {
+                referenceMatrix = new MatrixGraph(bodies, links, false);
+                referenceCache = new IntegrationCache();
+            }
+            return referenceMatrix;
+        }
+        private Result eventSegment(Result start, double h) {
+            if (components.size() <= 1) {
+                lastReference = referenceMode || matrix.tree == null;
+                try { return graphSegment(bodies, links, start.speed, start.twist, h, frame, eventMatrix()); }
+                catch (OriginalRequired | ConvergenceFailure failure) {
+                    if (eventMatrix().tree == null) throw failure;
+                    fallbacks++; useReferenceSolver(); lastReference = true;
+                    return graphSegment(bodies, links, start.speed, start.twist, h, frame, eventMatrix());
+                }
+            }
+            long cost = 0;
+            for (var component : components) cost += componentCost(component);
+            if (batches == null || cost < 16000) {
+                for (int c = 0; c < components.size(); c++) componentResults[c] = components.get(c).segment(start, h);
+            } else {
+                java.util.Arrays.fill(componentFailures, null);
+                for (var batch : batches) batch.startSegment(start, h);
+                for (int b = 1; b < batches.length; b++) ParallelSolves.POOL.execute(batches[b]);
+                batches[0].compute();
+                for (int b = 1; b < batches.length; b++) batches[b].join();
+                for (Throwable failure : componentFailures) {
+                    if (failure instanceof RuntimeException exception) throw exception;
+                    if (failure instanceof Error error) throw error;
+                }
+            }
+            double[] speed = new double[bodies.size()], twist = new double[links.size()], angle = new double[bodies.size()],
+                travel = new double[bodies.size()], torque = new double[links.size()];
+            boolean[] slipping = new boolean[links.size()];
+            int broken = -1;
+            for (int c = 0; c < components.size(); c++) {
+                var component = components.get(c); var result = componentResults[c];
+                for (int i = 0; i < component.nodes.size(); i++) {
+                    int at = component.nodes.get(i);
+                    speed[at] = result.speed[i]; angle[at] = result.angle[i]; travel[at] = result.travel[i];
+                }
+                for (int e = 0; e < component.edges.size(); e++) {
+                    int at = component.edges.get(e);
+                    twist[at] = result.twist[e]; torque[at] = result.torque[e]; slipping[at] = result.slipping[e];
+                    if (e == result.broken && (broken < 0 || at < broken)) broken = at;
+                }
+            }
+            return new Result(h, speed, twist, angle, travel, torque, slipping, broken);
+        }
+        private Result firstFracture(Result start, Result end) {
+            double low = 0, high = end.duration;
+            Result result = end;
+            for (int i = 0; i < 26 && high - low > 1e-12; i++) {
+                double mid = (low + high) / 2;
+                Result trial = eventSegment(start, mid);
+                if (trial.broken < 0) low = mid;
+                else { high = mid; result = trial; }
+            }
+            return result;
+        }
+        private double firstMotionEvent(Result start, Result end, List<EventLimit> limits, double[] physicalSpeed, double[] endSpeed) {
+            double first = Double.POSITIVE_INFINITY;
+            for (var limit : limits) {
+                int shaft = limit.shaft;
+                // Absolute travel cannot decrease along an accepted interval. A
+                // distant absolute-only boundary needs no dense curve or probes.
+                // Signed limits still need the reversal extrema below, even when
+                // the interval endpoint is outside their reached region.
+                if (limit.enteringDirection == 0 && !Double.isFinite(limit.positiveAngle) && !Double.isFinite(limit.negativeAngle)
+                    && (!Double.isFinite(limit.travel)
+                        || start.travel[shaft] + end.travel[shaft] < limit.travel - eventTolerance(limit.travel))) continue;
+                Body body = bodies.get(shaft);
+                double h = end.duration, average = end.angle[shaft] / h;
+                boolean analytic = analyticShafts[shaft];
+                double initial = body.inertia > 0 ? start.speed[shaft] : average;
+                double slope = body.inertia > 0 ? 2 * (average - initial) / h : 0;
+                java.util.function.DoubleFunction<RotationMath.Motion> motion = t -> analytic
+                    ? RotationMath.motion(start.speed[shaft], body.drive, body.damping, body.load, body.inertia, body.drag, t)
+                    : linearMotion(initial, slope, t);
+                if (limit.enteringDirection != 0) {
+                    int direction = limit.enteringDirection;
+                    double v0 = physicalSpeed[shaft], v1 = endSpeed[shaft];
+                    java.util.function.DoublePredicate entered = t -> direction * (analytic
+                        ? RotationMath.advance(start.speed[shaft], body.drive, body.damping, body.load, body.inertia, body.drag, t)
+                        : v0 + (v1 - v0) * (t / h)) >= EVENT_DIRECTION_TARGET;
+                    if (entered.test(h)) first = Math.min(first, ShaftClock.firstBoundary(0, h, entered));
+                }
+                double turn = Double.NaN;
+                if (analytic && start.speed[shaft] * end.speed[shaft] < 0) {
+                    double sign = Math.signum(start.speed[shaft]);
+                    turn = ShaftClock.firstBoundary(0, h, t -> sign * motion.apply(t).speed() <= 0);
+                } else if (!analytic && slope != 0) {
+                    double zero = -initial / slope;
+                    if (zero > 0 && zero < h) turn = zero;
+                }
+                if (Double.isFinite(limit.travel)) {
+                    double budget = limit.travel - start.travel[shaft];
+                    if (motion.apply(h).travel() >= budget)
+                        first = Math.min(first, ShaftClock.firstBoundary(0, h, t -> motion.apply(t).travel() >= budget));
+                }
+                double split = Double.isFinite(turn) ? turn : h;
+                for (int half = 0; half < (Double.isFinite(turn) ? 2 : 1); half++) {
+                    double low = half == 0 ? 0 : split, high = half == 0 ? split : h;
+                    if (Double.isFinite(limit.positiveAngle)) {
+                        java.util.function.DoublePredicate reached = t -> {
+                            double angle = start.angle[shaft] + motion.apply(t).angle();
+                            return angle > 0 && angle >= limit.positiveAngle;
+                        };
+                        if (reached.test(high)) first = Math.min(first, ShaftClock.firstBoundary(low, high, reached));
+                    }
+                    if (Double.isFinite(limit.negativeAngle)) {
+                        java.util.function.DoublePredicate reached = t -> {
+                            double angle = start.angle[shaft] + motion.apply(t).angle();
+                            return angle < 0 && -angle >= limit.negativeAngle;
+                        };
+                        if (reached.test(high)) first = Math.min(first, ShaftClock.firstBoundary(low, high, reached));
+                    }
+                }
+            }
+            return first;
+        }
+        private Result recoverEventSpeeds(Result state) {
+            if (components.size() <= 1) return new Result(state.duration,
+                endpointSpeeds(bodies, links, eventMatrix(), state.speed, state.slipping), state.twist,
+                state.angle, state.travel, state.torque, state.slipping, state.broken);
+            double[] speed = state.speed.clone();
+            for (var component : components) {
+                double[] local = new double[component.nodes.size()]; boolean[] slip = new boolean[component.edges.size()];
+                for (int i = 0; i < local.length; i++) local[i] = speed[component.nodes.get(i)];
+                for (int e = 0; e < slip.length; e++) slip[e] = state.slipping[component.edges.get(e)];
+                local = endpointSpeeds(component.bodies, component.links, component.eventMatrix(), local, slip);
+                for (int i = 0; i < local.length; i++) speed[component.nodes.get(i)] = local[i];
+            }
+            return new Result(state.duration, speed, state.twist, state.angle, state.travel, state.torque, state.slipping, state.broken);
+        }
+        synchronized int fallbackRevision() {
+            int revision = fallbacks;
+            for (var component : components) revision += component.fallbacks;
+            return revision;
+        }
+        private boolean allReference() {
+            if (components.size() <= 1) return lastReference;
+            for (var component : components)
+                if (!component.lastReference) return false;
+            return true;
+        }
+        private void useReferenceSolver() {
+            referenceMode = true;
+            for (var component : components) component.referenceMode = true;
+        }
+        private Result reference(double duration, double maxStep, boolean recoverSpeeds) {
+            if (matrix.tree == null)
+                return integrate(bodies, links, initialSpeed, initialTwist, duration, maxStep, true, recoverSpeeds, frame, matrix, cache);
+            if (referenceMatrix == null) {
+                referenceMatrix = new MatrixGraph(bodies, links, false);
+                referenceCache = new IntegrationCache();
+            }
+            return integrate(bodies, links, initialSpeed, initialTwist, duration, maxStep, true, recoverSpeeds,
+                frame, referenceMatrix, referenceCache);
+        }
         private Result advanceCaptured(double duration, double maxStep, boolean recoverSpeeds) {
             if (!(maxStep > 0) || duration < 0) throw new IllegalArgumentException("Invalid physical interval");
             if (duration == 0) return new Result(0, initialSpeed.clone(), initialTwist.clone(),
                 new double[bodies.size()], new double[bodies.size()], new double[links.size()], new boolean[links.size()], -1);
-            if (components.size() <= 1)
-                return integrate(bodies, links, initialSpeed, initialTwist, duration, maxStep, true, recoverSpeeds, frame, matrix, cache);
+            if (components.size() <= 1) {
+                lastReference = referenceMode || matrix.tree == null;
+                if (referenceMode) return reference(duration, maxStep, recoverSpeeds);
+                try {
+                    return integrate(bodies, links, initialSpeed, initialTwist, duration, maxStep, true, recoverSpeeds, frame, matrix, cache);
+                } catch (OriginalRequired | ConvergenceFailure failure) {
+                    if (matrix.tree == null) throw failure;
+                    fallbacks++; lastReference = true;
+                    return reference(duration, maxStep, recoverSpeeds);
+                }
+            }
 
             // Disconnected rotors must not change each other's convergence or analytic integration.
             if (batches == null || !worthParallelizing(duration, maxStep)) {
@@ -110,9 +491,9 @@ public final class TorsionSolver {
             }
             double boundary = duration;
             for (var result : componentResults) boundary = Math.min(boundary, result.duration);
-            double[] speed = initialSpeed.clone(), twist = new double[links.size()];
-            double[] angle = new double[bodies.size()], travel = new double[bodies.size()], torque = new double[links.size()];
-            boolean[] slipping = new boolean[links.size()];
+            double[] speed = recoverSpeeds ? initialSpeed.clone() : null, twist = recoverSpeeds ? new double[links.size()] : null;
+            double[] angle = new double[bodies.size()], travel = new double[bodies.size()], torque = recoverSpeeds ? new double[links.size()] : null;
+            boolean[] slipping = recoverSpeeds ? new boolean[links.size()] : null;
             int broken = -1;
             for (int c = 0; c < components.size(); c++) {
                 Component component = components.get(c);
@@ -122,11 +503,14 @@ public final class TorsionSolver {
                 if (result.duration > boundary) result = component.advance(boundary, maxStep, false, recoverSpeeds);
                 for (int i = 0; i < component.nodes.size(); i++) {
                     int target = component.nodes.get(i);
-                    speed[target] = result.speed[i]; angle[target] = result.angle[i]; travel[target] = result.travel[i];
+                    if (recoverSpeeds) speed[target] = result.speed[i];
+                    angle[target] = result.angle[i]; travel[target] = result.travel[i];
                 }
                 for (int e = 0; e < component.edges.size(); e++) {
                     int target = component.edges.get(e);
-                    twist[target] = result.twist[e]; torque[target] = result.torque[e]; slipping[target] = result.slipping[e];
+                    if (recoverSpeeds) {
+                        twist[target] = result.twist[e]; torque[target] = result.torque[e]; slipping[target] = result.slipping[e];
+                    }
                     if (e == result.broken && (broken < 0 || target < broken)) broken = target;
                 }
             }
@@ -146,6 +530,125 @@ public final class TorsionSolver {
         }
     }
 
+    private static RotationMath.Motion linearMotion(double initial, double slope, double t) {
+        double speed = initial + slope * t, angle = t * (initial + slope * t / 2);
+        double travel;
+        if (initial * speed < 0) {
+            double a = Math.abs(initial), b = Math.abs(speed);
+            travel = t * (a * a + b * b) / (2 * (a + b));
+        } else travel = Math.abs(angle);
+        return new RotationMath.Motion(speed, angle, travel);
+    }
+
+    private static Result accumulate(Result start, Result segment) {
+        double[] angle = new double[start.angle.length], travel = new double[start.travel.length];
+        for (int i = 0; i < angle.length; i++) {
+            angle[i] = start.angle[i] + segment.angle[i]; travel[i] = start.travel[i] + segment.travel[i];
+        }
+        return new Result(start.duration + segment.duration, segment.speed, segment.twist, angle, travel,
+            segment.torque, segment.slipping, segment.broken);
+    }
+
+    /** Only an accepted no-event interval may update the query-private accumulators. */
+    private static Result acceptSegment(Result start, Result segment) {
+        for (int i = 0; i < start.angle.length; i++) {
+            start.angle[i] += segment.angle[i]; start.travel[i] += segment.travel[i];
+        }
+        return new Result(start.duration + segment.duration, segment.speed, segment.twist, start.angle, start.travel,
+            segment.torque, segment.slipping, segment.broken);
+    }
+
+    private static double eventTolerance(double budget) {
+        return Math.max(EVENT_TRAVEL_TOLERANCE, 128 * Math.ulp(budget));
+    }
+
+    private static double eventResolution(Result state, List<EventLimit> limits) {
+        double speed = 0;
+        for (var limit : limits) speed = Math.max(speed, Math.abs(state.speed[limit.shaft]));
+        // A fixed minimum time would overshoot even an ordinary 1024-RPM boundary.
+        return Math.max(16 * Math.ulp(state.duration),
+            Math.min(EVENT_TIME_RESOLUTION, EVENT_TRAVEL_TOLERANCE / (2 * (1 + speed))));
+    }
+
+    private static boolean nearBudget(double amount, double budget) {
+        // Do not manufacture an event at the unchanged initial state merely
+        // because a positive budget is smaller than the consumer tolerance.
+        return Double.isFinite(budget) && (amount > 0 || budget == 0)
+            && amount >= budget - eventTolerance(budget);
+    }
+
+    private static boolean nearMotionEvent(Result state, List<EventLimit> limits) {
+        for (var limit : limits) {
+            double angle = state.angle[limit.shaft];
+            if (nearBudget(state.travel[limit.shaft], limit.travel)
+                || angle > 0 && nearBudget(angle, limit.positiveAngle)
+                || angle < 0 && nearBudget(-angle, limit.negativeAngle)) return true;
+        }
+        return false;
+    }
+
+    private static boolean nearEvent(Result state, List<EventLimit> limits) {
+        if (nearMotionEvent(state, limits)) return true;
+        if (state.duration > 0) for (var limit : limits)
+            if (limit.enteringDirection * state.speed[limit.shaft] >= EVENT_DIRECTION_SPEED) return true;
+        return false;
+    }
+
+    private static boolean nearSegmentEvent(Result start, Result segment, List<EventLimit> limits, double[] endSpeed) {
+        for (var limit : limits) {
+            int shaft = limit.shaft;
+            double angle = start.angle[shaft] + segment.angle[shaft];
+            if (nearBudget(start.travel[shaft] + segment.travel[shaft], limit.travel)
+                || angle > 0 && nearBudget(angle, limit.positiveAngle)
+                || angle < 0 && nearBudget(-angle, limit.negativeAngle)
+                || limit.enteringDirection * endSpeed[shaft] >= EVENT_DIRECTION_SPEED) return true;
+        }
+        return false;
+    }
+
+    private static boolean withinEventBudget(Result state, List<EventLimit> limits) {
+        for (var limit : limits) {
+            double angle = state.angle[limit.shaft];
+            if (Double.isFinite(limit.travel) && state.travel[limit.shaft] > limit.travel + eventTolerance(limit.travel)
+                || angle > 0 && Double.isFinite(limit.positiveAngle) && angle > limit.positiveAngle + eventTolerance(limit.positiveAngle)
+                || angle < 0 && Double.isFinite(limit.negativeAngle) && -angle > limit.negativeAngle + eventTolerance(limit.negativeAngle)) return false;
+        }
+        return nearEvent(state, limits);
+    }
+
+    private static IllegalStateException unresolvedEvent(Result start, Result actual, List<EventLimit> limits) {
+        return new IllegalStateException("Shaft event has no budget-consistent step at the time resolution; "
+            + "an inconsistent inertialess contact state can require an instantaneous displacement. time=" + start.duration
+            + ", candidate=" + actual.duration + ", limits=" + limits
+            + ", angle=" + java.util.Arrays.toString(actual.angle) + ", travel=" + java.util.Arrays.toString(actual.travel));
+    }
+
+    /** One accepted physical interval, with no endpoint recovery or hidden substeps. */
+    private static Result graphSegment(List<Body> bodies, List<Link> links, double[] previous, double[] twist,
+                                       double h, SpeedFrame frame, MatrixGraph matrix) {
+        int n = bodies.size(), m = links.size();
+        double[] angle = new double[n], travel = new double[n];
+        if (m == 0 && bodies.stream().noneMatch(Body::nonlinearDrive)) {
+            double[] speed = new double[n];
+            for (int i = 0; i < n; i++) {
+                Body body = bodies.get(i);
+                var motion = RotationMath.motion(previous[i], body.drive, body.damping, body.load, body.inertia, body.drag, h);
+                speed[i] = motion.speed(); angle[i] = motion.angle(); travel[i] = motion.travel();
+            }
+            return new Result(h, speed, twist.clone(), angle, travel, new double[m], new boolean[m], -1);
+        }
+        frame.origins(previous, matrix.workspace.origins);
+        Step next = step(bodies, links, matrix, previous, matrix.workspace.origins, twist, h);
+        for (int i = 0; i < n; i++) {
+            angle[i] = h * next.velocity[i];
+            if (bodies.get(i).inertia > 0 && previous[i] * next.speed[i] < 0) {
+                double a = Math.abs(previous[i]), b = Math.abs(next.speed[i]);
+                travel[i] = h * (a * a + b * b) / (2 * (a + b));
+            } else travel[i] = Math.abs(angle[i]);
+        }
+        return new Result(h, next.speed, next.twist, angle, travel, next.torque, next.slipping, next.broken);
+    }
+
     private static final class Component {
         final List<Integer> nodes = new ArrayList<>(), edges = new ArrayList<>();
         final List<Body> bodies = new ArrayList<>();
@@ -154,8 +657,51 @@ public final class TorsionSolver {
         SpeedFrame frame;
         MatrixGraph matrix;
         final IntegrationCache cache = new IntegrationCache();
+        MatrixGraph referenceMatrix;
+        IntegrationCache referenceCache;
+        boolean referenceMode, lastReference;
+        int fallbacks;
+        double[] segmentSpeed, segmentTwist;
+        private MatrixGraph eventMatrix() {
+            if (!referenceMode || matrix.tree == null) return matrix;
+            if (referenceMatrix == null) {
+                referenceMatrix = new MatrixGraph(bodies, links, false);
+                referenceCache = new IntegrationCache();
+            }
+            return referenceMatrix;
+        }
+        Result segment(Result start, double h) {
+            double[] localSpeed = segmentSpeed, localTwist = segmentTwist;
+            for (int i = 0; i < localSpeed.length; i++) localSpeed[i] = start.speed[nodes.get(i)];
+            for (int e = 0; e < localTwist.length; e++) localTwist[e] = start.twist[edges.get(e)];
+            lastReference = referenceMode || matrix.tree == null;
+            try { return graphSegment(bodies, links, localSpeed, localTwist, h, frame, eventMatrix()); }
+            catch (OriginalRequired | ConvergenceFailure failure) {
+                if (eventMatrix().tree == null) throw failure;
+                fallbacks++; referenceMode = true; lastReference = true;
+                return graphSegment(bodies, links, localSpeed, localTwist, h, frame, eventMatrix());
+            }
+        }
+        private Result reference(double duration, double maxStep, boolean locateBreak, boolean recoverSpeeds) {
+            if (matrix.tree == null)
+                return integrate(bodies, links, speed, twist, duration, maxStep, locateBreak, recoverSpeeds, frame, matrix, cache);
+            if (referenceMatrix == null) {
+                referenceMatrix = new MatrixGraph(bodies, links, false);
+                referenceCache = new IntegrationCache();
+            }
+            return integrate(bodies, links, speed, twist, duration, maxStep, locateBreak, recoverSpeeds,
+                frame, referenceMatrix, referenceCache);
+        }
         Result advance(double duration, double maxStep, boolean locateBreak, boolean recoverSpeeds) {
-            return integrate(bodies, links, speed, twist, duration, maxStep, locateBreak, recoverSpeeds, frame, matrix, cache);
+            lastReference = referenceMode || matrix.tree == null;
+            if (referenceMode) return reference(duration, maxStep, locateBreak, recoverSpeeds);
+            try {
+                return integrate(bodies, links, speed, twist, duration, maxStep, locateBreak, recoverSpeeds, frame, matrix, cache);
+            } catch (OriginalRequired | ConvergenceFailure failure) {
+                if (matrix.tree == null) throw failure;
+                fallbacks++; lastReference = true;
+                return reference(duration, maxStep, locateBreak, recoverSpeeds);
+            }
         }
     }
 
@@ -173,16 +719,24 @@ public final class TorsionSolver {
         final Throwable[] failures;
         double duration, maxStep;
         boolean recoverSpeeds;
+        Result segmentStart;
         ComponentBatch(List<Component> components, int[] indices, Result[] results, Throwable[] failures) {
             this.components = components; this.indices = indices; this.results = results; this.failures = failures;
         }
         void start(double duration, double maxStep, boolean recoverSpeeds) {
             reinitialize();
             this.duration = duration; this.maxStep = maxStep; this.recoverSpeeds = recoverSpeeds;
+            segmentStart = null;
+        }
+        void startSegment(Result start, double duration) {
+            start(duration, duration, false);
+            segmentStart = start;
         }
         @Override protected void compute() {
             for (int index : indices) {
-                try { results[index] = components.get(index).advance(duration, maxStep, true, recoverSpeeds); }
+                try { results[index] = segmentStart == null
+                    ? components.get(index).advance(duration, maxStep, true, recoverSpeeds)
+                    : components.get(index).segment(segmentStart, duration); }
                 catch (RuntimeException | Error failure) { failures[index] = failure; }
             }
         }
@@ -220,7 +774,9 @@ public final class TorsionSolver {
         final int[] a, b;
         final double[] ratio, absoluteRatio;
         final Workspace workspace;
-        MatrixGraph(int n, List<Link> links) {
+        final TreeFactorization tree;
+        MatrixGraph(List<Body> bodies, List<Link> links, boolean accelerated) {
+            int n = bodies.size();
             int m = links.size();
             a = new int[m]; b = new int[m]; ratio = new double[m]; absoluteRatio = new double[m];
             workspace = new Workspace(n, m);
@@ -229,17 +785,19 @@ public final class TorsionSolver {
                 a[e] = link.a; b[e] = link.b;
                 ratio[e] = link.ratio; absoluteRatio[e] = Math.abs(link.ratio);
             }
+            tree = accelerated ? TreeFactorization.create(bodies, a, b, ratio) : null;
         }
     }
 
     /** Private to one captured component. Public results and integration prefixes never alias it. */
     private static final class Workspace {
-        final double[] initialIncrement, velocity, relative, slopes, prestress, elasticConstants;
+        final double[] initialIncrement, velocity, origins, elasticRates, relative, slopes, prestress, elasticConstants;
         final double[] coefficients, constants, signs, fixedValues, base, rhs, rhsMagnitude, forces;
         final boolean[] sticking, limited;
         final double[] diagonal, b, bMagnitude, r, z, p, ap, magnitude;
         Workspace(int n, int m) {
             initialIncrement = new double[n]; velocity = new double[n]; relative = new double[m];
+            origins = new double[n]; elasticRates = new double[m];
             slopes = new double[m]; prestress = new double[m]; elasticConstants = new double[m];
             coefficients = new double[m]; constants = new double[m]; signs = new double[n]; fixedValues = new double[n];
             base = new double[n]; rhs = new double[n]; rhsMagnitude = new double[n]; forces = new double[n];
@@ -325,8 +883,11 @@ public final class TorsionSolver {
     private record SpeedFrame(int[] roots, double[] ratios) {
         double[] origins(double[] previous) {
             double[] result = new double[previous.length];
-            for (int i = 0; i < result.length; i++) result[i] = ratios[i] * previous[roots[i]];
+            origins(previous, result);
             return result;
+        }
+        void origins(double[] previous, double[] result) {
+            for (int i = 0; i < result.length; i++) result[i] = ratios[i] * previous[roots[i]];
         }
     }
 
@@ -453,11 +1014,13 @@ public final class TorsionSolver {
             double h = remaining <= maxStep + 8 * Math.ulp(duration) ? remaining : maxStep;
             boolean fullStep = h == maxStep;
             double previousTime = elapsed;
-            double[] origin = frame.origins(speed);
+            double[] origin = matrix.workspace.origins;
+            frame.origins(speed, origin);
             Step next;
             for (int retry = 0; ; retry++) {
                 try { next = step(bodies, links, matrix, speed, origin, twist, h); break; }
                 catch (ConvergenceFailure failure) {
+                    if (matrix.tree != null) throw ORIGINAL_REQUIRED;
                     if (retry == 12 || h / 2 <= Math.ulp(elapsed)) throw new ConvergenceFailure(failure.getMessage()
                         + ", h=" + h + ", previous=" + java.util.Arrays.toString(speed) + ", twist=" + java.util.Arrays.toString(twist)
                         + ", bodies=" + bodies + ", links=" + links);
@@ -467,6 +1030,7 @@ public final class TorsionSolver {
                 }
             }
             // Locate the first strength crossing before committing velocity or removing a link.
+            if (matrix.tree != null && next.broken >= 0) throw ORIGINAL_REQUIRED;
             if (locateBreak && next.broken >= 0) {
                 double low = 0, high = h;
                 for (int k = 0; k < 26 && high - low > 1e-12; k++) {
@@ -481,7 +1045,7 @@ public final class TorsionSolver {
             for (int i = 0; i < n; i++) {
                 angle[i] += h * next.velocity[i];
                 // Midpoint travel is exact while direction is constant; split a reversal's triangle.
-                if (speed[i] * next.speed[i] < 0) {
+                if (bodies.get(i).inertia > 0 && speed[i] * next.speed[i] < 0) {
                     double a = Math.abs(speed[i]), b = Math.abs(next.speed[i]);
                     travel[i] += h * (a * a + b * b) / (2 * (a + b));
                 } else travel[i] += h * Math.abs(next.velocity[i]);
@@ -526,6 +1090,7 @@ public final class TorsionSolver {
             if (b.drag != 0 || (b.drive != 0 && b.nonlinearDrive())) linear = false;
             signs[i] = Math.signum(previous[i] == 0 ? b.drive : previous[i]);
             sticking[i] = b.load > 0 && previous[i] == 0 && Math.abs(b.drive) <= b.load;
+            if (matrix.tree != null && b.load > 0 && previous[i] == 0) throw ORIGINAL_REQUIRED;
         }
         for (int iteration = 0; iteration < 80; iteration++) {
             for (int i = 0; i < n; i++) {
@@ -569,6 +1134,12 @@ public final class TorsionSolver {
                 double raw = prestress[e] + slopes[e]
                     * (relative[e] + link.ratio * next[link.a] - next[link.b]);
                 boolean cap = Math.abs(raw) > link.friction + 1e-8;
+                if (matrix.tree != null && link.friction > 0 && Double.isFinite(link.friction)) {
+                    double scale = Math.abs(prestress[e]) + Math.abs(slopes[e] * relative[e])
+                        + Math.abs(raw) + link.friction;
+                    double margin = 1e-12 * scale + 128 * Math.ulp(scale);
+                    if (cap || Math.abs(Math.abs(raw) - (link.friction + 1e-8)) <= margin) throw ORIGINAL_REQUIRED;
+                }
                 // Positive and negative slip are different active branches. A Newton trial
                 // can jump across both friction bounds when another clutch engages.
                 // Release that bound and solve the elastic branch before choosing a new
@@ -584,6 +1155,11 @@ public final class TorsionSolver {
                 maxChange = Math.max(maxChange, Math.abs(next[i] - increment[i]) / (1 + Math.abs(next[i])));
                 double velocity = origin[i] + next[i];
                 if (b.load == 0) continue;
+                if (matrix.tree != null) {
+                    double end = b.inertia > 0 ? previous[i] + 2 * next[i] : velocity;
+                    if (Math.abs(end) <= 1e-8 * (1 + Math.abs(previous[i])) || end * signs[i] < 0)
+                        throw ORIGINAL_REQUIRED;
+                }
                 double reaction = b.driveAt(velocity) - b.damping * velocity - b.drag * velocity * Math.abs(velocity)
                     + forces[i] - 2 * b.inertia / h * next[i];
                 if (sticking[i]) {
@@ -602,7 +1178,7 @@ public final class TorsionSolver {
             if (!changed && (linear || maxChange < 1e-11)) break;
             if (iteration == 79) throw new ConvergenceFailure("Torsion active set did not converge");
         }
-        double[] speed = new double[n], nextTwist = new double[m], torque = new double[m], elasticRates = new double[m];
+        double[] speed = new double[n], nextTwist = new double[m], torque = new double[m], elasticRates = work.elasticRates;
         int broken = -1;
         for (int i = 0; i < n; i++) {
             speed[i] = bodies.get(i).inertia > 0 ? previous[i] + 2 * increment[i] : v[i];
@@ -623,6 +1199,11 @@ public final class TorsionSolver {
             nextTwist[e] = link.friction == 0 ? 0 : twist[e] + h * elasticRate;
             double peak = limited[e] ? Math.abs(torque[e]) : Math.max(Math.abs(torque[e]),
                 Math.abs(link.stiffness * nextTwist[e] + link.damping * elasticRate));
+            if (matrix.tree != null && Double.isFinite(link.strength)) {
+                double scale = peak + Math.abs(prestress[e]) + link.strength;
+                if (peak >= link.strength || Math.abs(peak - link.strength) <= 1e-12 * scale + 128 * Math.ulp(scale))
+                    throw ORIGINAL_REQUIRED;
+            }
             if (peak >= link.strength && broken < 0) broken = e;
         }
         checkEnergy(bodies, links, previous, speed, twist, nextTwist, v, increment, relative,
@@ -666,7 +1247,7 @@ public final class TorsionSolver {
                 + ", tolerance=" + tolerance);
     }
 
-    /** Sparse preconditioned conjugate gradients, including exact pinned static-friction nodes. */
+    /** Tree elimination with the original residual checks; CG handles other graphs and guarded captures. */
     private static double[] solve(MatrixGraph matrix, double[] weights, double[] base, double[] rhs,
                                   double[] rhsMagnitude, boolean[] fixed, double[] values, double[] guess) {
         int n = base.length;
@@ -690,7 +1271,10 @@ public final class TorsionSolver {
         for (int i = 0; i < n; i++) {
             if (fixed[i]) { hasFixed = true; b[i] = values[i]; bMagnitude[i] = Math.abs(b[i]); x[i] = values[i]; diagonal[i] = 1; }
             // An isolated unloaded massless port has a free speed, not an invented inertia.
-            else if (diagonal[i] == 0) { b[i] = guess[i]; bMagnitude[i] = Math.abs(b[i]); diagonal[i] = 1; base[i] = 1; }
+            else if (diagonal[i] == 0) {
+                if (matrix.tree != null) throw ORIGINAL_REQUIRED;
+                b[i] = guess[i]; bMagnitude[i] = Math.abs(b[i]); diagonal[i] = 1; base[i] = 1;
+            }
         }
         // Products and checks overwrite every scratch element before reading it.
         // The returned iterate owns its storage; no captured state aliases scratch.
@@ -701,7 +1285,30 @@ public final class TorsionSolver {
             scale += b[i] * b[i] / diagonal[i];
         }
         Residual checked = residual(matrix, weights, base, fixed, hasFixed, diagonal, b, bMagnitude, x, r, z, scale, ap, magnitude);
+        if (matrix.tree != null) {
+            double smallest = Double.POSITIVE_INFINITY, largest = 0;
+            for (double d : diagonal) { smallest = Math.min(smallest, d); largest = Math.max(largest, d); }
+            if (!Double.isFinite(largest) || largest / smallest >= 1e12) throw ORIGINAL_REQUIRED;
+        }
         if (checked.refined) return x;
+        if (matrix.tree != null) {
+            if (!matrix.tree.factor(base, diagonal, weights, fixed)) throw ORIGINAL_REQUIRED;
+            double[] candidate = x.clone(), firstAccepted = null;
+            for (int refinement = 0; refinement < 4; refinement++) {
+                matrix.tree.solve(r, p);
+                for (int i = 0; i < n; i++) {
+                    candidate[i] += p[i];
+                    if (!Double.isFinite(candidate[i])) throw ORIGINAL_REQUIRED;
+                }
+                Residual state = residual(matrix, weights, base, fixed, hasFixed, diagonal, b, bMagnitude,
+                    candidate, r, z, scale, ap, magnitude);
+                if (state.refined) return candidate;
+                if (firstAccepted == null && state.converged) firstAccepted = candidate.clone();
+            }
+            if (firstAccepted != null) return firstAccepted;
+            // A rejected direct trial must not seed the original CG iterate or residual.
+            checked = residual(matrix, weights, base, fixed, hasFixed, diagonal, b, bMagnitude, x, r, z, scale, ap, magnitude);
+        }
         double tolerance = checked.refinementTolerance, rz = preciseDot(r, z);
         double[] accepted = null;
         System.arraycopy(z, 0, p, 0, n);

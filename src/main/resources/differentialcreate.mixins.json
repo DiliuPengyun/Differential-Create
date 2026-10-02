@@ -60,7 +60,7 @@
     "TorquePropagatorAccessor",
     "WindmillBearingBlockEntityMixin"
   ],
-  "client": ["KineticBlockEntityRendererMixin", "BracketedKineticBlockEntityRendererMixin", "RotatingInstanceMixin", "SplitShaftVisualMixin", "SplitShaftRendererMixin", "FlywheelVisualMixin", "FlywheelRendererMixin", "SteamEngineParticlesMixin"],
+  "client": ["ControlledContraptionRendererMixin", "MechanicalBearingRendererMixin", "KineticBlockEntityRendererMixin", "BracketedKineticBlockEntityRendererMixin", "RotatingInstanceMixin", "SplitShaftVisualMixin", "SplitShaftRendererMixin", "FlywheelVisualMixin", "FlywheelRendererMixin", "SteamEngineParticlesMixin"],
   "server": [],
   "injectors": {
     "defaultRequire": 1

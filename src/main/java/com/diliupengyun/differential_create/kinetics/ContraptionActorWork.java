@@ -210,6 +210,15 @@ public final class ContraptionActorWork implements ShaftWork {
 		}
 		return path == null ? job : Math.min(job, direction > 0 ? positiveLimit : negativeLimit);
 	}
+	@Override public Boundary differentialcreate$boundary(double remaining) {
+		return path == null ? ShaftWork.super.differentialcreate$boundary(remaining)
+			: new Boundary(sampledJob, positiveLimit, negativeLimit);
+	}
+	@Override public int differentialcreate$wakeDirection() {
+		if (!motionManaged || path != null || !ContraptionMotion.active() || context.disabled || !behaviour().isActive(context)) return 0;
+		var drive = ContraptionPhysics.drive(context);
+		return drive == null ? 0 : ContraptionMotion.wakeDirection(drive);
+	}
 	@Override public double differentialcreate$phaseLimit(double travel, double signedTravel, double remaining) {
 		if (path == null) return remaining;
 		double net = Math.abs(signedTravel);
@@ -231,7 +240,11 @@ public final class ContraptionActorWork implements ShaftWork {
 		if (drive == null) return;
 		double required = required();
 		if (!Double.isFinite(required)) return;
-		double progress = Math.min(required, progress() + Math.max(0, travel) * workRatio(required, drive));
+		double ratio = workRatio(required, drive);
+		double progress = Math.min(required, progress() + Math.max(0, travel) * ratio);
+		// Match the scheduler's tolerance in shaft travel, not scaled cutting work.
+		boolean complete = ratio > 0 && (required - progress) / ratio <= MachineWork.EPSILON;
+		if (complete) progress = required;
 		if (pending()) context.data.getCompound(JOB).putDouble("Travel", progress);
 		else {
 			context.data.putDouble(TRAVEL, progress);
@@ -242,7 +255,7 @@ public final class ContraptionActorWork implements ShaftWork {
 				context.world.destroyBlockProgress(context.data.getInt("BreakerId"), pos, stage);
 			}
 		}
-		if (progress + MachineWork.EPSILON >= required) MachineWork.event(this::finish);
+		if (complete) MachineWork.event(this::finish);
 	}
 	private void finish() {
 		if (!Double.isFinite(required())) return;
