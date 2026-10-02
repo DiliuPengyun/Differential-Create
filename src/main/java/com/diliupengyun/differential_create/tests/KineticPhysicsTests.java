@@ -221,6 +221,18 @@ public final class KineticPhysicsTests {
 		MachiningTests.deployerColdLoad(helper);
 	}
 
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "deployer_depot", timeoutTicks = 150)
+	public static void deployerDepotCasing(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		MachiningTests.deployerDepotCasing(helper);
+	}
+
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "deployer_depot_contact", timeoutTicks = 100)
+	public static void deployerDepotContact(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		MachiningTests.deployerDepotContact(helper);
+	}
+
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "press_large_inertia", timeoutTicks = 300)
 	public static void pressingLargeInertia(GameTestHelper helper) {
 		forceImpactChunks(helper);

@@ -13,12 +13,16 @@ import com.simibubi.create.content.kinetics.saw.SawBlockEntity;
 import com.simibubi.create.content.kinetics.deployer.DeployerBlockEntity;
 import com.simibubi.create.content.kinetics.crafter.MechanicalCrafterBlockEntity;
 import com.simibubi.create.content.kinetics.crusher.CrushingWheelControllerBlockEntity;
+import com.simibubi.create.content.kinetics.belt.transport.TransportedItemStack;
+import com.simibubi.create.content.logistics.depot.DepotBehaviour;
+import com.simibubi.create.content.logistics.depot.DepotBlockEntity;
 import com.simibubi.create.content.processing.basin.BasinBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.neoforged.neoforge.items.wrapper.RecipeWrapper;
@@ -26,6 +30,83 @@ import net.neoforged.neoforge.items.wrapper.RecipeWrapper;
 /** Real Create recipe callbacks driven by the production clock; recharge between steps to test speed schedules. */
 final class MachiningTests {
 	private MachiningTests() {}
+	static void deployerDepotCasing(GameTestHelper helper) {
+		BlockPos pos = new BlockPos(12, 3, 4);
+		helper.setBlock(pos, AllBlocks.DEPLOYER.getDefaultState().setValue(BlockStateProperties.FACING, Direction.DOWN));
+		helper.setBlock(pos.below(2), AllBlocks.DEPOT.getDefaultState());
+		boolean[] running = {false};
+		helper.onEachTick(() -> {
+			if (running[0]) charge(helper.getBlockEntity(pos), 64);
+		});
+		helper.runAfterDelay(5, () -> {
+			DeployerBlockEntity deployer = helper.getBlockEntity(pos);
+			DepotBlockEntity depot = helper.getBlockEntity(pos.below(2));
+			NetworkTopology.mark(deployer); NetworkTopology.flush(); charge(deployer, 64);
+			deployer.getPlayer().setItemInHand(InteractionHand.MAIN_HAND, AllItems.ANDESITE_ALLOY.asStack(3));
+			depot.getBehaviour(DepotBehaviour.TYPE).setCenteredHeldItem(new TransportedItemStack(new ItemStack(Items.STRIPPED_OAK_LOG, 3)));
+			helper.assertTrue(deployer.getRecipe(depot.getHeldItem()) != null, "fixture uses Create's actual andesite-casing recipe");
+			running[0] = true;
+		});
+		helper.runAfterDelay(100, () -> {
+			DeployerBlockEntity deployer = helper.getBlockEntity(pos);
+			DepotBlockEntity depot = helper.getBlockEntity(pos.below(2));
+			helper.assertTrue(depotCount(depot, AllBlocks.ANDESITE_CASING.asItem()) == 3, "normal world ticks craft all three casings on the depot");
+			helper.assertTrue(depotCount(depot, Items.STRIPPED_OAK_LOG) == 0, "each casing consumes one depot log");
+			helper.assertTrue(deployer.getPlayer().getMainHandItem().isEmpty(), "each casing consumes one held alloy");
+			helper.succeed();
+		});
+	}
+	private static int depotCount(DepotBlockEntity depot, net.minecraft.world.item.Item item) {
+		var inventory = depot.getBehaviour(DepotBehaviour.TYPE).itemHandler;
+		int count = 0;
+		for (int slot = 0; slot < inventory.getSlots(); slot++) {
+			var stack = inventory.getStackInSlot(slot);
+			if (stack.is(item)) count += stack.getCount();
+		}
+		return count;
+	}
+	static void deployerDepotContact(GameTestHelper helper) {
+		BlockPos pos = new BlockPos(12, 3, 4);
+		helper.setBlock(pos, AllBlocks.DEPLOYER.getDefaultState().setValue(BlockStateProperties.FACING, Direction.DOWN));
+		helper.setBlock(pos.below(2), AllBlocks.DEPOT.getDefaultState());
+		helper.runAfterDelay(5, () -> {
+			DeployerBlockEntity deployer = helper.getBlockEntity(pos);
+			DepotBlockEntity depot = helper.getBlockEntity(pos.below(2));
+			NetworkTopology.mark(deployer); NetworkTopology.flush(); charge(deployer, 64);
+			deployer.getPlayer().setItemInHand(InteractionHand.MAIN_HAND, AllItems.ANDESITE_ALLOY.asStack(2));
+			depot.getBehaviour(DepotBehaviour.TYPE).setCenteredHeldItem(new TransportedItemStack(new ItemStack(Items.STRIPPED_OAK_LOG, 2)));
+			depot.tick();
+			helper.assertTrue(MachinePhase.of(deployer).equals("EXPANDING"), "depot starts a real processing stroke");
+			ShaftWork work = (ShaftWork) deployer;
+			work.differentialcreate$advanceTravel(499);
+			helper.assertTrue(depotCount(depot, AllBlocks.ANDESITE_CASING.asItem()) == 0, "no recipe is applied before the paid contact boundary");
+			charge(deployer, 0);
+			work.differentialcreate$advanceTravel(1); // Deliver the last already-earned work at zero current RPM.
+			helper.assertTrue(depotCount(depot, AllBlocks.ANDESITE_CASING.asItem()) == 1, "completed contact applies its recipe even if the shaft has stopped");
+			helper.assertTrue(depotCount(depot, Items.STRIPPED_OAK_LOG) == 1 && deployer.getPlayer().getMainHandItem().getCount() == 1,
+				"one contact consumes exactly one log and one alloy");
+			helper.assertTrue(work.differentialcreate$remainingTravel() == 500, "retiring the native contact marker retains all retraction work");
+			var saved = deployer.saveWithFullMetadata(helper.getLevel().registryAccess());
+			var absolute = helper.absolutePos(pos);
+			helper.getLevel().removeBlockEntity(absolute);
+			deployer = (DeployerBlockEntity) BlockEntity.loadStatic(absolute, helper.getBlockState(pos), saved, helper.getLevel().registryAccess());
+			helper.getLevel().setBlockEntity(deployer);
+			deployer.initialize(); NetworkTopology.flush(); charge(deployer, 64);
+			work = (ShaftWork) deployer;
+			helper.assertTrue(work.differentialcreate$remainingTravel() == 500, "a cold reload restores the exact retraction budget");
+			for (int tick = 0; tick < 3; tick++) depot.tick();
+			helper.assertTrue(depotCount(depot, AllBlocks.ANDESITE_CASING.asItem()) == 1 && deployer.getPlayer().getMainHandItem().getCount() == 1,
+				"later inventory ticks and reload cannot replay the processed contact");
+			work.differentialcreate$advanceTravel(500);
+			depot.tick();
+			helper.assertTrue(MachinePhase.of(deployer).equals("EXPANDING"), "the remaining log starts a new stroke after retraction");
+			work.differentialcreate$advanceTravel(500);
+			helper.assertTrue(depotCount(depot, AllBlocks.ANDESITE_CASING.asItem()) == 2 && depotCount(depot, Items.STRIPPED_OAK_LOG) == 0
+				&& deployer.getPlayer().getMainHandItem().isEmpty(), "the second paid stroke produces exactly one more casing");
+			work.differentialcreate$advanceTravel(500);
+			helper.succeed();
+		});
+	}
 	static void deployerColdLoad(GameTestHelper helper) {
 		BlockPos pos = new BlockPos(12, 3, 4);
 		helper.setBlock(pos, AllBlocks.DEPLOYER.getDefaultState());

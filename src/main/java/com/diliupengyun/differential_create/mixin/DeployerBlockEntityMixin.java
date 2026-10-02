@@ -7,11 +7,19 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.diliupengyun.differential_create.kinetics.MachinePhase;
 import com.diliupengyun.differential_create.kinetics.MachineWork;
 import com.diliupengyun.differential_create.kinetics.ShaftWork;
+import java.util.ArrayList;
 import java.util.List;
 
 import com.diliupengyun.differential_create.kinetics.KineticGoggleInfo;
 import com.diliupengyun.differential_create.kinetics.WorkAccumulator;
 import com.simibubi.create.content.kinetics.deployer.DeployerBlockEntity;
+import com.simibubi.create.content.kinetics.deployer.BeltDeployerCallbacks;
+import com.simibubi.create.content.kinetics.belt.behaviour.TransportedItemStackHandlerBehaviour;
+import com.simibubi.create.content.kinetics.belt.behaviour.TransportedItemStackHandlerBehaviour.TransportedResult;
+import com.simibubi.create.content.kinetics.belt.transport.TransportedItemStack;
+import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
@@ -80,8 +88,32 @@ public abstract class DeployerBlockEntityMixin implements ShaftWork {
 				// A paired deployer's fist-bump callback may already have retracted this hand.
 				if (self.isRemoved() || !phase.equals(MachinePhase.of(self))) return;
 				differentialcreate$event = true;
-				try { self.tick(); } finally { differentialcreate$event = false; }
+				try {
+					self.tick();
+					if (phase.equals("EXPANDING") && MachinePhase.of(self).equals("RETRACTING") && timer == 1000)
+						differentialcreate$processTransportedItem(self);
+				} finally { differentialcreate$event = false; }
 			});
+		}
+	}
+	@Unique private void differentialcreate$processTransportedItem(DeployerBlockEntity self) {
+		if (self.getBlockState().getValue(BlockStateProperties.FACING) != Direction.DOWN) return;
+		var handler = BlockEntityBehaviour.get(self.getLevel(), self.getBlockPos().below(2), TransportedItemStackHandlerBehaviour.TYPE);
+		if (handler == null) return;
+		// Process at actual contact, then retire Create's timer==1000 marker so a
+		// later depot/belt tick cannot apply the same stroke twice. Repay the one
+		// integer unit before retraction advances: its shaft-work budget stays 500.
+		timer = 999; differentialcreate$work.borrowOne();
+		var held = new ArrayList<TransportedItemStack>();
+		handler.handleProcessingOnAllItems(stack -> {
+			if (stack.locked && !stack.stack.isEmpty()) held.add(stack);
+			return TransportedResult.doNothing();
+		});
+		for (var stack : held) {
+			var recipe = self.getRecipe(stack.stack);
+			if (recipe == null) continue;
+			BeltDeployerCallbacks.activate(stack, handler, self, recipe.value());
+			break; // One workpiece per paid stroke, using Create's recipe and material rules.
 		}
 	}
 	@ModifyExpressionValue(method = "tick", at = @At(value = "INVOKE", target = "Lcom/simibubi/create/content/kinetics/deployer/DeployerBlockEntity;getSpeed()F"))
