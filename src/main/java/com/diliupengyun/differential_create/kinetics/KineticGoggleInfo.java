@@ -114,8 +114,13 @@ public final class KineticGoggleInfo {
 			return;
 		}
 
-		if (kbe instanceof IPumpDynamics pump)
-			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_head", fmt1(pump.differentialcreate$head())));
+		if (kbe instanceof IPumpDynamics pump) {
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.speed", fmtSigned(local, 1)));
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_head", fmtSigned(pump.differentialcreate$head(), 1)));
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_flow", fmtSigned(pump.differentialcreate$flow(), 2)));
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_reaction", fmtSigned(-pump.differentialcreate$torque(), 2)));
+			return;
+		}
 		float impact = MachineActivity.impact(kbe);
 		if (impact > 0 || MachineActivity.manages(kbe)) {
 			tooltip.add(Component.translatable(mechanicalBearing
@@ -196,6 +201,12 @@ public final class KineticGoggleInfo {
 			return;
 		}
 
+		if (kbe instanceof IPumpDynamics pump) {
+			double power = pump.differentialcreate$torque() * local;
+			tooltip.add(Component.translatable(power < 0
+				? "gui.differentialcreate.goggles.output_power" : "gui.differentialcreate.goggles.consumed_power", fmt(Math.abs(power))));
+			return;
+		}
 		float impact = MachineActivity.impact(kbe);
 		if (impact > 0 || MachineActivity.manages(kbe))
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.consumed_power",

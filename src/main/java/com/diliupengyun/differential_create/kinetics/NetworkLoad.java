@@ -31,6 +31,12 @@ public final class NetworkLoad {
 
     private static LoadFactor.Member member(KineticBlockEntity be, double ratio) {
         double speed = NetworkDynamics.preciseSpeed(be);
+        if (be instanceof IPumpDynamics pump) {
+            double reaction = -pump.differentialcreate$torque();
+            boolean driving = reaction * speed > 0 || speed == 0 && reaction != 0;
+            return new LoadFactor.Member(ratio, speed, driving ? reaction : 0,
+                MachineActivity.loadTorque(be, speed), driving);
+        }
         var curve = be.isSource() ? SourcePhysics.curve(be) : new SourcePhysics.Curve(0, 0);
         return new LoadFactor.Member(ratio, speed, curve.torque(speed), MachineActivity.loadTorque(be, speed),
             curve.stallTorque() != 0);

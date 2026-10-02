@@ -28,11 +28,15 @@ public final class NetworkSpeedTicker {
 	public static void onPostTick(ServerTickEvent.Post event) {
 		NetworkTopology.flush();
 		Set<KineticNetwork> live = new HashSet<>();
+		Set<Level> advanced = new HashSet<>();
 		for (var entry : new ArrayList<>(TorquePropagatorAccessor.differentialcreate$getNetworks().entrySet())) {
 			if (!(entry.getKey() instanceof Level level) || level.isClientSide) continue;
 			if (!level.tickRateManager().isFrozen()) MachiningClock.advance(level);
+			advanced.add(level);
 			live.addAll(MachiningClock.networks(level));
 		}
+		for (Level level : FluidKinetics.levels()) if (!advanced.contains(level) && !level.tickRateManager().isFrozen())
+			MachiningClock.advance(level);
 		ClientSpeedSync.prune(live);
 		ClientSpeedSync.flush();
 	}
@@ -40,6 +44,7 @@ public final class NetworkSpeedTicker {
 	@SubscribeEvent
 	public static void onStop(ServerStoppedEvent event) {
 		ContraptionMotion.clear();
+		FluidKinetics.clear();
 		NetworkTopology.clear();
 		ClientSpeedSync.clear();
 	}

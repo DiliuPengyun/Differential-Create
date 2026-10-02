@@ -19,6 +19,7 @@ public final class PhysicsRegression {
 		com.diliupengyun.differential_create.kinetics.TreeSolverRegression.run();
 		ShaftReplacementRegression.run();
 		SteamDriveRegression.run();
+		IdealFluidRegression.run();
 		LoadFactorRegression.run();
 		shaftTravel();
 		ActorContactRegression.run();

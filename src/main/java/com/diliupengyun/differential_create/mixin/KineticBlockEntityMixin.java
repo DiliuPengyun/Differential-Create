@@ -55,6 +55,8 @@ public abstract class KineticBlockEntityMixin implements IMemberDynamics {
 	private void differentialcreate$writeNetworkDynamics(CompoundTag tag, HolderLookup.Provider registries,
 		boolean clientPacket, CallbackInfo ci) {
 		NetworkDynamics.writeNetworkDynamics((KineticBlockEntity) (Object) this, tag, clientPacket);
+		if ((Object) this instanceof com.diliupengyun.differential_create.kinetics.IPumpDynamics pump)
+			pump.differentialcreate$saveHydraulics(tag);
 	}
 
 	@Inject(method = "read", at = @At("RETURN"))
@@ -74,8 +76,8 @@ public abstract class KineticBlockEntityMixin implements IMemberDynamics {
 
 	@Inject(method = "calculateStressApplied", at = @At("RETURN"), cancellable = true)
 	private void differentialcreate$pumpHeadLoad(CallbackInfoReturnable<Float> cir) {
-		if ((Object) this instanceof com.diliupengyun.differential_create.kinetics.IPumpDynamics pump)
-			cir.setReturnValue(cir.getReturnValue() * (1 + pump.differentialcreate$head() / 16));
+		if ((Object) this instanceof com.diliupengyun.differential_create.kinetics.IPumpDynamics)
+			cir.setReturnValue(0f); // The joint fluid solve supplies the signed reaction, including at standstill.
 	}
 
 	@Inject(method = "isSpeedRequirementFulfilled", at = @At("HEAD"), cancellable = true)

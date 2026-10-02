@@ -234,6 +234,9 @@ public final class ElasticKinetics {
         return snapshot(networks).sample(minutes);
     }
     public static Snapshot snapshot(List<KineticNetwork> networks) {
+        return snapshot(networks, Map.of());
+    }
+    public static Snapshot snapshot(List<KineticNetwork> networks, Map<KineticBlockEntity, Double> externalTorques) {
         List<KineticBlockEntity> members = new ArrayList<>();
         List<Connection> connections = new ArrayList<>();
         for (var network : networks) {
@@ -253,7 +256,8 @@ public final class ElasticKinetics {
             double load = ContraptionPhysics.manages(be) ? ContraptionPhysics.workTorque(be) : MachineActivity.impact(be);
             double drag = MachineActivity.quadraticDrag(be);
             if (be instanceof EncasedFanBlockEntity) load = 0;
-            bodies.add(new TorsionSolver.Body(InertiaRegistry.getInertia(be), be.isSource() ? curve.stallTorque() : 0,
+            bodies.add(new TorsionSolver.Body(InertiaRegistry.getInertia(be),
+                (be.isSource() ? curve.stallTorque() : 0) + externalTorques.getOrDefault(be, 0d),
                 be.isSource() ? curve.damping() : 0, load, drag,
                 be.isSource() ? curve.powerLimit() : Double.POSITIVE_INFINITY,
                 be.isSource() ? curve.governorSpeed() : Double.POSITIVE_INFINITY, curve.governorRange()));

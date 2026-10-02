@@ -1,46 +1,36 @@
 package com.diliupengyun.differential_create.mixin;
 
+import java.util.Optional;
 import com.diliupengyun.differential_create.kinetics.IPipePressure;
-import com.diliupengyun.differential_create.kinetics.PumpPressure;
+import com.simibubi.create.content.fluids.FlowSource;
 import com.simibubi.create.content.fluids.PipeConnection;
-import com.simibubi.create.content.fluids.pump.PumpBlockEntity;
 import net.createmod.catnip.data.Couple;
+import net.neoforged.neoforge.fluids.FluidStack;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
-import org.spongepowered.asm.mixin.Unique;
-import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(PipeConnection.class)
 public abstract class PipeConnectionMixin implements IPipePressure {
     @Shadow Couple<Float> pressure;
-    @Unique private final PumpPressure differentialcreate$pumps = new PumpPressure();
+    @Shadow Optional<FlowSource> source;
+    @Shadow Optional<PipeConnection.Flow> flow;
 
-    @Override
-    public void differentialcreate$addPumpPressure(PumpBlockEntity pump, boolean inbound, float value) {
-        ((PipeConnection) (Object) this).addPressure(inbound, value);
-        differentialcreate$pumps.add(pump, inbound, value);
-    }
-
-    @Inject(method = "getPressure", at = @At("HEAD"))
-    private void differentialcreate$pressure(CallbackInfoReturnable<Couple<Float>> cir) {
-        differentialcreate$pumps.refresh(pressure);
-    }
-
-    @Inject(method = {"getInboundPressure", "getOutwardPressure"}, at = @At("HEAD"))
-    private void differentialcreate$directionalPressure(CallbackInfoReturnable<Float> cir) {
-        differentialcreate$pumps.refresh(pressure);
-    }
-
-    @Inject(method = "addPressure", at = @At("HEAD"))
-    private void differentialcreate$beforeAdding(CallbackInfo ci) {
-        differentialcreate$pumps.refresh(pressure);
-    }
-
-    @Inject(method = {"wipePressure", "deserializeNBT"}, at = @At("HEAD"))
-    private void differentialcreate$clearProviders(CallbackInfo ci) {
-        differentialcreate$pumps.clear();
+    @Override public FlowSource differentialcreate$source() { return source.orElse(null); }
+    @Override public void differentialcreate$showFlow(FluidStack identity, double outward) {
+        boolean inbound = outward < 0;
+        float rate = (float) Math.abs(outward * 2);
+        pressure.setFirst(inbound ? rate : 0f);
+        pressure.setSecond(inbound ? 0f : rate);
+        if (identity.isEmpty() || Math.abs(outward) < 1e-12) {
+            flow = Optional.empty();
+            return;
+        }
+        PipeConnection self = (PipeConnection) (Object) this;
+        PipeConnection.Flow shown = flow.orElse(null);
+        if (shown == null || shown.inbound != inbound || !FluidStack.isSameFluidSameComponents(shown.fluid, identity))
+            shown = self.new Flow(inbound, identity.copyWithAmount(1));
+        shown.complete = true;
+        shown.progress.setValue(1);
+        flow = Optional.of(shown);
     }
 }

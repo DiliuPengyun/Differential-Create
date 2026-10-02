@@ -47,5 +47,7 @@
   "gui.differentialcreate.gauge.range_setting": "转速表量程",
   "gui.differentialcreate.gauge.range": "量程: 0–%s RPM",
   "gui.differentialcreate.gauge.over_range": "超出量程",
-  "gui.differentialcreate.goggles.pump_head": "等效扬程: %s m"
+  "gui.differentialcreate.goggles.pump_head": "泵压差水头: %s m",
+  "gui.differentialcreate.goggles.pump_flow": "流量（沿箭头为正）: %s mB/tick",
+  "gui.differentialcreate.goggles.pump_reaction": "流体作用于轴的扭矩: %s su/RPM"
 }

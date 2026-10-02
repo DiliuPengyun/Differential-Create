@@ -1,7 +1,10 @@
 package com.diliupengyun.differential_create.kinetics;
 
-import com.simibubi.create.content.fluids.pump.PumpBlockEntity;
+import com.simibubi.create.content.fluids.FlowSource;
+import net.neoforged.neoforge.fluids.FluidStack;
 
+/** Create's existing flow object is presentation only; movement has one owner. */
 public interface IPipePressure {
-    void differentialcreate$addPumpPressure(PumpBlockEntity pump, boolean inbound, float pressure);
+    FlowSource differentialcreate$source();
+    void differentialcreate$showFlow(FluidStack fluid, double outward);
 }

@@ -77,6 +77,7 @@ public final class MachineActivity {
 
 	/** Actual sustained shaft resistance at this speed; accelerating inertia is separate. */
 	public static double loadTorque(KineticBlockEntity be, double speed) {
+		if (be instanceof IPumpDynamics pump) return Math.max(0, pump.differentialcreate$torque() * Math.signum(speed));
 		double impact = impact(be);
 		return (be instanceof EncasedFanBlockEntity ? 0 : impact) + quadraticDrag(be) * speed * speed;
 	}
