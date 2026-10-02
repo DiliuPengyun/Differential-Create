@@ -63,6 +63,8 @@ public abstract class DeployerBlockEntityMixin implements ShaftWork {
 		return phase.equals("EXPANDING") || phase.equals("RETRACTING");
 	}
 	@Override public double differentialcreate$remainingTravel() {
+		// A loaded hand cannot run Create's action callback until initialize() restores its player.
+		if (((DeployerBlockEntity) (Object) this).getPlayer() == null) return Double.POSITIVE_INFINITY;
 		return differentialcreate$working() ? Math.max(0, timer - differentialcreate$work.remainder()) / 2 : Double.POSITIVE_INFINITY;
 	}
 	@Override public void differentialcreate$advanceTravel(double travel) {

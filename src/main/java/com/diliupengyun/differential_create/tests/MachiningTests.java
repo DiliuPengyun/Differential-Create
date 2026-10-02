@@ -19,12 +19,44 @@ import net.minecraft.core.Direction;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.neoforged.neoforge.items.wrapper.RecipeWrapper;
 
 /** Real Create recipe callbacks driven by the production clock; recharge between steps to test speed schedules. */
 final class MachiningTests {
 	private MachiningTests() {}
+	static void deployerColdLoad(GameTestHelper helper) {
+		BlockPos pos = new BlockPos(12, 3, 4);
+		helper.setBlock(pos, AllBlocks.DEPLOYER.getDefaultState());
+		helper.runAfterDelay(5, () -> {
+			DeployerBlockEntity original = helper.getBlockEntity(pos);
+			var saved = original.saveWithFullMetadata(helper.getLevel().registryAccess());
+			for (String phase : List.of("EXPANDING", "RETRACTING")) for (double rpm : new double[]{0, 64}) {
+				var tag = saved.copy();
+				tag.putString("State", phase); tag.putInt("Timer", 0); tag.putDouble("DCWorkFraction", 0);
+				tag.putDouble("DCLocalSpeed", rpm);
+				var absolute = helper.absolutePos(pos);
+				helper.getLevel().removeBlockEntity(absolute);
+				DeployerBlockEntity cold = (DeployerBlockEntity) BlockEntity.loadStatic(absolute,
+					helper.getBlockState(pos), tag, helper.getLevel().registryAccess());
+				helper.getLevel().setBlockEntity(cold);
+				NetworkTopology.mark(cold); NetworkTopology.flush();
+				ShaftWork work = (ShaftWork) cold;
+				helper.assertTrue(cold.getPlayer() == null, "cold NBT load has not initialized Create's interaction player");
+				helper.assertTrue(!Double.isFinite(work.differentialcreate$remainingTravel()), "uninitialized hand waits instead of scheduling an immediate action");
+				for (int tick = 0; tick < 3; tick++) MachiningClock.advance(helper.getLevel());
+				helper.assertTrue(MachinePhase.of(cold).equals(phase), "world-start physics preserves the pending action until initialization");
+				cold.initialize(); NetworkTopology.flush();
+				ElasticKinetics.state(cold).physicalSpeed = rpm;
+				helper.assertTrue(cold.getPlayer() != null && work.differentialcreate$remainingTravel() == 0, "initialization restores the zero-work boundary");
+				MachiningClock.advance(helper.getLevel());
+				helper.assertTrue(MachinePhase.of(cold).equals(phase.equals("EXPANDING") ? "RETRACTING" : "WAITING"),
+					"completed action transitions once after initialization, including at zero RPM");
+			}
+			helper.succeed();
+		});
+	}
 	static void run(GameTestHelper helper) {
 		BlockPos millPos = new BlockPos(4, 3, 4), sawPos = new BlockPos(8, 3, 4), deployerPos = new BlockPos(12, 3, 4);
 		BlockPos mixerPos = new BlockPos(16, 3, 4), crafterPos = new BlockPos(20, 3, 4), crusherPos = new BlockPos(5, 3, 16);
