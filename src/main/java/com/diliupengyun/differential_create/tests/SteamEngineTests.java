@@ -196,6 +196,8 @@ public final class SteamEngineTests {
 				near(h, 256 * Math.min(1, 2.0 / count), curve.powerThresholdSpeed(), 1e-8, "shared steam volume " + count);
 				near(h, 0, curve.damping(), 0, "steam has no internal damping " + count);
 				near(h, 1024, Math.abs(curve.stallTorque()), 0, "fixed cylinder pressure and displacement " + count);
+				near(h, 512, Math.abs(curve.noLoadSpeed()), 0, "governor target independent of shared steam volume " + count);
+				near(h, Math.min(1, 2.0 / count), curve.steamVent(-8192), 1e-8, "bypass animation follows actual available supply " + count);
 				near(h, 262144 * Math.min(2, count), SourcePhysics.steamPeakPower(1024, tank.boiler, 8), 1e-6, "linear combined power " + count);
 			}
 			tank.boiler.attachedEngines = 0;
@@ -209,6 +211,7 @@ public final class SteamEngineTests {
 			tank.boiler.passiveHeat = true;
 			near(h, 32, SourcePhysics.steamCurve(shaft).powerThresholdSpeed(), 0, "passive heat power threshold");
 			near(h, 32768, SourcePhysics.steamPeakPower(1024, tank.boiler, 8), 0, "passive heat power budget");
+			near(h, .125, SourcePhysics.steamCurve(shaft).steamVent(-8192), 0, "passive heat produces only one eighth of full exhaust");
 			near(h, 0, SourcePhysics.steamPeakPower(0, tank.boiler, 8), 0, "disabled capacity contributes no power");
 			f.heat = 0;
 			f.supply();
@@ -254,7 +257,9 @@ public final class SteamEngineTests {
 			near(h, 4718592, SourcePhysics.steamPeakPower(1024, tank.boiler, 72), 1e-6, "full boiler supplies eighteen rated engines");
 			var single = SourcePhysics.steamCurve(1024, 18, 1, 1);
 			near(h, 256, single.powerThresholdSpeed(), 0, "a single engine retains its own intake rating");
-			near(h, 262144, single.torque(73728) * 73728, 1e-6, "a single engine cannot consume eighteen engines' steam allocation");
+			near(h, 262144, single.torque(384) * 384, 1e-6, "a single engine cannot consume eighteen engines' steam allocation");
+			near(h, 0, single.torque(73728), 0, "governor closes at externally imposed overspeed");
+			near(h, 262144, single.ventedPower(73728), 0, "unused engine allocation leaves through the bypass");
 			for (var shaft : f.shafts) {
 				near(h, 256, SourcePhysics.steamCurve(shaft).powerThresholdSpeed(), 0, "full boiler power threshold");
 				near(h, -1024, SourcePhysics.steamCurve(shaft).stallTorque(), 0, "finite cylinder torque");
@@ -263,8 +268,10 @@ public final class SteamEngineTests {
 			h.runAfterDelay(25, () -> {
 				for (var shaft : f.shafts) {
 					h.assertTrue(shaft.getSpeed() < -260, "actual rotor continues accelerating beyond the rated speed");
-					near(h, 262144, SourcePhysics.steamCurve(shaft).torque(shaft.getSpeed()) * shaft.getSpeed(), 1e-6,
-						"each engine uses exactly one share of the boiler's power at high speed");
+					h.assertTrue(Math.abs(shaft.getSpeed()) < 512, "each engine approaches its own governor target");
+					var curve = SourcePhysics.steamCurve(shaft);
+					near(h, 262144, curve.torque(shaft.getSpeed()) * shaft.getSpeed() + curve.ventedPower(shaft.getSpeed()), 1e-6,
+						"shaft output plus bypass loss equals one allocated share");
 				}
 				for (int i = 1; i < f.engines.length; i++)
 					h.getLevel().setBlock(f.engines[i].getBlockPos(), Blocks.AIR.defaultBlockState(), 3);
@@ -288,15 +295,30 @@ public final class SteamEngineTests {
 		h.runAfterDelay(40, () -> {
 			var shaft = f.shafts[0];
 			h.assertTrue(shaft.getSpeed() > 0 && fan.getSpeed() > 0, "steam starts the real connected fan");
-			// At this calibration the fan balances in the constant-power region: P = drag * speed^3.
-			double equilibrium = Math.cbrt(262144 * PhysicsTuning.FAN_ANCHOR_RPM * PhysicsTuning.FAN_ANCHOR_RPM / fan.calculateStressApplied());
+			// Solve the fan's power demand against the full supply or the governor's remaining admission.
+			double drag = fan.calculateStressApplied() / (PhysicsTuning.FAN_ANCHOR_RPM * PhysicsTuning.FAN_ANCHOR_RPM);
+			double equilibrium = Math.cbrt(262144 / drag);
+			if (equilibrium > PhysicsTuning.STEAM_GOVERNOR_RPM - PhysicsTuning.STEAM_GOVERNOR_RANGE) {
+				double low = PhysicsTuning.STEAM_GOVERNOR_RPM - PhysicsTuning.STEAM_GOVERNOR_RANGE;
+				double high = PhysicsTuning.STEAM_GOVERNOR_RPM;
+				for (int i = 0; i < 60; i++) {
+					double mid = (low + high) / 2;
+					if (drag * mid * mid * mid > 262144 * (PhysicsTuning.STEAM_GOVERNOR_RPM - mid) / PhysicsTuning.STEAM_GOVERNOR_RANGE)
+						high = mid;
+					else low = mid;
+				}
+				equilibrium = (low + high) / 2;
+			}
+			double balancedSpeed = equilibrium;
 			var ratios = ((INetworkDynamics) shaft.getOrCreateNetwork()).differentialcreate$getRatios();
 			double reference = ratios.get(shaft);
-			ratios.forEach((be, ratio) -> ElasticKinetics.state(be).physicalSpeed = equilibrium * ratio / reference);
+			ratios.forEach((be, ratio) -> ElasticKinetics.state(be).physicalSpeed = balancedSpeed * ratio / reference);
 			h.runAfterDelay(30, () -> {
-				near(h, equilibrium, shaft.getSpeed(), .05, "external fan drag determines the real engine equilibrium");
-				readouts(h, shaft, "steam_driven", false);
-				double fraction = Math.pow(NetworkDynamics.preciseSpeed(fan) / equilibrium, 3);
+				near(h, balancedSpeed, shaft.getSpeed(), .05, "external fan drag determines the real engine equilibrium");
+				readouts(h, shaft, balancedSpeed > 448 ? "steam_governing" : "steam_driven", false);
+				double actualSpeed = NetworkDynamics.preciseSpeed(shaft);
+				double fraction = drag * Math.pow(Math.abs(NetworkDynamics.preciseSpeed(fan)), 3)
+					/ (SourcePhysics.steamCurve(shaft).torque(actualSpeed) * actualSpeed);
 				near(h, 1, fraction, .001, "fan demand remains near the steam power budget during residual oscillation");
 				LoadFactorTests.fraction(h, shaft, fraction, "fan demand follows its actual speed during elastic oscillation");
 				LoadFactorTests.tooltip(h, shaft, "100%", net.minecraft.ChatFormatting.YELLOW);
@@ -304,17 +326,19 @@ public final class SteamEngineTests {
 				NetworkTopology.flush();
 				double unloaded = shaft.getSpeed();
 				h.runAfterDelay(40, () -> {
-					h.assertTrue(shaft.getSpeed() > unloaded + 15, "removing the fan restores unloaded acceleration");
+					h.assertTrue(shaft.getSpeed() > unloaded + 1 && shaft.getSpeed() <= 512.1,
+						"removing the fan restores acceleration towards the governor target");
 					ElasticKinetics.state(shaft).physicalSpeed = 8192;
-					readouts(h, shaft, "steam_driven", true);
+					readouts(h, shaft, "steam_governing", true);
+					near(h, 1, SourcePhysics.steamCurve(shaft).steamVent(8192), 0, "full supply vents fully above target");
 					LoadFactorTests.fraction(h, shaft, 0, "removing the fan removes sustained demand");
 					f.heat = 0; f.passive = true; f.supply();
 					near(h, 32768, SourcePhysics.steamCurve(shaft).maximumPower(), 0, "passive heat reduces the shared power budget");
 					near(h, 8192, shaft.getSpeed(), 0, "supply loss never clamps existing speed");
 					h.runAfterDelay(40, () -> {
-						double expected = Math.sqrt(8192.0 * 8192 + 2 * 32768 * (40.0 / 1200) / InertiaRegistry.getInertia(shaft));
-						near(h, expected, NetworkDynamics.preciseSpeed(shaft), 1,
-							"reduced supply adds only its available work above the former speed limit");
+						near(h, 8192, NetworkDynamics.preciseSpeed(shaft), 1e-6,
+							"closed admission preserves overspeed without adding work or braking");
+						near(h, .125, SourcePhysics.steamCurve(shaft).steamVent(8192), 0, "weak supply yields a weaker bypass plume");
 						f.passive = false; f.supply();
 						readouts(h, shaft, "no_steam", true);
 						LoadFactorTests.tooltip(h, shaft, "gui.differentialcreate.goggles.load_no_power", net.minecraft.ChatFormatting.GRAY);
@@ -340,11 +364,10 @@ public final class SteamEngineTests {
 				LoadFactorTests.fraction(h, shaft, 0, "steam acceleration does not count as machine load");
 			});
 			h.runAfterDelay(1200, () -> {
-				double inertia = InertiaRegistry.getInertia(shaft);
-				double toRated = inertia * 256 / 1024;
-				double expected = Math.sqrt(256.0 * 256 + 2 * 262144 * (1 - toRated) / inertia);
-				near(h, expected, NetworkDynamics.preciseSpeed(shaft), 1, "one minute of natural acceleration crosses into constant power");
-				readouts(h, shaft, "steam_driven", true);
+				double expected = PhysicsTuning.STEAM_GOVERNOR_RPM;
+				near(h, expected, NetworkDynamics.preciseSpeed(shaft), 1e-6, "natural acceleration settles at the governor target");
+				readouts(h, shaft, "steam_governing", true);
+				near(h, 1, SourcePhysics.steamCurve(shaft).steamVent(shaft.getSpeed()), 1e-8, "unloaded equilibrium bypasses the full steam allocation");
 				DifferentialCreate.LOGGER.info("STEAM_NATURAL ticks=1200 speed={} expected={} power={}",
 					NetworkDynamics.preciseSpeed(shaft), expected, SourcePhysics.steamCurve(shaft).torque(shaft.getSpeed()) * shaft.getSpeed());
 				f.heat = 0; f.supply();
@@ -367,12 +390,17 @@ public final class SteamEngineTests {
 		h.assertTrue(hasKey(tooltip, "gui.differentialcreate.goggles." + mode), "dynamics view shows the current drive state: " + mode);
 		h.assertTrue(!hasKey(tooltip, "gui.differentialcreate.goggles.no_load_speed")
 			&& hasKey(tooltip, "gui.differentialcreate.goggles.load_factor"), "steam shows network demand/supply without a fictitious no-load speed");
+		h.assertTrue(hasKey(tooltip, "gui.differentialcreate.goggles.steam_governor_speed")
+			&& hasKey(tooltip, "gui.differentialcreate.goggles.steam_venting"), "governor target and bypass fraction are visible");
 		tooltip.clear();
 		KineticGoggleInfo.append(shaft, tooltip, true);
 		if (energy) {
 			h.assertTrue(hasKey(tooltip, "gui.differentialcreate.goggles.local_energy")
-				&& hasKey(tooltip, "gui.differentialcreate.goggles.energy"), "steam uses the shared energy fields");
+				&& hasKey(tooltip, "gui.differentialcreate.goggles.energy")
+				&& hasKey(tooltip, "gui.differentialcreate.goggles.local_elastic_energy")
+				&& hasKey(tooltip, "gui.differentialcreate.goggles.elastic_energy"), "steam uses all four shared energy fields");
 			h.assertTrue(hasKey(tooltip, "gui.differentialcreate.goggles.output_power"), "high-speed steam never becomes fictitious braking");
+			h.assertTrue(hasKey(tooltip, "gui.differentialcreate.goggles.steam_vent_power"), "energy view reports bypass loss separately");
 		}
 	}
 	private static boolean hasKey(java.util.List<Component> lines, String key) {

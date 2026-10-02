@@ -9,9 +9,9 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
 import com.diliupengyun.differential_create.client.ClientClutchAngles;
+import com.diliupengyun.differential_create.client.ClientKineticAngles;
 import com.diliupengyun.differential_create.kinetics.ClutchPhysics;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
-import com.simibubi.create.content.kinetics.base.KineticBlockEntityRenderer;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntityVisual;
 import com.simibubi.create.content.kinetics.base.RotatingInstance;
 import com.simibubi.create.content.kinetics.transmission.ClutchBlockEntity;
@@ -36,12 +36,12 @@ public abstract class SplitShaftVisualMixin {
 			if (Iterate.directionsInAxis(axis)[index] != clutch.getSourceFacing()) {
 				KineticBlockEntity output = ClutchPhysics.output(clutch);
 				KineticBlockEntity member = output == null ? clutch : output;
-				instance.setup(member, axis, member.getSpeed());
+				float shaftOffset = ClientKineticAngles.shaftOffsetOf(member, axis);
+				instance.setup(member, axis, member.getSpeed()).setRotationOffset(shaftOffset);
 				var frame = ClientClutchAngles.outputRotation(clutch);
 				instance.setRotationalSpeed(frame.shaderSpeed());
 				// Final shader coefficient: setup has already captured the model offset.
-				instance.rotationOffset = frame.shaderOffset(
-					KineticBlockEntityRenderer.getRotationOffsetForPosition(member, member.getBlockPos(), axis));
+				instance.rotationOffset = frame.shaderOffset(shaftOffset);
 				return instance;
 			}
 		}

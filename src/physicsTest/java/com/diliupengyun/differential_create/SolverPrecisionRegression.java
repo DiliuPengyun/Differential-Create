@@ -27,6 +27,8 @@ public final class SolverPrecisionRegression {
         replacedShaftFracture();
         shortMasslessTrials();
         masslessFracture();
+        prestressedFreeFragment();
+        prestressedFreeShaftWork();
         masslessSubsteps();
         masslessEndpointSpeeds();
         masslessSeriesCompliance();
@@ -239,6 +241,59 @@ public final class SolverPrecisionRegression {
         check(result.broken() >= 0, "prestressed massless fragment still obeys structural strength");
         near(energy(graph, graph.speed, graph.twist), energy(graph, result.speed(), result.twist()), 1e-9,
             "massless fracture speeds cannot spoil the undamped energy balance");
+    }
+
+    private static void prestressedFreeFragment() {
+        // Saved after the 65536-strength counter-rotation fixture fractured.
+        // Two dangling shafts retain large preload while the opposite free port
+        // carries almost no torque; every equation must still converge.
+        for (int sign : new int[]{1, -1}) for (int substeps : new int[]{64, 63, 128}) {
+            var bodies = List.of(new Body(0, 0, 0, 0, 0), new Body(0, 0, 0, 0, 0),
+                new Body((double) .15f, sign * -64, 4, 0, 0), new Body(0, 0, 0, 0, 0));
+            var links = List.of(new Link(2, 3, 1, 1e7, 0, 65536, INF),
+                new Link(0, 1, 1, 1e7, 0, 65536, INF), new Link(1, 2, 1, 1e7, 0, 65536, INF));
+            double[] speed = {0, sign * -47.43267723760564, sign * -94.86535447521125, sign * -94.86535447521125};
+            double[] twist = {sign * -1.66144540666709e-20, sign * .0065536000297318165, sign * .006553600029731817};
+            Graph graph = new Graph(bodies, links, speed, twist, 2);
+            Result result = TorsionSolver.advance(bodies, links, speed, twist, DT, DT / substeps);
+            check(result.broken() >= 0, "prestressed free fragment reaches its actual strength");
+            check(result.duration() > 0 && result.duration() <= 1e-12, "existing overload fractures at the time-resolution boundary");
+            double h = result.duration();
+            Body rotor = bodies.get(2);
+            double delta = (rotor.drive() - rotor.damping() * speed[2]) / (2 * rotor.inertia() / h + rotor.damping());
+            double midpoint = speed[2] + delta, expected = speed[2] + 2 * delta;
+            for (double actual : result.speed()) near(expected, actual, 1e-11, "free shafts add no spurious rotor impulse");
+            for (double actual : result.torque()) near(0, actual, 1e-7, "dangling massless shafts balance torque");
+            near(h * midpoint, result.angle()[2], 1e-18, "fracture retains the analytic rotor travel");
+            double work = h * midpoint * (rotor.drive() - rotor.damping() * midpoint);
+            near(energy(graph, speed, twist) + work, energy(graph, result.speed(), result.twist()), 1e-9,
+                "refining a tiny port equation preserves the original physical work budget");
+            near(sign * -94.86535447521125, speed[2], 0, "fracture trial preserves its initial rotor state");
+            near(sign * .0065536000297318165, twist[1], 0, "fracture trial preserves its saved preload");
+        }
+    }
+
+    private static void prestressedFreeShaftWork() {
+        // The repeated replacement fixture leaves this unbroken free branch.
+        // A few ulps of unbalanced preload used to fail its physical work budget
+        // even after all twelve smaller-step retries.
+        var bodies = List.of(new Body(0, 0, 0, 0, 0), new Body(0, 0, 0, 0, 0), new Body(.5, 0, 0, 0, 0));
+        var links = List.of(new Link(0, 1, 1, 1e7, 0, 65536, INF), new Link(1, 2, 1, 1e7, 0, 65536, INF));
+        for (int sign : new int[]{1, -1}) for (int substeps : new int[]{64, 63, 128}) {
+            double[] speed = {sign * 4000.000000000001, sign * 2000.7323823747254, sign * 1.46476474945004};
+            double[] twist = {sign * .005730966779338059, sign * .005730966779338077};
+            Graph graph = new Graph(bodies, links, speed, twist, 2);
+            Result result = TorsionSolver.advance(bodies, links, speed, twist, DT, DT / substeps);
+            check(result.broken() < 0, "free preload below structural strength does not fracture");
+            near(DT, result.duration(), 0, "free shaft motion completes the requested physical interval");
+            for (double actual : result.speed()) near(speed[2], actual, 1e-11, "prestress adds no impulse to the unloaded flywheel");
+            for (double actual : result.torque()) near(0, actual, 1e-7, "free shaft torques remain balanced");
+            near(speed[2] * DT, result.angle()[2], 1e-15, "polishing preserves the actual flywheel travel");
+            near(energy(graph, speed, twist), energy(graph, result.speed(), result.twist()), 1e-10,
+                "polishing cannot spend or create the dangling springs' stored energy");
+            near(sign * 1.46476474945004, speed[2], 0, "free branch trial preserves its initial flywheel state");
+            near(sign * .005730966779338059, twist[0], 0, "free branch trial preserves its initial preload");
+        }
     }
 
     private static void masslessSubsteps() {

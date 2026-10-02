@@ -11,14 +11,20 @@ import com.simibubi.create.content.fluids.tank.BoilerData;
 /** Shared source characteristics for simulation and goggles. */
 public final class SourcePhysics {
 	private static final Curve INACTIVE = new Curve(0, 0);
-	public record Curve(double stallTorque, double damping, double powerLimit) {
+	public record Curve(double stallTorque, double damping, double powerLimit, double governorSpeed, double governorRange) {
+		public Curve(double stallTorque, double damping, double powerLimit) {
+			this(stallTorque, damping, powerLimit, Double.POSITIVE_INFINITY, 0);
+		}
 		public Curve(double noLoadSpeed, double damping) {
 			this(noLoadSpeed * damping, damping, Double.POSITIVE_INFINITY);
 		}
 		public boolean powerLimited() { return Double.isFinite(powerLimit); }
-		public double torque(double speed) { return DriveTorque.torque(stallTorque, powerLimit, speed) - damping * speed; }
+		public double torque(double speed) {
+			return DriveTorque.torque(stallTorque, powerLimit, speed, governorSpeed, governorRange) - damping * speed;
+		}
 		public double noLoadSpeed() {
-			return stallTorque == 0 ? 0 : damping > 0 ? stallTorque / damping : Math.copySign(Double.POSITIVE_INFINITY, stallTorque);
+			return stallTorque == 0 ? 0 : Math.copySign(Math.min(governorSpeed,
+				damping > 0 ? Math.abs(stallTorque) / damping : Double.POSITIVE_INFINITY), stallTorque);
 		}
 		public double powerThresholdSpeed() { return stallTorque == 0 ? 0 : powerLimit / Math.abs(stallTorque); }
 		/** A finite direction/connection command for Create, never an assigned physical speed. */
@@ -28,7 +34,18 @@ public final class SourcePhysics {
 		public double maximumPower() {
 			return powerLimited() ? powerLimit : damping > 0 ? stallTorque * stallTorque / (4 * damping) : 0;
 		}
-		public double tangentDamping(double speed) { return damping + DriveTorque.slope(stallTorque, powerLimit, speed); }
+		public double tangentDamping(double speed) {
+			return damping + DriveTorque.slope(stallTorque, powerLimit, speed, governorSpeed, governorRange);
+		}
+		public double ventFraction(double speed) {
+			return stallTorque == 0 || !Double.isFinite(governorSpeed) ? 0
+				: 1 - SteamGovernor.opening(stallTorque, speed, governorSpeed, governorRange);
+		}
+		public double ventedPower(double speed) { return powerLimited() ? powerLimit * ventFraction(speed) : 0; }
+		/** Actual bypass flow relative to one engine's full supply, including boiler scarcity. */
+		public double steamVent(double speed) {
+			return stallTorque == 0 ? 0 : ventedPower(speed) / (Math.abs(stallTorque) * PhysicsTuning.STEAM_RATED_RPM);
+		}
 	}
 	private SourcePhysics() {}
 
@@ -80,6 +97,7 @@ public final class SourcePhysics {
 		// Fixed nominal cylinder pressure/displacement gives finite torque even at standstill.
 		// Each engine accepts at most one boiler level; scarce supply is shared equally.
 		return new Curve(Math.signum(direction) * torqueLimit, 0,
-			ratedPower * Math.min(1, boilerLevel / engines));
+			ratedPower * Math.min(1, boilerLevel / engines),
+			PhysicsTuning.STEAM_GOVERNOR_RPM, PhysicsTuning.STEAM_GOVERNOR_RANGE);
 	}
 }

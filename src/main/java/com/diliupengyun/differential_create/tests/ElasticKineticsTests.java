@@ -116,9 +116,9 @@ final class ElasticKineticsTests {
         var gentleA = flywheel(h, 2, 9); var gentleB = flywheel(h, 4, 9);
         double[] slipRange = {Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY};
         h.runAfterDelay(5, () -> {
-            speed(fast, 16); speed(stopped, 0); speed(gentleA, 10); speed(gentleB, 8);
+            speed(fast, 128); speed(stopped, 0); speed(gentleA, 10); speed(gentleB, 8);
             shaft(h, 3, 3); shaft(h, 3, 9); NetworkTopology.flush();
-            near(h, 16, fast.getSpeed(), 0, "topology alone transfers no impulse");
+            near(h, 128, fast.getSpeed(), 0, "topology alone transfers no impulse");
             near(h, 0, stopped.getSpeed(), 0, "new rotor starts at rest");
             var trial = ElasticKinetics.sample(MachiningClock.networks(h.getLevel()), RotationMath.TICK_MINUTES);
             h.assertTrue(trial.result.broken() >= 0 && trial.result.duration() < RotationMath.TICK_MINUTES,
@@ -127,13 +127,13 @@ final class ElasticKineticsTests {
                     .map(e -> e.a.getBlockPos() + "->" + e.b.getBlockPos() + " q=" + e.ratio + " twist=" + e.twist).toList()
                 );
             int a = trial.members.indexOf(fast), b = trial.members.indexOf(stopped);
-            h.assertTrue(trial.result.speed()[a] < 16 && trial.result.speed()[b] > 0,
+            h.assertTrue(trial.result.speed()[a] < 128 && trial.result.speed()[b] > 0,
                 "some momentum is exchanged before the shaft fails");
         });
         h.runAfterDelay(8, () -> {
             h.assertTrue(h.getBlockState(new BlockPos(3, 3, 3)).isAir(), "overloaded bridge shaft breaks");
             h.assertFalse(fast.isRemoved() || stopped.isRemoved(), "stronger flywheels survive");
-            near(h, 16, fast.getSpeed() + stopped.getSpeed(), 1e-4, "fracture preserves flywheel momentum");
+            near(h, 128, fast.getSpeed() + stopped.getSpeed(), 1e-4, "fracture preserves flywheel momentum");
             h.assertFalse(h.getBlockState(new BlockPos(3, 3, 9)).isAir(), "gentle connection survives");
         });
         for (int tick = 90; tick < 110; tick++) h.runAfterDelay(tick, () -> {
@@ -142,6 +142,10 @@ final class ElasticKineticsTests {
             var network = gentleA.getOrCreateNetwork();
             double elastic = ((INetworkDynamics) network).differentialcreate$data().connections.stream()
                 .mapToDouble(edge -> .5 * edge.stiffness() * edge.twist * edge.twist).sum();
+            var energy = ElasticKinetics.elasticEnergy(network);
+            near(h, elastic, energy.total(), 1e-10, "network readout follows the changing spring energy");
+            near(h, elastic, network.members.keySet().stream().mapToDouble(energy::of).sum(), 1e-10,
+                "local elastic energies add to the network total, including massless ports");
             near(h, 41, ElasticKinetics.kineticEnergy(network) + elastic, 1e-7,
                 "undamped engagement conserves kinetic plus elastic energy");
             slipRange[0] = Math.min(slipRange[0], a - b);
@@ -165,21 +169,21 @@ final class ElasticKineticsTests {
         var left = flywheel(h, 2, 3); var right = flywheel(h, 6, 3);
         shaft(h, 3, 3); shaft(h, 4, 3);
         h.runAfterDelay(5, () -> {
-            // Recreate the saved crash state, then let the normal server tick locate
-            // the fracture, destroy the shaft and rebuild the remaining networks.
-            speed(left, 165.86302232741826); speed(right, 197.51583239706156);
-            for (int x : new int[]{3, 4}) speed(h.getBlockEntity(new BlockPos(x, 3, 3)), 165.86302232741826);
+            // Scale the saved crash state by eight for the increased material limits,
+            // then let the normal tick fracture and rebuild the remaining networks.
+            speed(left, 8 * 165.86302232741826); speed(right, 8 * 197.51583239706156);
+            for (int x : new int[]{3, 4}) speed(h.getBlockEntity(new BlockPos(x, 3, 3)), 8 * 165.86302232741826);
             shaft(h, 5, 3); NetworkTopology.flush();
             var contacts = ((INetworkDynamics) left.getOrCreateNetwork()).differentialcreate$data().connections;
             for (var edge : contacts) {
                 boolean touchesLeft = edge.a == left || edge.b == left;
-                edge.twist = touchesLeft ? (edge.a == left ? -1 : 1) * .0007733898555839802 : 0;
+                edge.twist = touchesLeft ? (edge.a == left ? -1 : 1) * 8 * .0007733898555839802 : 0;
                 edge.save();
             }
         });
         h.runAfterDelay(8, () -> {
             assertBrokenBridge(h, left, right);
-            near(h, 165.86302232741826 + 197.51583239706156,
+            near(h, 8 * (165.86302232741826 + 197.51583239706156),
                 NetworkDynamics.preciseSpeed(left) + NetworkDynamics.preciseSpeed(right), 1e-8,
                 "saved-state fracture preserves flywheel momentum");
             // Enough initial speed difference to keep all forty replacements overloaded.
@@ -278,7 +282,7 @@ final class ElasticKineticsTests {
         clutch.source = h.absolutePos(clutchPos.west());
         NetworkTopology.mark(clutch);
         KineticBlockEntity[] b = {null};
-        h.runAfterDelay(5, () -> ((INetworkDynamics) a.getOrCreateNetwork()).differentialcreate$setSpeed(16));
+        h.runAfterDelay(5, () -> ((INetworkDynamics) a.getOrCreateNetwork()).differentialcreate$setSpeed(128));
         h.runAfterDelay(50, () -> {
             h.assertTrue(((IClutchDynamics) clutch).differentialcreate$isLocked(), "unloaded clutch has synchronized");
             b[0] = flywheel(h, 6, 3); NetworkTopology.flush();
@@ -288,30 +292,38 @@ final class ElasticKineticsTests {
             h.assertFalse(clutch.isRemoved() || a.isRemoved() || b[0].isRemoved(), "clutch limits the remote engagement shock");
             h.assertFalse(((IClutchDynamics) clutch).differentialcreate$isLocked(), "friction surface starts slipping");
             h.assertTrue(b[0].getSpeed() > 0 && b[0].getSpeed() < a.getSpeed(), "finite friction gradually accelerates the load");
-            h.assertTrue(Math.abs(((IClutchDynamics) clutch).differentialcreate$getLastCouplingTorque()) <= 32.001, "clutch torque cap");
+            h.assertTrue(Math.abs(((IClutchDynamics) clutch).differentialcreate$getLastCouplingTorque()) <= PhysicsTuning.CLUTCH_TORQUE + .001, "clutch torque cap");
         });
         h.runAfterDelay(280, () -> {
-            near(h, 16, NetworkDynamics.preciseSpeed(a) + NetworkDynamics.preciseSpeed(b[0]), 1e-8,
+            near(h, 128, NetworkDynamics.preciseSpeed(a) + NetworkDynamics.preciseSpeed(b[0]), 1e-8,
                 "frictional engagement conserves flywheel momentum");
             var network = a.getOrCreateNetwork();
             var contacts = ((INetworkDynamics) network).differentialcreate$data().connections;
             double elastic = contacts.stream().mapToDouble(edge -> .5 * edge.stiffness() * edge.twist * edge.twist).sum();
             double residualBound = contacts.stream().mapToDouble(edge -> 2 * Math.pow(PhysicsTuning.CLUTCH_TORQUE, 2) / edge.stiffness()).sum();
-            h.assertTrue(ElasticKinetics.kineticEnergy(network) + elastic <= 32 + residualBound,
+            h.assertTrue(ElasticKinetics.kineticEnergy(network) + elastic <= 2048 + residualBound,
                 "sliding removes the initial mismatch energy while allowing bounded residual elastic oscillation");
             h.assertTrue(((IClutchDynamics) clutch).differentialcreate$isLocked(), "clutch relocks for display after synchronization");
             h.succeed();
         });
     }
     static void strength(GameTestHelper h) {
-        // Both shafts start at exactly zero: the failure is driven by sustained opposed motor torques.
-        BlockPos left = new BlockPos(2, 3, 3), right = new BlockPos(4, 3, 3);
-        h.setBlock(left, AllBlocks.CREATIVE_MOTOR.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
-        h.setBlock(right, AllBlocks.CREATIVE_MOTOR.getDefaultState().setValue(BlockStateProperties.FACING, Direction.WEST));
-        CreativeMotorBlockEntity a = h.getBlockEntity(left), b = h.getBlockEntity(right);
-        a.generatedSpeed.setValue(16); b.generatedSpeed.setValue(16);
+        // Three motors on each side exceed the higher shaft limit with sustained
+        // opposing torques. Every member starts at zero; there is no impact seed.
+        var opposedMotors = new java.util.ArrayList<CreativeMotorBlockEntity>();
+        for (int side = 0; side < 2; side++) for (int z = 2; z <= 4; z++) {
+            BlockPos cogPos = new BlockPos(side == 0 ? 2 : 4, 3, z);
+            h.setBlock(cogPos, AllBlocks.COGWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+            NetworkTopology.mark(h.getBlockEntity(cogPos));
+            BlockPos motorPos = new BlockPos(side == 0 ? 1 : 5, 3, z);
+            h.setBlock(motorPos, AllBlocks.CREATIVE_MOTOR.getDefaultState().setValue(BlockStateProperties.FACING,
+                side == 0 ? Direction.EAST : Direction.WEST));
+            CreativeMotorBlockEntity motor = h.getBlockEntity(motorPos);
+            motor.generatedSpeed.setValue(z == 3 ? 16 : -16);
+            opposedMotors.add(motor); NetworkTopology.mark(motor);
+        }
         shaft(h, 3, 3); NetworkTopology.flush();
-        speed(a, 0); speed(b, 0);
+        for (var motor : opposedMotors) speed(motor, 0);
         var leftFly = flywheel(h, 2, 12); var rightFly = flywheel(h, 6, 12);
         BlockPos clutchPos = new BlockPos(4, 3, 12);
         h.setBlock(clutchPos, AllBlocks.CLUTCH.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
@@ -319,15 +331,35 @@ final class ElasticKineticsTests {
         clutch.source = h.absolutePos(clutchPos.west());
         for (int x : new int[]{3, 5}) for (int z : new int[]{12, 13})
             h.setBlock(new BlockPos(x, 3, z), AllBlocks.COGWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
-        shaft(h, 4, 13); NetworkTopology.flush(); speed(leftFly, 16); speed(rightFly, 0);
+        shaft(h, 4, 13); NetworkTopology.flush(); speed(leftFly, 128); speed(rightFly, 0);
+        // A direct motor pair has no finite-strength endpoint to fracture under sustained opposing drive.
+        BlockPos directLeft = new BlockPos(2, 3, 20), directRight = directLeft.east();
+        h.setBlock(directLeft, AllBlocks.CREATIVE_MOTOR.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
+        h.setBlock(directRight, AllBlocks.CREATIVE_MOTOR.getDefaultState().setValue(BlockStateProperties.FACING, Direction.WEST));
+        CreativeMotorBlockEntity directA = h.getBlockEntity(directLeft), directB = h.getBlockEntity(directRight);
+        directA.generatedSpeed.setValue(16); directB.generatedSpeed.setValue(16);
+        NetworkTopology.mark(directA); NetworkTopology.mark(directB); NetworkTopology.flush();
+        speed(directA, 0); speed(directB, 0);
+        // A stored spring preload exercises an infinite-strength motor contact
+        // above the finite material limit without changing source torque ratings.
+        var directContact = ((INetworkDynamics) directA.getOrCreateNetwork()).differentialcreate$data().connections.getFirst();
+        directContact.twist = .02; directContact.save();
+        var directTrial = ElasticKinetics.sample(java.util.List.of(directA.getOrCreateNetwork()), PhysicsTuning.TORSION_MAX_STEP);
+        h.assertTrue(directTrial.result.broken() < 0, "prestressed creative motor contact cannot fracture");
+        h.assertTrue(Math.abs(directTrial.result.torque()[0]) > PhysicsTuning.ANDESITE_STRENGTH,
+            "creative motor connection transmits torque beyond the finite material limit");
         h.runAfterDelay(5, () -> {
-            h.assertTrue(h.getBlockState(new BlockPos(3, 3, 3)).isAir(), "continuous overload breaks a shaft without an initial speed mismatch");
-            h.assertFalse(a.isRemoved() || b.isRemoved(), "failure is assigned to the weaker shaft");
+            boolean bridgeBroken = false;
+            for (int x = 2; x <= 4; x++) bridgeBroken |= h.getBlockState(new BlockPos(x, 3, 3)).isAir();
+            h.assertTrue(bridgeBroken, "continuous overload breaks the finite-strength bridge without an initial speed mismatch");
+            h.assertTrue(opposedMotors.stream().noneMatch(KineticBlockEntity::isRemoved), "overload preserves the infinite-strength motors");
             boolean bypassBroken = h.getBlockState(new BlockPos(4, 3, 13)).isAir();
             for (int x : new int[]{3, 5}) for (int z : new int[]{12, 13})
                 bypassBroken |= h.getBlockState(new BlockPos(x, 3, z)).isAir();
             h.assertTrue(bypassBroken, "a parallel rigid path receives no blanket clutch protection");
             h.assertFalse(leftFly.isRemoved() || rightFly.isRemoved(), "bypass overload preserves the stronger flywheels");
+            h.assertFalse(directA.isRemoved() || directB.isRemoved(), "directly opposed creative motors cannot fracture");
+            h.assertTrue(directA.getOrCreateNetwork() == directB.getOrCreateNetwork(), "opposed motors retain their direct connection");
             h.succeed();
         });
     }
@@ -357,5 +389,70 @@ final class ElasticKineticsTests {
             h.assertTrue(.25 * (wa * wa + wb * wb) <= .25 * .25 * .25 + 1e-8, "passive engagement does not create kinetic energy");
             h.succeed();
         });
+    }
+    static void energyReadout(GameTestHelper h) {
+        BlockPos controllerPos = new BlockPos(10, 3, 5);
+        h.setBlock(controllerPos, AllBlocks.ROTATION_SPEED_CONTROLLER.getDefaultState()
+            .setValue(BlockStateProperties.HORIZONTAL_AXIS, Direction.Axis.X));
+        SpeedControllerBlockEntity controller = h.getBlockEntity(controllerPos);
+        h.setBlock(controllerPos.above(), AllBlocks.LARGE_COGWHEEL.getDefaultState()
+            .setValue(BlockStateProperties.AXIS, Direction.Axis.Z));
+        BlockPos inputPos = controllerPos.above().north();
+        h.setBlock(inputPos, AllBlocks.FLYWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.Z));
+        KineticBlockEntity input = h.getBlockEntity(inputPos);
+        var output = flywheel(h, 12, 5); shaft(h, 11, 5);
+        h.runAfterDelay(5, () -> {
+            for (int setting : new int[]{32, -32}) {
+                controller.targetSpeed.setValue(setting);
+                NetworkTopology.mark(controller); NetworkTopology.flush();
+                var network = input.getOrCreateNetwork();
+                var data = ((INetworkDynamics) network).differentialcreate$data();
+                h.assertTrue(data.connections.stream().anyMatch(edge -> Math.abs(Math.abs(edge.ratio) - 2) < 1e-8
+                    || Math.abs(Math.abs(edge.ratio) - .5) < 1e-8),
+                    "energy fixture contains a real signed 2x gear contact");
+                var expected = new java.util.HashMap<KineticBlockEntity, Double>();
+                double total = 0;
+                for (int i = 0; i < data.connections.size(); i++) {
+                    var edge = data.connections.get(i);
+                    edge.twist = .001 * (i + 1);
+                    double torque = edge.stiffness() * edge.twist;
+                    // Each local half-port has stiffness 2K, so its energy is T_local^2/(4K).
+                    double atA = Math.pow(edge.ratio * torque, 2) / (4 * PhysicsTuning.TORSIONAL_STIFFNESS);
+                    double atB = torque * torque / (4 * PhysicsTuning.TORSIONAL_STIFFNESS);
+                    expected.merge(edge.a, atA, Double::sum); expected.merge(edge.b, atB, Double::sum);
+                    total += atA + atB;
+                }
+                var energy = ElasticKinetics.elasticEnergy(network);
+                near(h, total, energy.total(), 1e-10, "network potential energy sums the physical port energies once");
+                near(h, total, network.members.keySet().stream().mapToDouble(energy::of).sum(), 1e-10,
+                    "every local share belongs to the current network");
+                for (var be : network.members.keySet()) {
+                    near(h, expected.getOrDefault(be, 0d), energy.of(be), 1e-10, "local potential energy uses the local port torque");
+                    var tooltip = new java.util.ArrayList<net.minecraft.network.chat.Component>();
+                    KineticGoggleInfo.append(be, tooltip, true);
+                    near(h, energy.of(be), energyValue(tooltip, "local_elastic_energy"), .0051, "local energy goggle value");
+                    near(h, total, energyValue(tooltip, "elastic_energy"), .0051, "network energy goggle value");
+                }
+                var contacts = new java.util.ArrayList<>(data.connections);
+                data.connections.clear();
+                for (var edge : contacts) {
+                    var reversed = new ElasticKinetics.Connection(edge.b, edge.a, 1 / edge.ratio, edge.clutch);
+                    reversed.twist = -edge.twist / edge.ratio;
+                    data.connections.add(reversed);
+                }
+                var reversed = ElasticKinetics.elasticEnergy(network);
+                near(h, total, reversed.total(), 1e-10, "reversing the contact reference preserves total energy");
+                for (var be : network.members.keySet())
+                    near(h, energy.of(be), reversed.of(be), 1e-10, "reversing the contact reference preserves each body's share");
+                data.connections.clear(); data.connections.addAll(contacts);
+            }
+            h.succeed();
+        });
+    }
+    private static double energyValue(java.util.List<net.minecraft.network.chat.Component> lines, String suffix) {
+        var contents = lines.stream().map(net.minecraft.network.chat.Component::getContents)
+            .filter(content -> content instanceof net.minecraft.network.chat.contents.TranslatableContents text
+                && text.getKey().equals("gui.differentialcreate.goggles." + suffix)).findFirst().orElseThrow();
+        return Double.parseDouble(((net.minecraft.network.chat.contents.TranslatableContents) contents).getArgs()[0].toString());
     }
 }

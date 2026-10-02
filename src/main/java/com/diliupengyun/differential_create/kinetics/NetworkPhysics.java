@@ -28,10 +28,8 @@ public final class NetworkPhysics {
 				if (be.isRemoved()) continue;
 				double r = entry.getValue(), impact = MachineActivity.impact(be);
 				j += r * r * InertiaRegistry.getInertia(be);
-				if (be instanceof EncasedFanBlockEntity)
-					c += Math.pow(Math.abs(r), 3) * impact / Math.pow(PhysicsTuning.FAN_ANCHOR_RPM, 2);
-				else
-					l += Math.abs(r) * impact;
+				c += Math.pow(Math.abs(r), 3) * MachineActivity.quadraticDrag(be);
+				if (!(be instanceof EncasedFanBlockEntity)) l += Math.abs(r) * impact;
 			}
 			base = new Balance(0, 0, l, j, c);
 		}

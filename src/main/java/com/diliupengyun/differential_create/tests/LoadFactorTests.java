@@ -110,13 +110,15 @@ public final class LoadFactorTests {
             new LoadFactor.Reading(LoadFactor.Status.AVAILABLE, Double.POSITIVE_INFINITY),
             LoadFactor.Reading.NO_POWER, new LoadFactor.Reading(LoadFactor.Status.BRAKING, 0), LoadFactor.Reading.UNKNOWN);
         for (var reading : readings) {
-            var payload = new RotorStatePayload(h.getLevel().dimension().location(), source.network, 123.5, reading,
-                List.of(new RotorStatePayload.Rotor(source.getBlockPos(), -12, 45.25, -16)));
+            var payload = new RotorStatePayload(h.getLevel().dimension().location(), source.network, 123.5, 57.125, reading,
+                List.of(new RotorStatePayload.Rotor(source.getBlockPos(), -12, 45.25, -16, 0, 12.25),
+                    new RotorStatePayload.Rotor(source.getBlockPos().above(), 512, 90.5, 0, .125f, 44.875),
+                    new RotorStatePayload.Rotor(source.getBlockPos().below(), 8192, -180.25, 0, 1, 0)));
             var buf = new FriendlyByteBuf(Unpooled.buffer());
             try {
                 RotorStatePayload.STREAM_CODEC.encode(buf, payload);
                 h.assertTrue(payload.equals(RotorStatePayload.STREAM_CODEC.decode(buf)) && !buf.isReadable(),
-                    "server load result and rotor state survive the network codec: " + reading);
+                    "server load, rotor state and local/network elastic energies survive the network codec: " + reading);
             } finally { buf.release(); }
         }
     }

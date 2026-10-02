@@ -16,4 +16,13 @@ public final class DriveTorque {
     public static double slope(double stall, double powerLimit, double speed) {
         return stall * speed > powerLimit ? (powerLimit / speed) / speed : 0;
     }
+
+    public static double torque(double stall, double powerLimit, double speed, double governorSpeed, double governorRange) {
+        return torque(stall, powerLimit, speed) * SteamGovernor.opening(stall, speed, governorSpeed, governorRange);
+    }
+
+    public static double slope(double stall, double powerLimit, double speed, double governorSpeed, double governorRange) {
+        return slope(stall, powerLimit, speed) * SteamGovernor.opening(stall, speed, governorSpeed, governorRange)
+            + Math.abs(torque(stall, powerLimit, speed)) * SteamGovernor.slope(stall, speed, governorSpeed, governorRange);
+    }
 }

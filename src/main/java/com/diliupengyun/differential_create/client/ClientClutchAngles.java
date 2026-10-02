@@ -1,8 +1,5 @@
 package com.diliupengyun.differential_create.client;
 
-import java.util.Map;
-import java.util.WeakHashMap;
-
 import com.diliupengyun.differential_create.kinetics.ClutchPhysics;
 import com.diliupengyun.differential_create.kinetics.IClutchDynamics;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
@@ -14,12 +11,12 @@ import net.minecraft.client.Minecraft;
 
 /** Output phases live with the clutch, so renderer rebuilds cannot reset a free port. */
 public final class ClientClutchAngles {
-	private static final Map<ClutchBlockEntity, FreeShaftRotation> outputs = new WeakHashMap<>();
+	private static final ClutchAnimationCache<ClutchBlockEntity> outputs = new ClutchAnimationCache<>();
 
 	private ClientClutchAngles() {}
 
 	public static RotationFrame outputRotation(ClutchBlockEntity clutch) {
-		return update(clutch, outputs.computeIfAbsent(clutch, $ -> new FreeShaftRotation()));
+		return update(clutch, outputs.get(clutch));
 	}
 
 	private static RotationFrame update(ClutchBlockEntity clutch, FreeShaftRotation rotation) {
@@ -45,9 +42,9 @@ public final class ClientClutchAngles {
 	/** Runs even during /tick freeze, when block entity ticks do not refresh visuals. */
 	public static void onClientTick() {
 		Minecraft minecraft = Minecraft.getInstance();
-		outputs.entrySet().removeIf(entry -> entry.getKey().isRemoved() || entry.getKey().getLevel() != minecraft.level);
+		var snapshot = outputs.snapshot(clutch -> clutch.isRemoved() || clutch.getLevel() != minecraft.level);
 		if (minecraft.isPaused()) return;
-		outputs.forEach((clutch, rotation) -> {
+		snapshot.forEach((clutch, rotation) -> {
 			RotationFrame before = rotation.frame();
 			RotationFrame after = update(clutch, rotation);
 			if (before == null || !before.sameMotion(after)) VisualizationHelper.queueUpdate(clutch);

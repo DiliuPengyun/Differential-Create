@@ -1,14 +1,15 @@
 {
-  "type": "minecraft:crafting_shapeless",
+  "type": "minecraft:crafting_shaped",
   "category": "redstone",
-  "ingredients": [
-    { "item": "create:clutch" },
-    { "item": "create:brass_casing" },
-    { "item": "create:precision_mechanism" },
-    { "item": "differentialcreate:composite_friction_plate" },
-    { "item": "differentialcreate:composite_friction_plate" },
-    { "item": "differentialcreate:composite_friction_plate" },
-    { "item": "differentialcreate:composite_friction_plate" }
+  "pattern": [
+    " B ",
+    "PCP",
+    " B "
   ],
+  "key": {
+    "B": { "item": "create:brass_casing" },
+    "P": { "item": "differentialcreate:composite_friction_plate" },
+    "C": { "item": "create:clutch" }
+  },
   "result": { "id": "differentialcreate:brass_clutch", "count": 1 }
 }

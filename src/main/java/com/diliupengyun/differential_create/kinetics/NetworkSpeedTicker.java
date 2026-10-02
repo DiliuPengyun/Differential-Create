@@ -39,6 +39,7 @@ public final class NetworkSpeedTicker {
 
 	@SubscribeEvent
 	public static void onStop(ServerStoppedEvent event) {
+		ContraptionMotion.clear();
 		NetworkTopology.clear();
 		ClientSpeedSync.clear();
 	}

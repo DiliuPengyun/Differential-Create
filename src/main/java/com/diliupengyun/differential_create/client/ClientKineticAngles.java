@@ -2,6 +2,8 @@ package com.diliupengyun.differential_create.client;
 
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntityRenderer;
+import com.simibubi.create.content.kinetics.base.KineticBlockEntityVisual;
+import com.simibubi.create.content.kinetics.simpleRelays.ICogWheel;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.Direction.Axis;
 
@@ -24,9 +26,17 @@ public final class ClientKineticAngles {
 		return theta == null ? Float.NaN : (float) (Math.toRadians((staticOffset + theta) % 360));
 	}
 
-	/** Shared radians and model alignment, with the shaft's fallback until sync arrives. */
+	/** A neighbouring large cog's teeth and centre shaft have different static alignments. */
+	public static float shaftOffsetOf(KineticBlockEntity be, Axis axis) {
+		return ShaftModelOffset.of(ICogWheel.isLargeCog(be.getBlockState()),
+			KineticBlockEntityVisual.shouldOffset(axis, be.getBlockPos()), be.getRotationAngleOffset(axis));
+	}
+
+	/** Shared shaft radians, including the same alignment before the first network snapshot. */
 	public static float shaftAngleOf(KineticBlockEntity be) {
-		return KineticBlockEntityRenderer.getAngleForBe(be, be.getBlockPos(),
-			KineticBlockEntityRenderer.getRotationAxisOf(be));
+		Axis axis = KineticBlockEntityRenderer.getRotationAxisOf(be);
+		float modelAngle = KineticBlockEntityRenderer.getAngleForBe(be, be.getBlockPos(), axis);
+		return modelAngle + (float) Math.toRadians(shaftOffsetOf(be, axis)
+			- KineticBlockEntityRenderer.getRotationOffsetForPosition(be, be.getBlockPos(), axis));
 	}
 }

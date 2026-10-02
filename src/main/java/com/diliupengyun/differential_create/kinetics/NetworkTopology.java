@@ -19,6 +19,7 @@ import com.simibubi.create.content.kinetics.base.IRotate;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.speedController.SpeedControllerBlockEntity;
 import com.simibubi.create.content.kinetics.transmission.ClutchBlockEntity;
+import com.simibubi.create.content.kinetics.transmission.sequencer.SequencedGearshiftBlockEntity;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -283,7 +284,8 @@ public final class NetworkTopology {
 						if (!(block instanceof KineticBlockEntity to) || !group.ratios.containsKey(to)
 							|| connection(from, to) == 0 || !visited.add(to)) continue;
 						if (!(to instanceof DirectionalShaftHalvesBlockEntity)) to.source = from.getBlockPos();
-						to.sequenceContext = from.sequenceContext;
+						if (!(to instanceof SequencedGearshiftBlockEntity))
+							to.sequenceContext = from.sequenceContext;
 						frontier.add(to);
 					}
 				}

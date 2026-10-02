@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import com.simibubi.create.content.kinetics.KineticNetwork;
+import com.simibubi.create.content.kinetics.steamEngine.PoweredShaftBlockEntity;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -80,20 +81,24 @@ public final class ClientSpeedSync {
 		if (!last.audience.isEmpty()) {
 			var rotors = new ArrayList<RotorStatePayload.Rotor>();
 			double energy = ElasticKinetics.kineticEnergy(network);
+			var elasticEnergy = ElasticKinetics.elasticEnergy(network);
 			var loadFactor = NetworkLoad.calculate(network);
 			for (var be : dynamics.differentialcreate$getRatios().keySet()) {
 				var member = ElasticKinetics.state(be);
+				float steamVent = be instanceof PoweredShaftBlockEntity shaft
+					? (float) SourcePhysics.steamCurve(shaft).steamVent(member.physicalSpeed) : 0;
 				rotors.add(new RotorStatePayload.Rotor(be.getBlockPos(), (float) member.physicalSpeed,
-					member.angle * 360, (float) member.transmittedTorque));
+					member.angle * 360, (float) member.transmittedTorque, steamVent, elasticEnergy.of(be)));
 				// Keep every packet safely below the custom-payload size limit.
 				if (rotors.size() == 2048) {
-					var packet = new RotorStatePayload(server.dimension().location(), network.id, energy, loadFactor, List.copyOf(rotors));
+					var packet = new RotorStatePayload(server.dimension().location(), network.id, energy, elasticEnergy.total(),
+						loadFactor, List.copyOf(rotors));
 					for (var player : last.audience) queue(player, packet);
 					rotors.clear();
 				}
 			}
 			if (!rotors.isEmpty()) {
-				var packet = new RotorStatePayload(server.dimension().location(), network.id, energy, loadFactor, rotors);
+				var packet = new RotorStatePayload(server.dimension().location(), network.id, energy, elasticEnergy.total(), loadFactor, rotors);
 				for (var player : last.audience) queue(player, packet);
 			}
 		}

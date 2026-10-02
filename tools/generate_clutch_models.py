@@ -1,11 +1,13 @@
-"""Build the clutch housing and friction plate as Minecraft-native cuboid models.
+"""Build the clutch housing and the flat friction-plate item sprite.
 
-All surfaces reuse Minecraft/Create textures. Run this after changing geometry;
+The housing reuses Minecraft/Create textures. Run this after changing geometry;
 the generated JSON assets are shipped directly and require no runtime generator.
 """
 from copy import deepcopy
 import json
 from pathlib import Path
+import struct
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "src/main/resources/assets/differentialcreate"
@@ -31,6 +33,56 @@ def write(relative, data):
         body = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     target.write_text(body, encoding="utf-8")
 
+
+def turn_model(model):
+    """Rotate +90 degrees around X, including UVs and inverted recess bounds."""
+    moved = {"down": "north", "up": "south", "north": "up", "south": "down",
+             "west": "west", "east": "east"}
+    uv_turns = {"down": 180, "up": 0, "north": 180, "south": 0, "west": 270, "east": 90}
+    for element in model["elements"]:
+        lo, hi = element["from"], element["to"]
+        default_uv = {
+            "down": [lo[0], 16 - hi[2], hi[0], 16 - lo[2]],
+            "up": [lo[0], lo[2], hi[0], hi[2]],
+            "north": [16 - hi[0], 16 - hi[1], 16 - lo[0], 16 - lo[1]],
+            "south": [lo[0], 16 - hi[1], hi[0], 16 - lo[1]],
+            "west": [lo[2], 16 - hi[1], hi[2], 16 - lo[1]],
+            "east": [16 - hi[2], 16 - hi[1], 16 - lo[2], 16 - lo[1]],
+        }
+        faces = {}
+        for side, face in element["faces"].items():
+            face.setdefault("uv", default_uv[side])
+            angle = (face.get("rotation", 0) + uv_turns[side]) % 360
+            if angle:
+                face["rotation"] = angle
+            else:
+                face.pop("rotation", None)
+            faces[moved[side]] = face
+        element["faces"] = faces
+        # Sorting all corners erases the intentionally inverted axis of the bearings.
+        element["from"] = [lo[0], round(16 - hi[2], 4), lo[1]]
+        element["to"] = [hi[0], round(16 - lo[2], 4), hi[1]]
+    return model
+
+
+def friction_plate_texture():
+    """A 16px steel ring with brown segmented lining and a transparent centre."""
+    rows = (
+        "................", ".....SSSSSS.....", "...SSHHHHHHSS...", "..SHBBBBBBBBHS..",
+        "..HBBbBSSBbBBH..", ".SHBbSS..SSbBHS.", ".SHBBH....HBBHS.", ".SHBS......SBHS.",
+        ".SHBS......SBHS.", ".SHBBH....HBBHS.", ".SHBbSS..SSbBHS.", "..HBBbBSSBbBBH..",
+        "..SHBBBBBBBBHS..", "...SSHHHHHHSS...", ".....SSSSSS.....", "................",
+    )
+    palette = {".": (0, 0, 0, 0), "S": (55, 58, 61, 255), "H": (175, 179, 174, 255),
+               "B": (139, 91, 55, 255), "b": (187, 132, 75, 255)}
+    raw = b"".join(b"\0" + bytes(c for pixel in row for c in palette[pixel]) for row in rows)
+    def chunk(kind, payload):
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 16, 16, 8, 6, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
+    target = ASSETS / "textures/item/composite_friction_plate.png"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(png)
 
 def housing():
     casing = box([0, 0, 0], [16, 16, 16], "side", "full brass casing")
@@ -94,30 +146,27 @@ def main():
             variants[f"axis={axis},powered={str(powered).lower()}"] = {
                 "model": f"differentialcreate:block/brass_clutch/block{suffix}", **rotation}
     write("blockstates/brass_clutch.json", {"variants": variants})
+    # The item shows the housing with its shaft running across the icon toward the
+    # viewer's right, the way Create's clutch item does. The upright shaft is turned a
+    # quarter turn around X as part of the whole model, so the housing, its recessed
+    # bearings and every adjuster keep their relative places and the model is exactly
+    # the block model rotated, not redrawn.
     model["textures"].update(shaft="create:block/axis", shaft_end="create:block/axis_top")
     shaft = box([6, 0, 6], [10, 16, 10], "shaft", "inventory shaft")
     for side in ("up", "down"):
         shaft["faces"][side]["texture"] = "#shaft_end"
     model["elements"].append(shaft)
+    turn_model(model)
+    # Guard the orientation the turn exists to produce.
+    sx, sy, sz = (shaft["to"][i] - shaft["from"][i] for i in range(3))
+    assert sz > sy and sz > sx, f"item shaft is not horizontal: {sx} x {sy} x {sz}"
+    assert not any("rotation" in e for e in model["elements"]), "item model keeps element rotations"
     write("models/item/brass_clutch.json", model)
 
-    # A chamfered annular steel plate with segmented brown friction pads.
-    ring = [(5, 2, 11, 4), (3, 4, 13, 6), (2, 6, 6, 10),
-            (10, 6, 14, 10), (3, 10, 13, 12), (5, 12, 11, 14)]
-    elements = []
-    for x1, z1, x2, z2 in ring:
-        elements.append(box([x1, 7, z1], [x2, 8, z2], "steel", "steel backing"))
-        elements.append(box([x1 + .35, 8, z1 + .25], [x2 - .35, 8.6, z2 - .25], "friction", "friction pad"))
+    friction_plate_texture()
     write("models/item/composite_friction_plate.json", {
-        "parent": "minecraft:block/block", "gui_light": "front",
-        "textures": {"steel": "minecraft:block/iron_block", "friction": "minecraft:block/brown_terracotta",
-                     "particle": "minecraft:block/brown_terracotta"},
-        "display": {"gui": {"rotation": [35, 225, 0], "translation": [0, 0, 0], "scale": [1.05, 1.05, 1.05]},
-                    "ground": {"translation": [0, 3, 0], "scale": [.5, .5, .5]},
-                    "firstperson_righthand": {"rotation": [0, 45, 0], "scale": [.65, .65, .65]},
-                    "thirdperson_righthand": {"rotation": [75, 45, 0], "translation": [0, 2.5, 0], "scale": [.5, .5, .5]},
-                    "fixed": {"rotation": [90, 0, 0], "scale": [.8, .8, .8]}},
-        "elements": elements})
+        "parent": "minecraft:item/generated",
+        "textures": {"layer0": "differentialcreate:item/composite_friction_plate"}})
 
 
 if __name__ == "__main__":

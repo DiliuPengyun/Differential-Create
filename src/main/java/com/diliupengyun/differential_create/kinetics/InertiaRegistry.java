@@ -24,13 +24,6 @@ public final class InertiaRegistry {
 	/** Default inertia for machines that have no explicit entry. */
 	public static final float DEFAULT_INERTIA = 0.01f;
 
-	/**
-	 * Inertia per sail block of a windmill (su/RPM³). Tuning entry: this is
-	 * what makes big windmills slow to spin up and slow to stop (DESIGN.md
-	 * §9.3). 16 sails ≈ 0.18 total → several seconds to full speed.
-	 */
-	public static final float SAIL_INERTIA = 0.01f;
-
 	private static Map<Block, Float> overrides;
 
 	private InertiaRegistry() {}
@@ -48,49 +41,30 @@ public final class InertiaRegistry {
 			for (var network : level.values()) ((INetworkDynamics) network).differentialcreate$data().invalidate();
 	}
 
-	public static float getInertia(KineticBlockEntity kbe) {
+	/** The fixed machine/source rotor is independent of its assembled structure's mass. */
+	public static float getBaseInertia(KineticBlockEntity kbe) {
 		ensureInitialized();
-		float inertia = overrides.getOrDefault(kbe.getBlockState().getBlock(), DEFAULT_INERTIA);
-		if (kbe instanceof WindmillBearingBlockEntity windmill) inertia += SAIL_INERTIA * getSailCount(windmill);
-		for (var entity : attachments(kbe)) {
-			if (entity == null || entity.getContraption() == null) continue;
-			for (var block : entity.getContraption().getBlocks().values())
-				if (block.state().getBlock() instanceof com.simibubi.create.content.kinetics.base.IRotate)
-					inertia += overrides.getOrDefault(block.state().getBlock(), DEFAULT_INERTIA);
-		}
-		return inertia;
+		return overrides.getOrDefault(kbe.getBlockState().getBlock(), DEFAULT_INERTIA);
 	}
 
-	private static com.simibubi.create.content.contraptions.AbstractContraptionEntity[] attachments(KineticBlockEntity be) {
-		if (be instanceof com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity bearing)
-			return new com.simibubi.create.content.contraptions.AbstractContraptionEntity[]{bearing.getMovedContraption(), null};
-		if (be instanceof com.simibubi.create.content.contraptions.piston.LinearActuatorBlockEntity actuator)
-			return new com.simibubi.create.content.contraptions.AbstractContraptionEntity[]{actuator.movedContraption, null};
-		if (be instanceof com.diliupengyun.differential_create.mixin.ClockworkBearingAccessor clock)
-			return new com.simibubi.create.content.contraptions.AbstractContraptionEntity[]{clock.differentialcreate$hour(), clock.differentialcreate$minute()};
-		return new com.simibubi.create.content.contraptions.AbstractContraptionEntity[]{null, null};
+	public static float getInertia(KineticBlockEntity kbe) {
+		double inertia = getBaseInertia(kbe);
+		inertia += ContraptionPhysics.inertia(kbe);
+		if (ContraptionPhysics.awaitingEntity(kbe)) {
+			var state = ElasticKinetics.state(kbe);
+			int count = ContraptionPhysics.drives(kbe).size();
+			if (Float.isFinite(state.pendingStructureInertia) && (count < state.pendingStructureCount || kbe.getLevel().isClientSide))
+				inertia = Math.max(inertia, state.pendingStructureInertia);
+			else if (count == 0 && Float.isFinite(state.pendingBearingInertia)) inertia = Math.max(inertia, state.pendingBearingInertia);
+		}
+		return (float) inertia;
 	}
 
 	public static void checkAttachments(KineticBlockEntity be) {
-		if (!(be instanceof com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity)
-			&& !(be instanceof com.simibubi.create.content.contraptions.piston.LinearActuatorBlockEntity)
-			&& !(be instanceof com.diliupengyun.differential_create.mixin.ClockworkBearingAccessor)) return;
-		var entities = attachments(be);
-		MemberState member = ((IMemberDynamics) be).differentialcreate$member();
-		if (entities[0] == member.attachmentA && entities[1] == member.attachmentB) return;
-		member.attachmentA = entities[0];
-		member.attachmentB = entities[1];
-		if (be.hasNetwork()) {
-			NetworkData data = ((INetworkDynamics) be.getOrCreateNetwork()).differentialcreate$data();
-			data.invalidate();
-		}
+		ContraptionPhysics.checkAttachments(be);
 	}
 
-	/**
-	 * Sails of the assembled windmill contraption (DESIGN.md §9: the bearing
-	 * aggregates J = base + sails × J_sail). Recomputed every call, so
-	 * assembly/disassembly applies on the next tick with no event.
-	 */
+	/** Sail count controls wind torque; inertia uses every mounted cube and its radius. */
 	public static int getSailCount(WindmillBearingBlockEntity windmill) {
 		ControlledContraptionEntity contraption =
 			((MechanicalBearingAccessor) windmill).differentialcreate$getMovedContraption();
@@ -109,8 +83,10 @@ public final class InertiaRegistry {
 		overrides.put(AllBlocks.WATER_WHEEL.get(), 0.15f); // τ ≈ 0.0375 min ≈ 2.3 s
 		overrides.put(AllBlocks.LARGE_WATER_WHEEL.get(), 0.4f); // τ ≈ 0.0125 min ≈ 0.75 s
 		overrides.put(AllBlocks.POWERED_SHAFT.get(), 0.1f); // retained rotor inertia, including after steam shuts off
-		overrides.put(AllBlocks.WINDMILL_BEARING.get(), 0.02f); // base + per-sail SAIL_INERTIA
+		overrides.put(AllBlocks.WINDMILL_BEARING.get(), 0.02f); // rotor; assembled structure is measured separately
 		overrides.put(AllBlocks.FLYWHEEL.get(), 0.5f);
+		// The pair of heavy crushing rotors each carries ten ordinary machines' inertia.
+		overrides.put(AllBlocks.CRUSHING_WHEEL.get(), 0.1f);
 
 		// Inertialess transmission blocks
 		inertialess(AllBlocks.SHAFT.get());

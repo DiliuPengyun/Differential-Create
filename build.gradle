@@ -36,6 +36,11 @@ repositories {
         url = "https://maven.blamejared.com"
         content { includeGroup "mezz.jei" }
     }
+    // Development profiling mods.
+    maven {
+        url = "https://api.modrinth.com/maven"
+        content { includeGroup "maven.modrinth" }
+    }
 }
 
 base {
@@ -142,6 +147,9 @@ dependencies {
 
     // JEI for viewing recipes during development.
     localRuntime "mezz.jei:jei-${minecraft_version}-neoforge:${jei_version}"
+
+    // Spark for measuring actual TPS and profiling development runs.
+    localRuntime "maven.modrinth:spark:${spark_version}"
 
     // Create's compile-time dependencies (types referenced from Create's classes)
     compileOnly "dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}"

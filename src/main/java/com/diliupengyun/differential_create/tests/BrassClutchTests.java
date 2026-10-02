@@ -57,7 +57,9 @@ final class BrassClutchTests {
 		for (int sign : new int[]{1, -1}) {
 			int z = sign == 1 ? 3 : 11;
 			motor(helper, new BlockPos(2, 3, z), sign * 256);
-			helper.setBlock(new BlockPos(3, 3, z), AllBlocks.SHAFT.getDefaultState()
+			// The stronger friction surface needs stored input momentum to keep
+			// slipping during the first tick after attaching the second flywheel.
+			helper.setBlock(new BlockPos(3, 3, z), AllBlocks.FLYWHEEL.getDefaultState()
 				.setValue(BlockStateProperties.AXIS, Direction.Axis.X));
 			BlockPos pos = new BlockPos(4, 3, z);
 			helper.setBlock(pos, ModContent.BRASS_CLUTCH.getDefaultState()
@@ -67,7 +69,7 @@ final class BrassClutchTests {
 			NetworkTopology.mark(clutch);
 			clutches.add(clutch);
 		}
-		helper.startSequence().thenExecuteAfter(40, () -> {
+		helper.startSequence().thenExecuteAfter(120, () -> {
 			for (int i = 0; i < clutches.size(); i++) {
 				var clutch = clutches.get(i);
 				near(helper, 512, Math.abs(clutch.getSpeed()), .1, "brass clutch input is already at high speed");
@@ -103,12 +105,12 @@ final class BrassClutchTests {
 				var clutch = clutches.get(i);
 				var flywheel = flywheels.get(i);
 				helper.assertFalse(clutch.isRemoved() || flywheel.isRemoved(), "hot attachment preserves the clutch and flywheel");
-				helper.assertTrue(flywheel.getSpeed() * clutch.getSpeed() > 0 && Math.abs(flywheel.getSpeed()) < 2,
+				helper.assertTrue(flywheel.getSpeed() * clutch.getSpeed() > 0 && Math.abs(flywheel.getSpeed()) < 55,
 					"flywheel starts accelerating in the driven direction with finite friction torque: input="
 					+ clutch.getSpeed() + ", output=" + flywheel.getSpeed() + ", torque="
 					+ state(clutch).differentialcreate$getLastCouplingTorque());
 				helper.assertFalse(state(clutch).differentialcreate$isLocked(), "hot attachment makes the friction surface slip");
-				near(helper, 1024, Math.abs(state(clutch).differentialcreate$getLastCouplingTorque()), .1,
+				near(helper, 32768, Math.abs(state(clutch).differentialcreate$getLastCouplingTorque()), .1,
 					"brass clutch remains within its friction capacity");
 			}
 		}).thenExecuteAfter(20, () -> {
@@ -116,7 +118,7 @@ final class BrassClutchTests {
 				var clutch = clutches.get(i);
 				var flywheel = flywheels.get(i);
 				helper.assertFalse(clutch.isRemoved() || flywheel.isRemoved(), "continued high-speed slip stays stable");
-				helper.assertTrue(Math.abs(flywheel.getSpeed()) > 20 && Math.abs(flywheel.getSpeed()) < 40,
+				helper.assertTrue(Math.abs(flywheel.getSpeed()) > 250 && Math.abs(flywheel.getSpeed()) < 512,
 					"attached flywheel gains speed gradually over subsequent ticks");
 				assertCompactGoggles(helper, clutch);
 			}
@@ -146,7 +148,7 @@ final class BrassClutchTests {
 		helper.startSequence().thenExecuteAfter(5, () -> {
 			for (int i = 0; i < clutches.size(); i++) {
 				var clutch = clutches.get(i);
-				near(helper, 1024, ClutchPhysics.torqueLimit(clutch), 0, "default brass rating");
+				near(helper, 32768, ClutchPhysics.torqueLimit(clutch), 0, "default brass rating");
 				near(helper, 0, InertiaRegistry.getInertia(clutch), 0, "transmission inertia matches the starter clutch");
 				setSpeed(drivers.get(i), i % 2 == 0 ? 16 : -16);
 				var slot = (ValueBoxTransform.Sided) setting(clutch).getSlotPositioning();
@@ -156,10 +158,10 @@ final class BrassClutchTests {
 				helper.assertFalse(setting(clutch).onlyVisibleWithWrench(), "control is visible and accepts interaction without a wrench");
 			}
 			setting(clutches.getFirst()).setValueSettings(player, new ValueSettings(0, 25), false);
-			near(helper, 1024, ClutchPhysics.torqueLimit(clutches.get(1)), 0, "each clutch has its own setting");
+			near(helper, 32768, ClutchPhysics.torqueLimit(clutches.get(1)), 0, "each clutch has its own setting");
 		}).thenExecuteAfter(30, () -> {
 			var first = clutches.getFirst();
-			near(helper, 256, ClutchPhysics.torqueLimit(first), 0, "25 percent pressure");
+			near(helper, 8192, ClutchPhysics.torqueLimit(first), 0, "25 percent pressure");
 			var board = setting(first).createBoard(player,
 				new BlockHitResult(Vec3.atCenterOf(first.getBlockPos()), Direction.EAST, first.getBlockPos(), false));
 			var text = board.formatter().format(new ValueSettings(0, 25));
@@ -194,7 +196,7 @@ final class BrassClutchTests {
 			}
 		}).thenExecuteAfter(4, () -> {
 			for (var clutch : clutches) {
-				near(helper, 256.0 * 8 / 15, ClutchPhysics.torqueLimit(clutch), 1e-9, "redstone multiplies stored pressure");
+				near(helper, 8192.0 * 8 / 15, ClutchPhysics.torqueLimit(clutch), 1e-9, "redstone multiplies stored pressure");
 				assertCompactGoggles(helper, clutch);
 				signal(helper, clutch, 15);
 			}
@@ -294,19 +296,24 @@ final class BrassClutchTests {
 				assertLoaded(helper, clutches.get(i), motors.get(i), outputs.get(i), history.get(i).getFirst());
 				setting((BrassClutchBlockEntity) clutches.get(i)).setValue(25);
 			}
-			near(helper, 0, outputs.get(2).getSpeed(), 1e-6, "the same load stalls the starter clutch");
-			near(helper, 32, Math.abs(state(clutches.get(2)).differentialcreate$getLastCouplingTorque()), .01, "starter capacity remains 32");
-		}).thenExecuteAfter(10, () -> {
+			assertLoaded(helper, clutches.get(2), motors.get(2), outputs.get(2), history.get(2).getFirst());
+			signal(helper, clutches.get(2), 14);
+		}).thenExecuteAfter(120, () -> {
+			near(helper, 0, outputs.get(2).getSpeed(), 1e-6, "weak redstone engagement cannot carry the 128-torque load");
+			near(helper, 1024.0 / 15, Math.abs(state(clutches.get(2)).differentialcreate$getLastCouplingTorque()), .01,
+				"starter slip obeys its reduced capacity");
 			for (int i = 0; i < 2; i++) {
 				assertLoaded(helper, clutches.get(i), motors.get(i), outputs.get(i), history.get(i).getFirst());
-				setting((BrassClutchBlockEntity) clutches.get(i)).setValue(10);
+				setting((BrassClutchBlockEntity) clutches.get(i)).setValue(5);
+				signal(helper, clutches.get(i), 14);
 			}
 		}).thenExecuteAfter(10, () -> {
 			for (int i = 0; i < 2; i++) {
 				var clutch = clutches.get(i);
 				helper.assertFalse(state(clutch).differentialcreate$isLocked(), "reducing pressure below load releases the lock");
 				helper.assertTrue(Math.abs(motors.get(i).getSpeed() - outputs.get(i).getSpeed()) > .001, "overload permits independent rotor speeds");
-				near(helper, 102.4, Math.abs(state(clutch).differentialcreate$getLastCouplingTorque()), .02, "slip obeys the manual ceiling");
+				near(helper, 32768 * .05 / 15, Math.abs(state(clutch).differentialcreate$getLastCouplingTorque()), .02,
+					"slip obeys the combined manual and redstone ceiling");
 				setting((BrassClutchBlockEntity) clutch).setValue(50);
 				signal(helper, clutch, 15);
 			}
@@ -318,7 +325,7 @@ final class BrassClutchTests {
 		}).thenExecuteAfter(120, () -> {
 			for (int i = 0; i < 2; i++) {
 				assertLoaded(helper, clutches.get(i), motors.get(i), outputs.get(i), history.get(i).getFirst());
-				near(helper, 512.0 * 8 / 15, ClutchPhysics.torqueLimit(clutches.get(i)), 1e-9, "restored pressure retains analog redstone control");
+				near(helper, 16384.0 * 8 / 15, ClutchPhysics.torqueLimit(clutches.get(i)), 1e-9, "restored pressure retains analog redstone control");
 				setting((BrassClutchBlockEntity) clutches.get(i)).setValue(0);
 			}
 		}).thenExecuteAfter(4, () -> {
@@ -333,7 +340,12 @@ final class BrassClutchTests {
 		BlockPos basinPos = new BlockPos(8, 1, 8), pressPos = basinPos.above(2);
 		helper.setBlock(basinPos, AllBlocks.BASIN.getDefaultState());
 		helper.setBlock(pressPos, AllBlocks.MECHANICAL_PRESS.getDefaultState().setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST));
-		motor(helper, pressPos.west(), 32);
+		// Bound the startup contact torque while the real powered basin recipe runs.
+		motor(helper, pressPos.west(3), 32);
+		helper.setBlock(pressPos.west(2), ModContent.BRASS_CLUTCH.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+		var clutch = (ClutchBlockEntity) helper.getBlockEntity(pressPos.west(2));
+		clutch.source = helper.absolutePos(pressPos.west(3)); NetworkTopology.mark(clutch);
+		helper.setBlock(pressPos.west(), AllBlocks.SHAFT.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
 		BasinBlockEntity basin = helper.getBlockEntity(basinPos);
 		var ingredients = List.of(AllItems.IRON_SHEET.asStack(), new ItemStack(Items.LEATHER),
 			AllItems.POWDERED_OBSIDIAN.asStack(), new ItemStack(Items.SLIME_BALL));
@@ -349,16 +361,19 @@ final class BrassClutchTests {
 			for (int slot = 0; slot < basin.getInputInventory().getSlots(); slot++)
 				helper.assertTrue(basin.getInputInventory().getStackInSlot(slot).isEmpty(), "press consumes exactly one of each ingredient");
 			var recipe = (CraftingRecipe) helper.getLevel().getRecipeManager().byKey(id("crafting/brass_clutch")).orElseThrow().value();
-			var grid = new ArrayList<ItemStack>(List.of(AllBlocks.CLUTCH.asStack(), AllBlocks.BRASS_CASING.asStack(),
-				AllItems.PRECISION_MECHANISM.asStack(), ModContent.COMPOSITE_FRICTION_PLATE.asStack(),
-				ModContent.COMPOSITE_FRICTION_PLATE.asStack(), ModContent.COMPOSITE_FRICTION_PLATE.asStack(),
-				ModContent.COMPOSITE_FRICTION_PLATE.asStack(), ItemStack.EMPTY, ItemStack.EMPTY));
+			var grid = new ArrayList<ItemStack>(List.of(ItemStack.EMPTY, AllBlocks.BRASS_CASING.asStack(), ItemStack.EMPTY,
+				ModContent.COMPOSITE_FRICTION_PLATE.asStack(), AllBlocks.CLUTCH.asStack(), ModContent.COMPOSITE_FRICTION_PLATE.asStack(),
+				ItemStack.EMPTY, AllBlocks.BRASS_CASING.asStack(), ItemStack.EMPTY));
 			CraftingInput input = CraftingInput.of(3, 3, grid);
-			helper.assertTrue(recipe.matches(input, helper.getLevel()), "upgrade accepts the starter clutch and four plates");
+			helper.assertTrue(recipe.matches(input, helper.getLevel()), "ordered upgrade accepts a clutch flanked by two plates between two brass casings");
 			var result = recipe.assemble(input, helper.getLevel().registryAccess());
 			helper.assertTrue(result.is(ModContent.BRASS_CLUTCH.asItem()) && result.getCount() == 1, "upgrade produces one brass clutch");
-			grid.set(6, ItemStack.EMPTY);
-			helper.assertFalse(recipe.matches(CraftingInput.of(3, 3, grid), helper.getLevel()), "three plates cannot satisfy the four-plate upgrade");
+			grid.set(3, ItemStack.EMPTY);
+			helper.assertFalse(recipe.matches(CraftingInput.of(3, 3, grid), helper.getLevel()), "a missing plate cannot satisfy the ordered upgrade");
+			var rotated = new ArrayList<ItemStack>(List.of(ItemStack.EMPTY, ModContent.COMPOSITE_FRICTION_PLATE.asStack(), ItemStack.EMPTY,
+				AllBlocks.BRASS_CASING.asStack(), AllBlocks.CLUTCH.asStack(), AllBlocks.BRASS_CASING.asStack(),
+				ItemStack.EMPTY, ModContent.COMPOSITE_FRICTION_PLATE.asStack(), ItemStack.EMPTY));
+			helper.assertFalse(recipe.matches(CraftingInput.of(3, 3, rotated), helper.getLevel()), "a pattern turned onto its side cannot satisfy the vertical upgrade");
 			BlockPos pos = new BlockPos(14, 2, 8);
 			helper.setBlock(pos, ModContent.BRASS_CLUTCH.getDefaultState());
 			var loot = net.minecraft.world.level.block.Block.getDrops(helper.getBlockState(pos), helper.getLevel(),
@@ -417,7 +432,7 @@ final class BrassClutchTests {
 	}
 
 	private static void assertLoaded(GameTestHelper helper, ClutchBlockEntity clutch, KineticBlockEntity motor, KineticBlockEntity output, double[] before) {
-		helper.assertFalse(clutch.isRemoved(), "brass clutch survives engagement");
+		helper.assertFalse(clutch.isRemoved(), "loaded clutch survives engagement");
 		helper.assertTrue(motor.getOrCreateNetwork() == output.getOrCreateNetwork(), "loaded clutch connects both networks");
 		helper.assertTrue(Math.abs(output.getSpeed()) > 10, "loaded factory reaches operating speed");
 		double duration = (helper.getTick() - before[0]) * RotationMath.TICK_MINUTES;

@@ -58,6 +58,7 @@ public final class NetworkDynamics {
 	}
 
 	public static void writeNetworkDynamics(KineticBlockEntity be, CompoundTag tag, boolean clientPacket) {
+		ContraptionPhysics.write(be, tag);
 		if (clientPacket && MachineActivity.manages(be)) tag.putBoolean("DCMachineWorking", MachineActivity.active(be));
 		if (be instanceof IPumpDynamics pump) tag.putFloat("DCPumpHead", pump.differentialcreate$head());
 		if (be instanceof IClutchDynamics clutch) {
@@ -90,6 +91,7 @@ public final class NetworkDynamics {
 	}
 
 	public static void readNetworkDynamics(CompoundTag tag, boolean clientPacket, KineticBlockEntity be) {
+		ContraptionPhysics.read(be, tag, clientPacket);
 		if (clientPacket && tag.contains("DCMachineWorking"))
 			((IMemberDynamics) be).differentialcreate$member().machineActive = tag.getBoolean("DCMachineWorking");
 		if (be instanceof IClutchDynamics clutch) {

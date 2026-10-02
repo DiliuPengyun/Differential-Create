@@ -4,11 +4,11 @@ package com.diliupengyun.differential_create.client;
 public final class FreeShaftRotation {
 	private RotationFrame frame;
 
-	public RotationFrame frame() {
+	public synchronized RotationFrame frame() {
 		return frame;
 	}
 
-	public RotationFrame resolve(RotationFrame connected, float freeSpeed, int tick, double renderTick, boolean frozen) {
+	public synchronized RotationFrame resolve(RotationFrame connected, float freeSpeed, int tick, double renderTick, boolean frozen) {
 		if (connected != null) {
 			frame = connected;
 		} else {

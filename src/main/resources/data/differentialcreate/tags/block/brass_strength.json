@@ -1,0 +1,18 @@
+{
+  "replace": false,
+  "values": [
+    "create:brass_encased_shaft",
+    "create:brass_encased_cogwheel",
+    "create:brass_encased_large_cogwheel",
+    "create:rotation_speed_controller",
+    "create:sequenced_gearshift",
+    "create:mechanical_arm",
+    "create:mechanical_crafter",
+    "create:crushing_wheel",
+    "create:clockwork_bearing",
+    "create:elevator_pulley",
+    "create:flywheel",
+    "create:powered_shaft",
+    "differentialcreate:brass_clutch"
+  ]
+}

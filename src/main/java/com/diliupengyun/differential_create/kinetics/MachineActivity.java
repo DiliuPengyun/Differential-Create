@@ -1,12 +1,8 @@
 package com.diliupengyun.differential_create.kinetics;
 
-import com.diliupengyun.differential_create.mixin.ClockworkBearingAccessor;
-import com.diliupengyun.differential_create.mixin.LinearActuatorAccessor;
 import com.diliupengyun.differential_create.mixin.SawBlockEntityAccessor;
 import com.simibubi.create.AllRecipeTypes;
 import com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity;
-import com.simibubi.create.content.contraptions.bearing.WindmillBearingBlockEntity;
-import com.simibubi.create.content.contraptions.piston.LinearActuatorBlockEntity;
 import com.simibubi.create.content.kinetics.KineticNetwork;
 import com.simibubi.create.content.kinetics.base.BlockBreakingKineticBlockEntity;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
@@ -39,8 +35,7 @@ public final class MachineActivity {
 			|| be instanceof SawBlockEntity || be instanceof DrillBlockEntity
 			|| be instanceof DeployerBlockEntity || be instanceof MechanicalCrafterBlockEntity
 			|| be instanceof ArmBlockEntity || be instanceof EjectorBlockEntity
-			|| be instanceof LinearActuatorBlockEntity || be instanceof ClockworkBearingAccessor
-			|| be instanceof MechanicalBearingBlockEntity && !(be instanceof WindmillBearingBlockEntity);
+			|| ContraptionPhysics.manages(be);
 	}
 
 	/** Capture a cycle's final working tick even if it returns to idle during its tick. */
@@ -68,6 +63,7 @@ public final class MachineActivity {
 		if (be.getLevel() == null) return false;
 		if (be.getLevel().isClientSide) return state.machineActive;
 		if (be instanceof CrushingWheelBlockEntity) return working(be);
+		if (be instanceof MechanicalBearingBlockEntity) return working(be);
 		ShaftWork work = MachineWork.of(be);
 		if (work != null) return Double.isFinite(work.differentialcreate$remainingTravel());
 		return state.lastWorkingTick == be.getLevel().getGameTime() || working(be);
@@ -75,13 +71,18 @@ public final class MachineActivity {
 
 	/** Keep Create's rated stress value separate from this tick's physical torque. */
 	public static float impact(KineticBlockEntity be) {
+		if (ContraptionPhysics.manages(be)) return (float) ContraptionPhysics.workTorque(be);
 		return manages(be) && !active(be) ? 0 : Math.max(0, be.calculateStressApplied());
 	}
 
 	/** Actual sustained shaft resistance at this speed; accelerating inertia is separate. */
 	public static double loadTorque(KineticBlockEntity be, double speed) {
 		double impact = impact(be);
-		return be instanceof EncasedFanBlockEntity ? impact * Math.pow(speed / PhysicsTuning.FAN_ANCHOR_RPM, 2) : impact;
+		return (be instanceof EncasedFanBlockEntity ? 0 : impact) + quadraticDrag(be) * speed * speed;
+	}
+	public static double quadraticDrag(KineticBlockEntity be) {
+		return ContraptionPhysics.airDrag(be) + (be instanceof EncasedFanBlockEntity
+			? impact(be) / Math.pow(PhysicsTuning.FAN_ANCHOR_RPM, 2) : 0);
 	}
 
 	/** Sample only machines with an operation state; invalidate balances only on transitions. */
@@ -90,8 +91,12 @@ public final class MachineActivity {
 		for (KineticBlockEntity be : data.activityMembers) {
 			if (be.isRemoved()) continue;
 			MemberState state = ((IMemberDynamics) be).differentialcreate$member();
+			ContraptionPhysics.checkAttachments(be);
 			boolean active = active(be);
-			if (state.machineActivityKnown && state.machineActive == active) continue;
+			double drag = ContraptionPhysics.airDrag(be), load = ContraptionPhysics.workTorque(be);
+			if (state.machineActivityKnown && state.machineActive == active
+				&& drag == state.sampledStructureDrag && load == state.sampledStructureLoad) continue;
+			state.sampledStructureDrag = drag; state.sampledStructureLoad = load;
 			state.machineActive = active;
 			state.machineActivityKnown = true;
 			data.invalidate();
@@ -100,6 +105,7 @@ public final class MachineActivity {
 	}
 
 	public static boolean working(KineticBlockEntity be) {
+		if (ContraptionPhysics.manages(be)) return !ContraptionPhysics.drives(be).isEmpty();
 		if (be instanceof MechanicalPressBlockEntity press)
 			return press.getPressingBehaviour() != null && press.getPressingBehaviour().running;
 		if (be instanceof MechanicalMixerBlockEntity mixer) return mixer.running;
@@ -142,13 +148,6 @@ public final class MachineActivity {
 			return phase.equals("MOVE_TO_INPUT") || phase.equals("MOVE_TO_OUTPUT") || phase.equals("DANCING");
 		}
 		if (be instanceof EjectorBlockEntity ejector) return ejector.getState() != EjectorBlockEntity.State.CHARGED;
-		if (be instanceof LinearActuatorBlockEntity actuator)
-			return actuator.running && !((LinearActuatorAccessor) actuator).differentialcreate$waiting()
-				&& !((LinearActuatorAccessor) actuator).differentialcreate$passive();
-		if (be instanceof MechanicalBearingBlockEntity bearing)
-			return bearing.isRunning() && bearing.getMovedContraption() != null;
-		if (be instanceof ClockworkBearingAccessor clock)
-			return clock.differentialcreate$hour() != null || clock.differentialcreate$minute() != null;
 		return false;
 	}
 

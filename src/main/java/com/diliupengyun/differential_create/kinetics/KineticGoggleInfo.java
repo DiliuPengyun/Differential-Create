@@ -3,6 +3,8 @@ package com.diliupengyun.differential_create.kinetics;
 import java.util.List;
 
 import com.diliupengyun.differential_create.client.ClientNetworkSpeeds;
+import com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity;
+import com.simibubi.create.content.contraptions.bearing.WindmillBearingBlockEntity;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.gauge.SpeedGaugeBlockEntity;
 import com.simibubi.create.content.kinetics.speedController.SpeedControllerBlockEntity;
@@ -39,13 +41,20 @@ public final class KineticGoggleInfo {
 
 	private static void appendDynamics(KineticBlockEntity kbe, List<Component> tooltip) {
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.inertia", fmt(InertiaRegistry.getInertia(kbe))));
+		double strength = ElasticKinetics.strengthOf(kbe);
+		tooltip.add(Component.translatable("gui.differentialcreate.goggles.strength",
+			Double.isInfinite(strength) ? "∞" : fmt(strength)));
 		if (kbe instanceof PoweredShaftBlockEntity) {
 			double local = NetworkDynamics.preciseSpeed(kbe);
 			SourcePhysics.Curve curve = SourcePhysics.curve(kbe);
 			double torque = curve.torque(local);
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.speed", fmtSigned(local, 1)));
-			String mode = curve.stallTorque() == 0 ? "no_steam" : torque * local < 0 ? "steam_reversing" : "steam_driven";
+			double vent = curve.ventFraction(local);
+			String mode = curve.stallTorque() == 0 ? "no_steam" : torque * local < 0 ? "steam_reversing"
+				: vent > 1e-6 ? "steam_governing" : "steam_driven";
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles." + mode).withStyle(ChatFormatting.GRAY));
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.steam_governor_speed", fmt(PhysicsTuning.STEAM_GOVERNOR_RPM)));
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.steam_venting", fmt1(100 * vent)));
 			appendLoadFactor(kbe, tooltip);
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.torque", fmtSigned(torque, 2)));
 			return;
@@ -84,10 +93,10 @@ public final class KineticGoggleInfo {
 			return;
 		}
 
-		// getSpeed() is the physical local speed on both sides (see the
-		// getSpeed mixin): it is 0 when the network is stalled, which is
-		// exactly when these readouts matter
-		float local = kbe.getSpeed();
+		// A disassembled bearing has no moving output. Its remaining input-side
+		// rotor may still spin, including in the client's last rotor packet.
+		boolean mechanicalBearing = kbe instanceof MechanicalBearingBlockEntity && !(kbe instanceof WindmillBearingBlockEntity);
+		float local = mechanicalBearing && !((MechanicalBearingBlockEntity) kbe).isRunning() ? 0 : kbe.getSpeed();
 
 		if (kbe instanceof WaterWheelBlockEntity || kbe.isSource()) {
 			SourcePhysics.Curve curve = SourcePhysics.curve(kbe);
@@ -109,7 +118,8 @@ public final class KineticGoggleInfo {
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_head", fmt1(pump.differentialcreate$head())));
 		float impact = MachineActivity.impact(kbe);
 		if (impact > 0 || MachineActivity.manages(kbe)) {
-			tooltip.add(Component.translatable("gui.differentialcreate.goggles.speed", fmtSigned(local, 1)));
+			tooltip.add(Component.translatable(mechanicalBearing
+				? "gui.differentialcreate.goggles.bearing_output_speed" : "gui.differentialcreate.goggles.speed", fmtSigned(local, 1)));
 			if (MachineActivity.manages(kbe))
 				tooltip.add(Component.translatable(MachineActivity.active(kbe)
 					? "gui.differentialcreate.goggles.machine_working" : "gui.differentialcreate.goggles.machine_idle"));
@@ -134,7 +144,6 @@ public final class KineticGoggleInfo {
 			transmitted = (float) ElasticKinetics.state(kbe).transmittedTorque;
 		if (transmitted != null)
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.transmitted_torque", fmtSigned(transmitted, 2)));
-		tooltip.add(Component.translatable("gui.differentialcreate.goggles.strength", fmt(ElasticKinetics.strengthOf(kbe))));
 	}
 
 	private static void appendEnergy(KineticBlockEntity kbe, List<Component> tooltip) {
@@ -142,13 +151,30 @@ public final class KineticGoggleInfo {
 		double energy = 0.5 * InertiaRegistry.getInertia(kbe) * local * local;
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.local_energy", fmt(energy)));
 		Double networkEnergy = null;
+		Double localElasticEnergy = null, networkElasticEnergy = null;
 		if (kbe.getLevel() != null) {
-			if (kbe.getLevel().isClientSide) networkEnergy = ClientNetworkSpeeds.energyOf(kbe);
-			else if (kbe.hasNetwork()) networkEnergy = ElasticKinetics.kineticEnergy(kbe.getOrCreateNetwork());
+			if (kbe.getLevel().isClientSide) {
+				networkEnergy = ClientNetworkSpeeds.energyOf(kbe);
+				localElasticEnergy = ClientNetworkSpeeds.localElasticEnergyOf(kbe);
+				networkElasticEnergy = ClientNetworkSpeeds.elasticEnergyOf(kbe);
+			} else {
+				localElasticEnergy = 0d;
+				if (kbe.hasNetwork()) {
+					var network = kbe.getOrCreateNetwork();
+					networkEnergy = ElasticKinetics.kineticEnergy(network);
+					var elasticEnergy = ElasticKinetics.elasticEnergy(network);
+					localElasticEnergy = elasticEnergy.of(kbe);
+					networkElasticEnergy = elasticEnergy.total();
+				}
+			}
 		}
 		// Missing network state is unknown, even if the local fallback speed is zero.
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.energy",
 			networkEnergy == null ? "—" : fmt(networkEnergy)));
+		tooltip.add(Component.translatable("gui.differentialcreate.goggles.local_elastic_energy",
+			localElasticEnergy == null ? "—" : fmt(localElasticEnergy)));
+		tooltip.add(Component.translatable("gui.differentialcreate.goggles.elastic_energy",
+			networkElasticEnergy == null ? "—" : fmt(networkElasticEnergy)));
 
 		if (kbe instanceof ClutchBlockEntity) {
 			IClutchDynamics clutch = (IClutchDynamics) kbe;
@@ -165,6 +191,8 @@ public final class KineticGoggleInfo {
 			tooltip.add(Component.translatable(power < 0
 				? "gui.differentialcreate.goggles.absorbed_power" : "gui.differentialcreate.goggles.output_power",
 				fmt(Math.abs(power))));
+			if (kbe instanceof PoweredShaftBlockEntity)
+				tooltip.add(Component.translatable("gui.differentialcreate.goggles.steam_vent_power", fmt(curve.ventedPower(local))));
 			return;
 		}
 

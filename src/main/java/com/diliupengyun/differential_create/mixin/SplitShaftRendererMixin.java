@@ -39,7 +39,7 @@ public abstract class SplitShaftRendererMixin {
 			if (member == null) member = clutch;
 			float angle = outputFace
 				? (float) Math.toRadians((ClientClutchAngles.outputRotation(clutch).angleAt(ClientKineticAngles.renderTick())
-					+ KineticBlockEntityRenderer.getRotationOffsetForPosition(member, member.getBlockPos(), axis)) % 360)
+					+ ClientKineticAngles.shaftOffsetOf(member, axis)) % 360)
 				: KineticBlockEntityRenderer.getAngleForBe(member, member.getBlockPos(), axis);
 			var shaft = CachedBuffers.partialFacing(AllPartialModels.SHAFT_HALF, be.getBlockState(), face);
 			KineticBlockEntityRenderer.kineticRotationTransform(shaft, member, axis, angle, light)

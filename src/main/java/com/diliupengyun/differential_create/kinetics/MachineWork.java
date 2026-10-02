@@ -39,7 +39,12 @@ public final class MachineWork {
 	}
 	public static ShaftWork of(KineticBlockEntity be) {
 		if (be instanceof com.simibubi.create.content.kinetics.saw.SawBlockEntity
-			&& be.getBlockState().getValue(BlockStateProperties.FACING) != Direction.UP) return null;
+			&& be.getBlockState().getValue(BlockStateProperties.FACING) != Direction.UP)
+			return be instanceof IBlockBreakingWork breaker ? breaker.differentialcreate$breakingWork() : null;
+		if (be instanceof com.simibubi.create.content.kinetics.drill.DrillBlockEntity
+			&& be instanceof IBlockBreakingWork breaker) return breaker.differentialcreate$breakingWork();
+		if (be instanceof com.simibubi.create.content.kinetics.mechanicalArm.ArmBlockEntity
+			&& !MachinePhase.of(be).startsWith("MOVE_TO_")) return null;
 		if (be instanceof MechanicalPressBlockEntity press)
 			return (ShaftWork) press.getPressingBehaviour();
 		return be instanceof ShaftWork work ? work : null;
@@ -47,10 +52,17 @@ public final class MachineWork {
 	public static List<Binding> collect(List<KineticNetwork> networks) {
 		var result = new LinkedHashMap<ShaftWork, Binding>();
 		for (var network : networks)
-			for (var be : ((INetworkDynamics) network).differentialcreate$data().activityMembers) {
+			for (var be : network.members.keySet()) {
 				if (be.isRemoved()) continue;
 				ShaftWork work = of(be);
-				if (work != null) result.put(work, new Binding(work, be));
+				if (work != null) result.put(work, new Binding(work, work.differentialcreate$workShaft(be)));
+				ContraptionPhysics.checkAttachments(be);
+				for (var drive : ContraptionPhysics.drives(be))
+					for (var actor : drive.entity().getContraption().getActors())
+						if (actor.getRight() != null) {
+							var actorWork = ContraptionActorWork.of(actor.getRight());
+							result.put(actorWork, new Binding(actorWork, be));
+						}
 				if (be instanceof CrushingWheelBlockEntity wheel)
 					for (Direction face : Direction.values()) {
 						if (face.getAxis() == wheel.getBlockState().getValue(BlockStateProperties.AXIS)) continue;

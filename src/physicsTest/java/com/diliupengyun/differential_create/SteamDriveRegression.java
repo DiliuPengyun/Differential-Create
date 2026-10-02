@@ -2,6 +2,9 @@ package com.diliupengyun.differential_create;
 
 import java.util.List;
 import com.diliupengyun.differential_create.kinetics.DriveTorque;
+import com.diliupengyun.differential_create.kinetics.PhysicsTuning;
+import com.diliupengyun.differential_create.kinetics.SteamGovernor;
+import com.diliupengyun.differential_create.client.SteamExhaustAnimation;
 import com.diliupengyun.differential_create.kinetics.TorsionSolver;
 import com.diliupengyun.differential_create.kinetics.TorsionSolver.Body;
 import com.diliupengyun.differential_create.kinetics.TorsionSolver.Link;
@@ -69,7 +72,84 @@ public final class SteamDriveRegression {
             near(POWER * .01, after - before, 1e-3, "geared network kinetic plus spring energy equals steam work");
             check(result.speed()[0] > initial[0], "coupled steam drive accelerates above its rated speed");
         }
+        governor();
+        exhaust();
         System.out.println("Steam drive regression: " + checks + " checks passed");
+    }
+
+    private static void governor() {
+        double limit = PhysicsTuning.STEAM_GOVERNOR_RPM, range = PhysicsTuning.STEAM_GOVERNOR_RANGE;
+        for (int sign : new int[]{-1, 1}) {
+            for (double speed : new double[]{0, 128, RATED, limit - range})
+                near(DriveTorque.torque(sign * TORQUE, POWER, sign * speed),
+                    governedTorque(sign * TORQUE, POWER, sign * speed), 0, "governor preserves startup and full-power drive");
+            for (double speed : new double[]{limit, limit + .1, 8192, 1e7}) {
+                near(0, governedTorque(sign * TORQUE, POWER, sign * speed), 0, "closed admission has no forward drive or braking");
+                var result = isolated(List.of(governedBody(sign, 0)), sign * speed, .05, H);
+                near(sign * speed, result.speed()[0], 0, "external overspeed is preserved without an artificial clamp");
+            }
+            for (double speed : new double[]{limit - range + 1, limit - range / 2, limit - 1}) {
+                double x = sign * speed, epsilon = 1e-4;
+                double numericalSlope = (governedTorque(sign * TORQUE, POWER, x - epsilon)
+                    - governedTorque(sign * TORQUE, POWER, x + epsilon)) / (2 * epsilon);
+                near(numericalSlope, DriveTorque.slope(sign * TORQUE, POWER, x, limit, range), 1e-7,
+                    "implicit tangent includes changing admission in either direction");
+                double start = sign * speed;
+                var step = isolated(List.of(governedBody(sign, 0)), start, DT, DT);
+                double midpoint = (start + step.speed()[0]) / 2;
+                double work = .5 * J * (step.speed()[0] * step.speed()[0] - start * start);
+                double bypass = POWER * (1 - SteamGovernor.opening(sign * TORQUE, midpoint, limit, range)) * DT;
+                near(POWER * DT, work + bypass, 1e-8, "shaft work plus bypass loss equals supplied power in the regulation band");
+            }
+            var natural = isolated(List.of(governedBody(sign, 0)), 0, .25, H);
+            check(sign * natural.speed()[0] > limit - .01 && sign * natural.speed()[0] <= limit,
+                "natural unloaded acceleration settles at the governor target");
+            var reverse = isolated(List.of(governedBody(sign, 0)), -sign * 8192, DT, H);
+            near(-sign * 8192 + sign * TORQUE * DT / J, reverse.speed()[0], 1e-8,
+                "overspeed in the old direction does not disable commanded reversal");
+            near(1, SteamGovernor.opening(sign * TORQUE, -sign * 8192, limit, range), 0,
+                "reversal uses steam instead of bypassing it");
+
+            double load = 128, equilibrium = limit * POWER / (POWER + load * range);
+            var loaded = isolated(List.of(governedBody(sign, load)), sign * limit, .25, H);
+            near(sign * equilibrium, loaded.speed()[0], 1e-7, "load reopens admission and reaches torque balance below target");
+            var released = isolated(List.of(governedBody(sign, 0)), loaded.speed()[0], .05, H);
+            check(sign * released.speed()[0] > equilibrium && sign * released.speed()[0] <= limit,
+                "unloading returns towards the target without overshooting it");
+        }
+        // Regulation runs inside the same solver as the elastic, geared network.
+        var bodies = List.of(governedBody(1, 0), new Body(.2, 0, 0, 0, 0));
+        var links = List.of(new Link(0, 1, -2, 1e7, 0, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY));
+        var result = TorsionSolver.advance(bodies, links, new double[]{8192, -16384}, new double[1], .01, H);
+        near(8192, result.speed()[0], 1e-8, "closed engine preserves a coupled rotor's overspeed");
+        near(0, result.twist()[0], 1e-12, "bypass creates no hidden shaft reaction");
+    }
+
+    private static Body governedBody(int sign, double load) {
+        return new Body(J, sign * TORQUE, 0, load, 0, POWER,
+            PhysicsTuning.STEAM_GOVERNOR_RPM, PhysicsTuning.STEAM_GOVERNOR_RANGE);
+    }
+    private static double governedTorque(double torque, double power, double speed) {
+        return DriveTorque.torque(torque, power, speed, PhysicsTuning.STEAM_GOVERNOR_RPM, PhysicsTuning.STEAM_GOVERNOR_RANGE);
+    }
+    private static void exhaust() {
+        int previous = -1;
+        for (double flow : new double[]{0, .125, .25, .5, .75, 1}) {
+            var animation = new SteamExhaustAnimation();
+            int total = 0;
+            for (int tick = 0; tick < 20; tick++) total += animation.advance(flow);
+            check(total > previous, "stronger bypass produces more exhaust particles over time");
+            near(40 * flow, total, 0, "particle budget follows actual steam flow, including passive heat");
+            previous = total;
+        }
+        var weak = new SteamExhaustAnimation();
+        int total = 0;
+        for (int tick = 0; tick < 1000; tick++) total += weak.advance(.001);
+        check(total >= 1 && total <= 2, "tiny bypass flow accumulates instead of emitting a whole puff every tick");
+        near(0, weak.advance(0), 0, "cutting steam immediately stops the added exhaust");
+        near(0, weak.advance(Double.NaN), 0, "missing or invalid flow produces no particles");
+        near(0, weak.advance(-1), 0, "negative flow produces no particles");
+        near(2, weak.advance(1), 0, "full bypass restarts cleanly after a supply interruption");
     }
 
     private static TorsionSolver.Result isolated(List<Body> bodies, double speed, double duration, double step) {

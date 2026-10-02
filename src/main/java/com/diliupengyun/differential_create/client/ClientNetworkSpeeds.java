@@ -31,7 +31,7 @@ public final class ClientNetworkSpeeds {
 
 	private static final Map<ResourceKey<Level>, Map<Long, Entry>> networks = new HashMap<>();
 	private static final Map<ResourceKey<Level>, Map<BlockPos, Long>> memberToNetwork = new HashMap<>();
-	private record Phase(double previous, double current, RotationFrame frame) {}
+	private record Phase(double previous, double current, RotationFrame frame, Rotor rotor) {}
 	private static final Map<ResourceKey<Level>, Map<BlockPos, Phase>> retiredPhases = new HashMap<>();
 
 	private ClientNetworkSpeeds() {}
@@ -40,6 +40,7 @@ public final class ClientNetworkSpeeds {
 	private static final class Entry {
 		final Map<BlockPos, Rotor> rotors = new HashMap<>();
 		double kineticEnergy = Double.NaN;
+		double elasticEnergy = Double.NaN;
 		LoadFactor.Reading loadFactor = LoadFactor.Reading.UNKNOWN;
 		final Map<BlockPos, Float> ratios = new HashMap<>();
 		float speed;
@@ -87,19 +88,23 @@ public final class ClientNetworkSpeeds {
 	}
 
 	private static final class Rotor {
-		float speed, torque;
-		double angle;
-		RotationFrame frame;
+		float speed, torque, steamVent;
+		double elasticEnergy = Double.NaN;
+		final RotorAnimation animation = new RotorAnimation();
 	}
 
 	public static void applyRotors(ResourceKey<Level> dimension, RotorStatePayload payload) {
 		Entry entry = networks.computeIfAbsent(dimension, $ -> new HashMap<>())
 			.computeIfAbsent(payload.networkId(), $ -> new Entry());
 		entry.kineticEnergy = payload.energy();
+		entry.elasticEnergy = payload.elasticEnergy();
 		entry.loadFactor = payload.loadFactor();
 		for (var update : payload.rotors()) {
 			Rotor rotor = entry.rotors.computeIfAbsent(update.pos(), $ -> new Rotor());
-			rotor.speed = update.speed(); rotor.torque = update.torque(); rotor.angle = update.angle();
+			rotor.speed = update.speed(); rotor.torque = update.torque();
+			rotor.steamVent = update.steamVent();
+			rotor.elasticEnergy = update.elasticEnergy();
+			rotor.animation.receive(update.angle());
 		}
 	}
 
@@ -110,7 +115,7 @@ public final class ClientNetworkSpeeds {
 		Map<BlockPos, Phase> phases = retiredPhases.computeIfAbsent(dimension, $ -> new HashMap<>());
 		if (old != null)
 			old.ratios.forEach((pos, ratio) -> phases.put(pos, new Phase(old.previousTheta * ratio, old.theta * ratio,
-				old.renderFrame == null ? null : old.renderFrame.scaled(ratio))));
+				old.renderFrame == null ? null : old.renderFrame.scaled(ratio), old.rotors.get(pos))));
 		Map<BlockPos, Long> members = memberToNetwork.get(dimension);
 		if (members != null)
 			members.values()
@@ -135,13 +140,18 @@ public final class ClientNetworkSpeeds {
 		}
 		entry.rotationDirty = true;
 		entry.loadFactor = LoadFactor.Reading.UNKNOWN;
+		entry.elasticEnergy = Double.NaN;
 		entry.ratios.clear();
 		entry.rotors.keySet().retainAll(entries.stream().map(NetworkStructurePayload.Entry::pos).toList());
 		Map<BlockPos, Long> memberMap = memberToNetwork.computeIfAbsent(dimension, $ -> new HashMap<>());
 		for (NetworkStructurePayload.Entry structureEntry : entries) {
+			Phase phase = phases.get(structureEntry.pos());
+			if (phase != null && phase.rotor != null) entry.rotors.putIfAbsent(structureEntry.pos(), phase.rotor);
 			entry.ratios.put(structureEntry.pos(), structureEntry.ratio());
 			memberMap.put(structureEntry.pos(), networkId);
 		}
+		// Preserve animation across a rebuild, but wait for the new contact energies.
+		entry.rotors.values().forEach(rotor -> rotor.elasticEnergy = Double.NaN);
 	}
 
 	public static void applyState(ResourceKey<Level> dimension, NetworkStatePayload payload) {
@@ -152,7 +162,7 @@ public final class ClientNetworkSpeeds {
 		entry.hasState = true;
 	}
 
-	/** Applied every client tick: advances all extrapolations one tick. */
+	/** Plays local server angle segments; aggregate extrapolation is only an unsynced fallback. */
 	public static void onClientTick() {
 		retiredPhases.clear();
 		Minecraft minecraft = Minecraft.getInstance();
@@ -178,13 +188,12 @@ public final class ClientNetworkSpeeds {
 		Map<Long, Entry> levelNetworks = networks.get(dimension);
 		if (levelNetworks != null) {
 			int renderTick = minecraft.levelRenderer.getTicks();
+			double partialRenderTick = ClientKineticAngles.renderTick();
 			levelNetworks.forEach((id, entry) -> {
 				if (!entry.hasState) return;
 				entry.rotors.forEach((pos, rotor) -> {
 					boolean frozen = level.tickRateManager().isFrozen();
-					double advance = frozen ? 0 : rotor.speed * .3;
-					rotor.frame = new RotationFrame(renderTick, rotor.angle, advance);
-					rotor.angle += advance;
+					rotor.animation.advance(renderTick, partialRenderTick, frozen);
 				});
 				if (!entry.rotors.isEmpty()) entry.rotationDirty = true;
 				if (level.tickRateManager().isFrozen())
@@ -221,6 +230,13 @@ public final class ClientNetworkSpeeds {
 		return ratio == null ? null : ratio * entry.speed;
 	}
 
+	/** Server-measured bypass flow; unavailable data must not invent an exhaust plume. */
+	public static Float steamVentOf(KineticBlockEntity be) {
+		Entry entry = entryOf(be);
+		Rotor rotor = entry == null ? null : entry.rotors.get(be.getBlockPos());
+		return rotor == null ? null : rotor.steamVent;
+	}
+
 	/**
 	 * Accumulated assembly-aligned rotation angle of a member in degrees,
 	 * or null when unsynced. Drives the continuous-animation offset
@@ -235,7 +251,7 @@ public final class ClientNetworkSpeeds {
 		Entry entry = entryOf(kbe);
 		if (entry != null) {
 			Rotor rotor = entry.rotors.get(kbe.getBlockPos());
-			if (rotor != null && rotor.frame != null) return rotor.frame;
+			if (rotor != null && rotor.animation.frame() != null) return rotor.animation.frame();
 		}
 		if (entry == null || entry.renderFrame == null)
 			return null;
@@ -262,6 +278,17 @@ public final class ClientNetworkSpeeds {
 		Entry entry = entryOf(be);
 		if (entry != null && Double.isFinite(entry.kineticEnergy)) return entry.kineticEnergy;
 		return entry == null ? null : 0.5 * entry.balance.j() * entry.speed * entry.speed;
+	}
+
+	public static Double elasticEnergyOf(KineticBlockEntity be) {
+		Entry entry = entryOf(be);
+		return entry == null || !Double.isFinite(entry.elasticEnergy) ? null : entry.elasticEnergy;
+	}
+
+	public static Double localElasticEnergyOf(KineticBlockEntity be) {
+		Entry entry = entryOf(be);
+		Rotor rotor = entry == null ? null : entry.rotors.get(be.getBlockPos());
+		return rotor == null || !Double.isFinite(rotor.elasticEnergy) ? null : rotor.elasticEnergy;
 	}
 
 	public static Float transmittedTorqueOf(KineticBlockEntity be) {

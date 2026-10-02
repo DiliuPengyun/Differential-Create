@@ -5,6 +5,7 @@ import com.diliupengyun.differential_create.kinetics.ClutchControl;
 import com.diliupengyun.differential_create.kinetics.ClutchCoupling;
 import com.diliupengyun.differential_create.kinetics.ClutchCoupling.Shaft;
 import com.diliupengyun.differential_create.kinetics.WorkAccumulator;
+import com.diliupengyun.differential_create.kinetics.FanProcessingRate;
 
 /** Independent analytical expectations, runnable without Minecraft or a test framework. */
 public final class PhysicsRegression {
@@ -13,14 +14,24 @@ public final class PhysicsRegression {
 		TorsionRegression.run();
 		ClutchEngagementRegression.run();
 		SolverPrecisionRegression.run();
+		SnapshotRegression.run();
+		BoundarySearchRegression.run();
 		ShaftReplacementRegression.run();
 		SteamDriveRegression.run();
 		LoadFactorRegression.run();
 		shaftTravel();
-		near(32, ClutchControl.torqueLimit(0), 0, "unpowered clutch retains full torque capacity");
+		ActorContactRegression.run();
+		contraptionGeometry();
+		near(0, FanProcessingRate.at(0), 0, "stopped fan grants no processing");
+		near(1, FanProcessingRate.at(64), 0, "fan reference throughput");
+		near(1.6, FanProcessingRate.at(128), 1e-12, "fan throughput has diminishing returns");
+		near(FanProcessingRate.at(16), FanProcessingRate.at(-16), 0, "flow magnitude controls processing");
+		near(0, FanProcessingRate.at(Double.NaN), 0, "invalid fan speed grants no processing");
+		near(4, FanProcessingRate.at(1e12), 1e-8, "high-speed fan approaches finite throughput");
+		near(1024, ClutchControl.torqueLimit(0), 0, "unpowered clutch retains full torque capacity");
 		near(0, ClutchControl.torqueLimit(15), 0, "full redstone completely releases the clutch");
-		near(32.0 / 15, ClutchControl.torqueLimit(14), 1e-12, "weakest engagement still transfers limited torque");
-		near(224.0 / 15, ClutchControl.torqueLimit(8), 1e-12, "intermediate redstone sets a torque ceiling");
+		near(1024.0 / 15, ClutchControl.torqueLimit(14), 1e-12, "weakest engagement still transfers limited torque");
+		near(7168.0 / 15, ClutchControl.torqueLimit(8), 1e-12, "intermediate redstone sets a torque ceiling");
 		near(1, ClutchControl.engagement(-1), 0, "signal below range clamps to full engagement");
 		near(0, ClutchControl.engagement(16), 0, "signal above range clamps to disengaged");
 		clutchCoupling();
@@ -123,6 +134,65 @@ public final class PhysicsRegression {
 			}
 	}
 
+	private static void contraptionGeometry() {
+		var origin = new com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell(0, 0, 0);
+		var single = com.diliupengyun.differential_create.kinetics.ContraptionGeometry.measure(java.util.Set.of(origin));
+		for (int axis = 0; axis < 3; axis++) {
+			near(.0001, single.rotationInertia()[axis], 1e-15, "trial unit cube intrinsic inertia");
+			near(1 / (409600.0 * 3 * Math.sqrt(3)), single.rotationDrag()[axis], 1e-15, "trial cube air coefficient with finite-size face quadrature");
+			near(1, single.translationArea()[axis], 0, "unit cube projected area");
+			if (single.rotationDrag()[axis] <= 0) throw new AssertionError("on-axis cube still has air resistance");
+		}
+		var rod = com.diliupengyun.differential_create.kinetics.ContraptionGeometry.measure(java.util.Set.of(origin,
+			new com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell(1, 0, 0)));
+		near(.0002, rod.rotationInertia()[0], 1e-15, "axial length adds mass without adding centre radius");
+		near(.0008, rod.rotationInertia()[1], 1e-15, "parallel-axis law");
+		near(1, rod.translationArea()[0], 0, "shared internal faces add no frontal drag");
+		near(2, rod.translationArea()[1], 0, "broadside exposed area");
+		near(2 * single.linearInertia(), rod.linearInertia(), 1e-15, "translation depends on total mass");
+		near(.0006 * Math.pow(1200 / (512 * 2 * Math.PI), 2), single.linearInertia(), 1e-15, "trial translation uses the same lighter mass");
+		var offset = com.diliupengyun.differential_create.kinetics.ContraptionGeometry.measure(java.util.Set.of(
+			new com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell(0, 3, 0)));
+		near(.0055, offset.rotationInertia()[0], 1e-15, "radius squared affects rotational inertia");
+		near(single.linearInertia(), offset.linearInertia(), 0, "translation is independent of distance from the anchor");
+		near(.0006 * 9, single.translatedInertia(0, 3, 0), 1e-15, "stabilized cube has orbital translation and no intrinsic spin");
+		near(single.translatedInertia(0, 3, 0), offset.translatedInertia(0, 3, 0), 0, "child's own offset does not change uniform translation");
+		near(0, rod.translatedInertia(0, 0, 0), 0, "coaxial stabilized payload has no moving mass");
+		near(0, rod.translatedDrag(0, 0, 0), 0, "coaxial stabilized payload has no air loss");
+		near(1.0 / 409600, rod.translatedDrag(1, 0, 0), 1e-15, "stabilized rod's frontal drag excludes its internal faces");
+		near(2.0 / 409600, rod.translatedDrag(0, 1, 0), 1e-15, "stabilized rod's broadside drag uses its actual orientation");
+		near(25 * (3 + 2 * 4) / 409600.0, rod.translatedDrag(3, 4, 0), 1e-15, "oblique translation projects velocity onto each face normal");
+		near(rod.translatedDrag(3, 4, 0), rod.translatedDrag(-3, -4, 0), 0, "child drag opposes either travel direction");
+		near(.25 * rod.translatedInertia(3, 4, 0), rod.translatedInertia(1.5, 2, 0), 1e-15, "hand gearing folds child inertia by its square");
+		near(.125 * rod.translatedDrag(3, 4, 0), rod.translatedDrag(1.5, 2, 0), 1e-15, "hand gearing folds child air torque by its cube");
+		if (offset.rotationDrag()[0] <= single.rotationDrag()[0]) throw new AssertionError("radius increases air torque");
+		double speed = 64, inertia = offset.rotationInertia()[0], drag = offset.rotationDrag()[0];
+		double after = RotationMath.advance(speed, 0, 0, 0, inertia, drag, .1);
+		near(speed / (1 + speed * drag * .1 / inertia), after, 1e-12, "pure air coasting has no fixed friction threshold");
+		near(-after, RotationMath.advance(-speed, 0, 0, 0, inertia, drag, .1), 1e-12, "air opposes either direction");
+		near(0, RotationMath.advance(0, 0, 0, 0, inertia, drag, .1), 0, "air cannot accelerate a stationary structure");
+		for (int size : new int[]{9, 17}) {
+			var cubes = new java.util.HashSet<com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell>();
+			for (int x = -size / 2; x <= size / 2; x++) for (int z = -size / 2; z <= size / 2; z++)
+				cubes.add(new com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell(x, 0, z));
+			var square = com.diliupengyun.differential_create.kinetics.ContraptionGeometry.measure(cubes);
+			near(.0001 * Math.pow(size, 4), square.rotationInertia()[1], 1e-10, "solid square retains geometric fourth-power scaling with trial mass");
+			double total = .01 + square.rotationInertia()[1], air = square.rotationDrag()[1];
+			double early = size == 9 ? 2 : 30, late = size == 9 ? 3 : 36;
+			near(0, Math.max(0, RotationMath.advance(0, 1024, 0, 0, total, air, early / 60) - 64), 0,
+				"finite torque still gives the trial square a measurable startup interval");
+			near(0, Math.max(0, 64 - RotationMath.advance(0, 1024, 0, 0, total, air, late / 60)), 0,
+				"trial mass and air together reach the proposed 64 RPM startup range");
+		}
+		var arm = new java.util.HashSet<com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell>();
+		for (int z = 0; z <= 68; z++) arm.add(new com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell(0, 0, z));
+		for (int x = -43; x < 0; x++) arm.add(new com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell(x, 0, 68));
+		var longArm = com.diliupengyun.differential_create.kinetics.ContraptionGeometry.measure(arm);
+		near(200.0512, longArm.rotationInertia()[1], 1e-8, "112-cube historical L arm keeps its full radius contribution at trial mass");
+		double terminal = RotationMath.equilibrium(1024, 0, 0, longArm.rotationDrag()[1]);
+		near(0, Math.max(0, Math.max(6 - terminal, terminal - 6.5)), 0.0, "trial air raises the historical L arm's 1024-torque equilibrium to about 6.22 RPM");
+	}
+
 	private static void mergeConservation() {
 		for (double q : new double[]{-16, -2, -1, -0.5, -0.0625, 0.0625, 0.5, 1, 2, 16})
 			for (double[] inertia : new double[][]{{0, 0}, {0, 0.01}, {0.16, 0},
@@ -174,12 +244,12 @@ public final class PhysicsRegression {
 		Shaft stopped = new Shaft(0, 0, 0, 0, 0.01, 0, 1);
 		near(11.25, ClutchCoupling.torque(rotor, stopped, 32), 1e-7,
 			"unloaded synchronization agrees with conservation of angular momentum");
-		Shaft motor = new Shaft(0, 32, 1, 0, 0.0375, 0, 1);
-		Shaft load = new Shaft(0, 0, 0, 8, 0.01, 0, 1);
+		Shaft motor = new Shaft(0, 32768, 1024, 0, 0.0375, 0, 1);
+		Shaft load = new Shaft(0, 0, 0, 128, 0.01, 0, 1);
 		double weak = ClutchControl.torqueLimit(14);
 		near(weak, ClutchCoupling.torque(motor, load, weak), 0,
 			"insufficient pressure reaches its torque ceiling against a stalled load");
-		near(0, step(0, weak, 0, 8, 0.01, 0), 0, "insufficient pressure cannot defeat static friction");
+		near(0, step(0, weak, 0, 128, 0.01, 0), 0, "insufficient pressure cannot defeat static friction");
 		Shaft fanDriver = new Shaft(10, 30, 1, 0, 0.0375, 0, 1);
 		Shaft fan = new Shaft(10, 0, 0, 0, 0.01, 0.2, 1);
 		near(20, ClutchCoupling.torque(fanDriver, fan, 32), 1e-7,
