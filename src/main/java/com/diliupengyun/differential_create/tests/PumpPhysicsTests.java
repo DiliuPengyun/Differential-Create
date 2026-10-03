@@ -562,6 +562,61 @@ public final class PumpPhysicsTests {
         return amount;
     }
 
+    @GameTest(template = TEMPLATE, batch = "pump_filling", timeoutTicks = 220)
+    public static void drySuctionWaitsForEnoughPressure(GameTestHelper h) {
+        BlockPos pumpPos = new BlockPos(7, 1, 8), tankPos = pumpPos.east(), corner = pumpPos.west();
+        var pipes = new java.util.ArrayList<BlockPos>();
+        for (int y = 0; y <= 26; y++) h.setBlock(tankPos.above(y), AllBlocks.FLUID_TANK.getDefaultState());
+        pipe(h, corner, Direction.EAST, Direction.UP); pipes.add(corner);
+        for (int y = 1; y < 26; y++) {
+            h.setBlock(corner.above(y), AllBlocks.GLASS_FLUID_PIPE.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.Y));
+            pipes.add(corner.above(y));
+        }
+        pipe(h, corner.above(26), Direction.DOWN, Direction.EAST); pipes.add(corner.above(26));
+        pipe(h, pumpPos.above(26), Direction.WEST, Direction.EAST); pipes.add(pumpPos.above(26));
+        h.setBlock(pumpPos, AllBlocks.MECHANICAL_PUMP.getDefaultState().setValue(PumpBlock.FACING, Direction.EAST)); pipes.add(pumpPos);
+        h.setBlock(pumpPos.south(), AllBlocks.COGWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+        h.setBlock(pumpPos.south().west(), AllBlocks.SHAFT.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+        h.setBlock(pumpPos.south().west(2), AllBlocks.CREATIVE_MOTOR.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
+        CreativeMotorBlockEntity motor = h.getBlockEntity(pumpPos.south().west(2)); motor.generatedSpeed.setValue(0);
+        FluidTankBlockEntity tank = h.getBlockEntity(tankPos);
+        h.runAfterDelay(20, () -> {
+            tank.getTankInventory().fill(new FluidStack(Fluids.WATER, 16000), FluidAction.EXECUTE);
+            suctionSpeed(motor, 32);
+        });
+        h.runAfterDelay(70, () -> {
+            PumpBlockEntity pump = h.getBlockEntity(pumpPos);
+            h.assertTrue(Math.abs(Math.abs(pump.getSpeed()) - 64) < .1, "test uses 16-m suction at 64 RPM");
+            h.assertTrue(pipes.stream().mapToDouble(pos -> pipeOwned(h, pos)).sum() == 0
+                && tank.getTankInventory().getFluidAmount() == 16000, "insufficient pressure leaves water at the upper source mouth");
+            h.assertTrue(FluidKinetics.state(pump.getBehaviour(FluidTransportBehaviour.TYPE)).pumpFlow == 0
+                && ((IPumpDynamics) pump).differentialcreate$torque() == 0, "stationary source front has exact zero flow and fluid load");
+            var saved = pump.saveWithoutMetadata(h.getLevel().registryAccess());
+            var restored = pump.getType().create(pump.getBlockPos(), pump.getBlockState());
+            restored.loadWithComponents(saved, h.getLevel().registryAccess());
+            h.getLevel().removeBlockEntity(pump.getBlockPos()); h.getLevel().setBlockEntity(restored);
+        });
+        h.runAfterDelay(100, () -> {
+            h.assertTrue(pipes.stream().mapToDouble(pos -> pipeOwned(h, pos)).sum() == 0
+                && tank.getTankInventory().getFluidAmount() == 16000, "cold reload preserves the unsupported stationary front");
+            suctionSpeed(motor, 64);
+        });
+        h.runAfterDelay(180, () -> {
+            double owned = pipes.stream().mapToDouble(pos -> pipeOwned(h, pos)).sum();
+            h.assertTrue(owned > 100, "increased pump pressure reopens the cached dry source and admits actual water");
+            h.assertTrue(Math.abs(tank.getTankInventory().getFluidAmount() + owned - 16000) < 1e-6,
+                "a shared upper/lower tank conserves inventory while priming the loop");
+            h.succeed();
+        });
+    }
+
+    private static void suctionSpeed(CreativeMotorBlockEntity motor, int setting) {
+        motor.generatedSpeed.setValue(setting); NetworkTopology.flush();
+        var ratios = ((INetworkDynamics) motor.getOrCreateNetwork()).differentialcreate$getRatios();
+        double speed = SourcePhysics.curve(motor).noLoadSpeed(); float reference = ratios.get(motor);
+        ratios.forEach((be, ratio) -> ElasticKinetics.state(be).physicalSpeed = speed * ratio / reference);
+    }
+
     @GameTest(template = TEMPLATE, batch = "pump_filling", timeoutTicks = 460)
     public static void insufficientHeadFillsLowerPipes(GameTestHelper h) {
         Fixture f = fixture(h, false, false);

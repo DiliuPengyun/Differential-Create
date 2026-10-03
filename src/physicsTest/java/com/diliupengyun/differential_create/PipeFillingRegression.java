@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Random;
 import com.diliupengyun.differential_create.kinetics.IdealFluidSolver;
 import com.diliupengyun.differential_create.kinetics.FluidBudget;
+import com.diliupengyun.differential_create.kinetics.FluidPressureBounds;
 import com.diliupengyun.differential_create.kinetics.PipeContents;
 import com.diliupengyun.differential_create.kinetics.PipeFilling;
 import com.diliupengyun.differential_create.kinetics.ReducedFluidGraph;
@@ -15,7 +16,7 @@ public final class PipeFillingRegression {
     private static final IdealFluidSolver.Material WATER = new IdealFluidSolver.Material(1000, false);
     private static int checks;
     public static void run() {
-        intervals(); massAndEnergy(); branches(); residualAtMouth(); sharedInventory(); receiptCapacity(); pumpTangent(); reduction();
+        intervals(); massAndEnergy(); branches(); residualAtMouth(); sharedInventory(); receiptCapacity(); pumpTangent(); reduction(); drySuction();
         System.out.println("Pipe filling regression: " + checks + " checks passed");
     }
     private static void intervals() {
@@ -30,6 +31,64 @@ public final class PipeFillingRegression {
         near(.3, PipeContents.of(0, .4).move(-.1, 0).fraction(), 1e-15, "a water column can retreat");
         near(.4, PipeContents.of(0, .4).move(0, 0).fraction(), 0, "stopped water remains in its pipe");
         near(.4, PipeContents.of(0, .6).interpolate(PipeContents.of(0, .2), .5).fraction(), 1e-15, "front animation interpolates actual owned water");
+    }
+    private static void drySuction() {
+        var edges = List.of(new IdealFluidSolver.Edge(0, 1, WATER.inertia(1)), new IdealFluidSolver.Edge(1, 2, WATER.inertia(26)));
+        var graph = new ReducedFluidGraph(3, edges, new boolean[]{true, false, true}, new boolean[]{true, true});
+        var contacts = List.of(new FluidPressureBounds.Contact(2, -WATER.gravityForce(26)));
+        for (double minutes : new double[]{IdealFluidSolver.MAX_STEP, 1e-9, 1e-15}) {
+            for (double weight : new double[]{1, 1e-6, 1e-12}) {
+                double[] mass = {WATER.inertia(1) * weight, WATER.inertia(26) * weight};
+                double[] force = {-WATER.gravityForce(13), 0}, pressure = new double[3];
+                boolean[] pinned = FluidPressureBounds.solve(graph, new double[2], mass, force, pressure, contacts, minutes);
+                near(-WATER.gravityForce(13), pressure[2], 1e-12, "insufficient suction holds the front at its source mouth");
+                if (!pinned[2]) throw new AssertionError("unsupported dry suction must impose a stationary front");
+                var stopped = new ReducedFluidGraph(3, edges, new boolean[]{true, false, false}, new boolean[]{true, true})
+                    .sample(new double[2], mass, force, pressure, minutes);
+                near(0, stopped.flow()[0], 0, "stationary suction owns no artificial minimum flow");
+                near(0, stopped.forceWork(), 0, "holding a source front exchanges no work");
+                force[0] = -WATER.gravityForce(40);
+                pinned = FluidPressureBounds.solve(graph, new double[2], mass, force, pressure, contacts, minutes);
+                near(-WATER.gravityForce(26), pressure[2], 1e-12, "sufficient suction uses the inventory liquid datum");
+                if (pinned[2]) throw new AssertionError("higher pump pressure must reopen a supported suction front");
+                var flowing = graph.sample(new double[2], mass, force, pressure, minutes);
+                if (!(flowing.outward()[2] > 0)) throw new AssertionError("sufficient suction actually admits water");
+                force[0] = WATER.gravityForce(13);
+                FluidPressureBounds.solve(graph, new double[2], mass, force, pressure, contacts, minutes);
+                near(0, pressure[2], 0, "outgoing empty space borrows no liquid pressure or energy");
+            }
+        }
+        double[] movingMass = {WATER.inertia(1), WATER.inertia(26)}, movingInitial = {1.5, 1.5};
+        double movingMinutes = IdealFluidSolver.MAX_STEP;
+        double[] movingForce = {-WATER.gravityForce(13) - 2 * (movingMass[0] + movingMass[1]) * movingInitial[0] / movingMinutes, 0};
+        double[] movingPressure = new double[3];
+        FluidPressureBounds.solve(graph, movingInitial, movingMass, movingForce, movingPressure, contacts, movingMinutes);
+        var turning = graph.sample(movingInitial, movingMass, movingForce, movingPressure, movingMinutes);
+        near(-1.5, turning.flow()[0], 1e-12, "moving liquid keeps its inertia across a zero-net-transfer contact step");
+        near(0, turning.projectionLoss(), 0, "a suction pressure balance cannot discard existing kinetic energy");
+        near(0, turning.energyChange(), 1e-12, "a zero-transfer turn preserves fluid kinetic energy");
+        Random random = new Random(0xD1252026);
+        for (int sample = 0; sample < 200; sample++) {
+            var branch = List.of(new IdealFluidSolver.Edge(0, 1, 1), new IdealFluidSolver.Edge(0, 2, 1), new IdealFluidSolver.Edge(0, 3, 1));
+            var branched = new ReducedFluidGraph(4, branch, new boolean[]{false, true, true, true}, new boolean[]{true, true, true});
+            var mouths = new java.util.ArrayList<>(List.of(new FluidPressureBounds.Contact(1, -1 - random.nextDouble() * 80),
+                new FluidPressureBounds.Contact(2, -1 - random.nextDouble() * 80)));
+            if (sample % 3 == 0) mouths.add(new FluidPressureBounds.Contact(3, -1 - random.nextDouble() * 80));
+            double[] mass = {1 + random.nextDouble() * 20, 1 + random.nextDouble() * 20, 1 + random.nextDouble() * 20};
+            double[] force = {random.nextDouble() * 100 - 50, random.nextDouble() * 100 - 50, random.nextDouble() * 100 - 50};
+            double[] pressure = new double[4]; double minutes = sample % 2 == 0 ? .001 : 1e-14;
+            boolean[] pinned = FluidPressureBounds.solve(branched, new double[3], mass, force, pressure, mouths, minutes);
+            var motion = branched.sample(new double[3], mass, force, pressure, minutes);
+            for (var mouth : mouths) {
+                int node = mouth.node(); double q = motion.outward()[node];
+                if (pressure[node] < mouth.liquidPressure() - 1e-12 || pressure[node] > 1e-12)
+                    throw new AssertionError("dry contact pressure stays between liquid and empty-space datums");
+                if (pinned[node]) near(0, q, 1e-12 * minutes, "multiple stationary fronts preserve junction continuity");
+                else if (pressure[node] == 0 && q > 1e-12 * minutes || pressure[node] == mouth.liquidPressure() && q < -1e-12 * minutes)
+                    throw new AssertionError("a moving dry front uses the pressure of its actual incoming phase");
+                checks++;
+            }
+        }
     }
     private static void massAndEnergy() {
         Random random = new Random(0xF1112026);

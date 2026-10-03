@@ -435,6 +435,7 @@ public final class FluidKinetics {
             boolean[] enabled = new boolean[connections.size()]; Arrays.fill(enabled, true);
             boolean[] borders = boundary.clone();
             double[] force = new double[enabled.length], couplings = new double[enabled.length], supplied = new double[boundary.length];
+            var contacts = new ArrayList<FluidPressureBounds.Contact>();
             Arrays.fill(pressure, 0);
             for (var endpoint : endpoints) supplied[endpoint.node] = endpoint.available(fluid, 1) > VOLUME_EPSILON ? 1 : 0;
             for (int e = 0; e < enabled.length; e++) {
@@ -454,6 +455,9 @@ public final class FluidKinetics {
                     double liquid = guess[e] < 0 ? supplied[c.to] : contents[e].atEnd() ? 1 : 0;
                     if (guess[e] == 0 && c.endpoint.referenceHeight > c.endpoint.faceHeight) liquid = supplied[c.to];
                     pressure[c.to] = liquid * material.gravityForce(c.endpoint.referenceHeight - c.endpoint.faceHeight);
+                    double liquidPressure = material.gravityForce(c.endpoint.referenceHeight - c.endpoint.faceHeight);
+                    if (!contents[e].atEnd() && supplied[c.to] != 0 && liquidPressure < 0)
+                        contacts.add(new FluidPressureBounds.Contact(c.to, liquidPressure));
                 }
             }
             IdealFluidSolver.Trial trial = null; PipeFilling.Move move = null;
@@ -491,7 +495,20 @@ public final class FluidKinetics {
                         applied[e] += slope * (origin[e] - guess[e]);
                     }
                 }
-                trial = graph.sample(origin, averageMass, applied, pressure, minutes);
+                var motionGraph = graph;
+                if (!contacts.isEmpty()) {
+                    boolean[] pinned = FluidPressureBounds.solve(graph, origin, averageMass, applied, pressure, contacts, minutes);
+                    boolean[] contactBorders = borders.clone(); boolean holds = false;
+                    for (var contact : contacts) if (pinned[contact.node()]) {
+                        // A stationary dry front constrains zero flow exactly. Existing
+                        // moving water keeps its midpoint pressure solution and inertia.
+                        boolean stationary = true;
+                        for (int e = 0; e < origin.length; e++) if (connections.get(e).to == contact.node() && origin[e] != 0) stationary = false;
+                        if (stationary) { contactBorders[contact.node()] = false; holds = true; }
+                    }
+                    if (holds) motionGraph = graph(contactBorders, enabled);
+                }
+                trial = motionGraph.sample(origin, averageMass, applied, pressure, minutes);
                 boolean changed = false;
                 for (int e = 0; e < enabled.length; e++) if (enabled[e] && connections.get(e).endpoint != null) {
                     Endpoint endpoint = connections.get(e).endpoint; double q = trial.midpoint()[e];
@@ -554,6 +571,10 @@ public final class FluidKinetics {
             }
             if (stationary) {
                 restIndependentSpeed = reduced != null && reduced.stationary();
+                // A suction front reopens when pump pressure overcomes its datum.
+                if (restIndependentSpeed) for (var endpoint : endpoints) if (endpoint.referenceHeight < endpoint.faceHeight
+                    && !state(endpoint.pipe).content(endpoint.side).atEnd() && endpoint.available(fluid, 1) > VOLUME_EPSILON)
+                    restIndependentSpeed = false;
                 restInputs = inputs(null); rest = trial;
             }
         }
