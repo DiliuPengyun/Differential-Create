@@ -37,6 +37,8 @@ Linux 使用 `./gradlew build runGameTestServer`，首次运行需要下载依�
 
 `build` 自动执行独立数值回归，覆盖物理、求解精度、树形求解回退、储能、渲染数学和工具轨迹；`runGameTestServer` 验证真实游戏中的拓扑、配方、物品控制、蒸汽机、水泵和动态结构。测试使用独立的 `run-gametest/`，CI 执行相同检查并保存日志。验证入口见 [设计文档](DESIGN.md#9-验证与维护)。
 
+流体网络专项性能测试使用 `.\gradlew.bat runFluidBenchmarkServer`，测试世界位于 `build/`。可用 `-PfluidPerfCase=loops` 单独测量多泵回路；其他类别为 `straight`、`branches`、`slugs`。场景和测量口径见 [性能记录](docs/FLUID_PERFORMANCE.md)。
+
 ## 当前边界与待办
 
 结构使用等质量方块与外露面平方空气阻力，不模拟真实流场或水阻力。列车、矿车等独立载具及其他附属模组的特殊逻辑尚未全面适配。

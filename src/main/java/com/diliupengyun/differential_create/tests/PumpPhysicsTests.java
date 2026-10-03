@@ -821,6 +821,146 @@ public final class PumpPhysicsTests {
         });
     }
 
+    @GameTest(template = TEMPLATE, batch = "pump_direction", timeoutTicks = 80)
+    public static void coastingSlugCrossesEmptyHorizontalJunction(GameTestHelper h) {
+        coastingJunction(h, false);
+    }
+
+    @GameTest(template = TEMPLATE, batch = "pump_direction", timeoutTicks = 80)
+    public static void coastingSlugPassesEmptyUpperTankBranch(GameTestHelper h) {
+        coastingJunction(h, true);
+    }
+
+    private static void coastingJunction(GameTestHelper h, boolean upperTank) {
+        forceChunks(h);
+        BlockPos centre = new BlockPos(8, 3, 8);
+        for (int x = -4; x <= 4; x++) if (x != 0) pipe(h, centre.east(x), Direction.WEST, Direction.EAST);
+        h.setBlock(centre.west(5), Blocks.STONE); h.setBlock(centre.east(5), Blocks.STONE);
+        if (upperTank) {
+            pipe(h, centre, Direction.WEST, Direction.EAST, Direction.UP);
+            h.setBlock(centre.above(), AllBlocks.FLUID_TANK.getDefaultState());
+        } else {
+            pipe(h, centre, Direction.WEST, Direction.EAST, Direction.NORTH, Direction.SOUTH);
+            for (Direction side : new Direction[]{Direction.NORTH, Direction.SOUTH}) {
+                for (int n = 1; n <= 4; n++) pipe(h, centre.relative(side, n), side, side.getOpposite());
+                h.setBlock(centre.relative(side, 5), Blocks.STONE);
+            }
+        }
+        double[] total = {-1};
+        h.runAfterDelay(10, () -> {
+            for (int x = -4; x <= 4; x++) {
+                var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(centre.east(x)));
+                var state = FluidKinetics.state(pipe); state.fluid = new FluidStack(Fluids.WATER, 1);
+                state.outward.put(Direction.WEST, -16d); state.outward.put(Direction.EAST, 16d);
+            }
+            var moving = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(centre.west(3)));
+            FluidKinetics.state(moving).contents.put(Direction.WEST,
+                com.diliupengyun.differential_create.kinetics.PipeContents.of(.2, .8));
+            total[0] = localOwned(h); FluidKinetics.invalidate(h.getLevel());
+        });
+        h.onEachTick(() -> {
+            if (total[0] < 0) return;
+            h.assertTrue(Math.abs(localOwned(h) - total[0]) < 1e-6, "a freely moving slug retains its complete inventory at the junction");
+            var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(centre));
+            var state = FluidKinetics.state(pipe);
+            for (Direction side : upperTank ? new Direction[]{Direction.UP} : new Direction[]{Direction.NORTH, Direction.SOUTH})
+                h.assertTrue(state.content(side).fraction() == 0, "an unforced dry side branch receives no part of a coasting slug");
+        });
+        h.runAfterDelay(45, () -> {
+            double east = 0; for (int x = 1; x <= 4; x++) east += pipeOwned(h, centre.east(x));
+            h.assertTrue(Math.abs(east - total[0]) < 1e-6, "the entire water packet travels straight through the empty junction");
+            h.succeed();
+        });
+    }
+
+    @GameTest(template = TEMPLATE, batch = "pump_direction", timeoutTicks = 180)
+    public static void tankPressureOpensDryCrossBranches(GameTestHelper h) {
+        forceChunks(h);
+        BlockPos centre = new BlockPos(8, 3, 8), sourcePos = centre.west(5);
+        for (int y = 0; y < 4; y++) h.setBlock(sourcePos.above(y), AllBlocks.FLUID_TANK.getDefaultState());
+        for (int x = -4; x <= 4; x++) if (x != 0) pipe(h, centre.east(x), Direction.WEST, Direction.EAST);
+        h.setBlock(centre.east(5), Blocks.STONE);
+        pipe(h, centre, Direction.WEST, Direction.EAST, Direction.NORTH, Direction.SOUTH);
+        for (Direction side : new Direction[]{Direction.NORTH, Direction.SOUTH}) {
+            for (int n = 1; n <= 4; n++) pipe(h, centre.relative(side, n), side, side.getOpposite());
+            h.setBlock(centre.relative(side, 5), Blocks.STONE);
+        }
+        FluidTankBlockEntity source = h.getBlockEntity(sourcePos);
+        double[] total = {-1};
+        h.runAfterDelay(10, () -> {
+            for (int x = -4; x <= 4; x++) {
+                var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(centre.east(x)));
+                var state = FluidKinetics.state(pipe); state.fluid = new FluidStack(Fluids.WATER, 1);
+                state.contents.put(Direction.WEST, com.diliupengyun.differential_create.kinetics.PipeContents.FULL);
+                state.contents.put(Direction.EAST, com.diliupengyun.differential_create.kinetics.PipeContents.FULL);
+            }
+            source.getTankInventory().fill(new FluidStack(Fluids.WATER, 24000), FluidAction.EXECUTE);
+            total[0] = source.getTankInventory().getFluidAmount() + localOwned(h); FluidKinetics.invalidate(h.getLevel());
+        });
+        h.onEachTick(() -> {
+            if (total[0] >= 0) h.assertTrue(Math.abs(source.getTankInventory().getFluidAmount() + localOwned(h) - total[0]) < 1e-6,
+                "pressure-driven directional contact preserves tank and pipe water");
+        });
+        h.runAfterDelay(130, () -> {
+            double north = 0, south = 0;
+            for (int n = 1; n <= 4; n++) { north += pipeOwned(h, centre.north(n)); south += pipeOwned(h, centre.south(n)); }
+            h.assertTrue(north > 1 && south > 1, "actual tank pressure sends liquid into both initially dry side branches");
+            h.assertTrue(Math.abs(north - south) < 1e-5, "mirror side branches respond equally to the same pressure");
+            h.succeed();
+        });
+    }
+
+    @GameTest(template = TEMPLATE, batch = "pump_direction", timeoutTicks = 340)
+    public static void crossingSlugsKeepFiniteMotionAndEnergy(GameTestHelper h) {
+        forceChunks(h);
+        BlockPos centre = new BlockPos(8, 3, 8);
+        for (int n = -5; n <= 5; n++) if (n != 0) {
+            pipe(h, centre.east(n), Direction.WEST, Direction.EAST);
+            pipe(h, centre.south(n), Direction.NORTH, Direction.SOUTH);
+        }
+        pipe(h, centre, Direction.WEST, Direction.EAST, Direction.NORTH, Direction.SOUTH);
+        for (Direction side : new Direction[]{Direction.WEST, Direction.EAST, Direction.NORTH, Direction.SOUTH})
+            h.setBlock(centre.relative(side, 6), Blocks.STONE);
+        double[] total = {-1}, energy = {-1};
+        h.runAfterDelay(10, () -> {
+            for (int n = -5; n <= 5; n++) {
+                for (var pos : new BlockPos[]{centre.east(n), centre.south(n)}) {
+                    var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(pos));
+                    var state = FluidKinetics.state(pipe); state.fluid = new FluidStack(Fluids.WATER, 1);
+                    for (Direction side : pipe.interfaces.keySet()) state.outward.put(side,
+                        side == Direction.WEST || side == Direction.NORTH ? -16d : 16d);
+                }
+            }
+            for (Direction side : new Direction[]{Direction.WEST, Direction.NORTH}) {
+                var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(centre.relative(side, 3)));
+                FluidKinetics.state(pipe).contents.put(side, com.diliupengyun.differential_create.kinetics.PipeContents.of(.2, .8));
+            }
+            total[0] = localOwned(h); energy[0] = localLiquidEnergy(h); FluidKinetics.invalidate(h.getLevel());
+        });
+        h.onEachTick(() -> {
+            if (total[0] < 0) return;
+            h.assertTrue(Math.abs(localOwned(h) - total[0]) < 1e-6, "crossing liquid fronts keep their actual inventory");
+            double kinetic = localLiquidEnergy(h);
+            h.assertTrue(Double.isFinite(kinetic) && kinetic <= energy[0] + 1e-8,
+                "unpowered horizontal contact cannot create liquid energy");
+        });
+        h.runAfterDelay(310, h::succeed);
+    }
+
+    private static double localLiquidEnergy(GameTestHelper h) {
+        double total = 0, inertia = new IdealFluidSolver.Material(1000, false).inertia(.5);
+        for (int x = 0; x < 16; x++) for (int y = 0; y < 10; y++) for (int z = 0; z < 16; z++) {
+            var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(new BlockPos(x, y, z)));
+            if (pipe == null) continue;
+            var state = FluidKinetics.state(pipe);
+            for (var entry : state.contents.entrySet()) {
+                double q = state.outward.getOrDefault(entry.getKey(), 0d);
+                total += .5 * inertia * entry.getValue().fraction() * q * q;
+            }
+        }
+        return total;
+    }
+
     private static double localOwned(GameTestHelper h) {
         double amount = 0;
         for (int x = 0; x < 16; x++) for (int y = 0; y < 10; y++) for (int z = 0; z < 16; z++) {

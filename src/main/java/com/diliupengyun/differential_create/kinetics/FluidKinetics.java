@@ -312,7 +312,14 @@ public final class FluidKinetics {
         final Map<BlockPos, BlockState> adjacentStates = new HashMap<>();
         final Map<BlockPos, Object> adjacentEntities = new HashMap<>();
         final Level level;
+        private long acceptedSteps, jointIterations, retries;
+        private double shortestStep = Double.POSITIVE_INFINITY;
         Frame(Level level) { this.level = level; }
+        /** Number of live pipes included in this complete level snapshot. */
+        public int pipeCount() { return captured.size(); }
+        public record Metrics(long acceptedSteps, long jointIterations, long retries, double shortestMinutes) {}
+        public void resetMetrics() { acceptedSteps = jointIterations = retries = 0; shortestStep = Double.POSITIVE_INFINITY; }
+        public Metrics metrics() { return new Metrics(acceptedSteps, jointIterations, retries, shortestStep); }
         boolean valid() {
             for (var entry : captured.entrySet()) {
                 var pipe = entry.getKey();
@@ -363,7 +370,7 @@ public final class FluidKinetics {
         public boolean active() { return components.stream().anyMatch(c -> c.active); }
     }
     private record FluidTrial(IdealFluidSolver.Trial motion, PipeFilling.Move filling, double[] origin, double allowed,
-                              boolean equilibrium) {}
+                              boolean equilibrium, DirectionalFluidJunctions.Layout layout) {}
     private static final class Component {
         FluidStack fluid;
         IdealFluidSolver.Material material;
@@ -371,8 +378,7 @@ public final class FluidKinetics {
         final List<Connection> connections;
         final List<Endpoint> endpoints;
         final List<FluidTransportBehaviour> members;
-        final List<IdealFluidSolver.Edge> edges;
-        final List<PipeFilling.Tube> tubes;
+        final DirectionalFluidJunctions junctions;
         final boolean[] boundary;
         final double[] pressure;
         final Map<PumpBlockEntity, Double> axisSigns = new HashMap<>();
@@ -385,10 +391,18 @@ public final class FluidKinetics {
             this.fluid = fluid; material = fluid.isEmpty() ? new IdealFluidSolver.Material(1000, false) : FluidMaterials.of(fluid); this.connections = connections;
             this.endpoints = endpoints; this.members = members;
             int count = 0; for (var c : connections) count = Math.max(count, 1 + Math.max(c.from, c.to));
-            boundary = new boolean[count]; pressure = new double[count];
+            var edges = connections.stream().map(c -> new IdealFluidSolver.Edge(c.from, c.to, material.inertia(c.length))).toList();
+            var tubes = connections.stream().map(c -> new PipeFilling.Tube(c.from, c.to, c.length, c.fromHeight(), c.toHeight())).toList();
+            int[] fromDirections = new int[connections.size()], toDirections = new int[connections.size()];
+            Arrays.fill(fromDirections, -1); Arrays.fill(toDirections, -1);
+            for (int e = 0; e < connections.size(); e++) {
+                var c = connections.get(e);
+                if (c.side != null) fromDirections[e] = c.side.get3DDataValue();
+                if (c.other != null) toDirections[e] = c.side.getOpposite().get3DDataValue();
+            }
+            junctions = new DirectionalFluidJunctions(count, edges, tubes, fromDirections, toDirections);
+            boundary = new boolean[junctions.nodes()]; pressure = new double[boundary.length];
             for (var endpoint : endpoints) boundary[endpoint.node] = true;
-            edges = connections.stream().map(c -> new IdealFluidSolver.Edge(c.from, c.to, material.inertia(c.length))).toList();
-            tubes = connections.stream().map(c -> new PipeFilling.Tube(c.from, c.to, c.length, c.fromHeight(), c.toHeight())).toList();
         }
         void beginTick() {
             // Create's nominal connection datum need not have the drive's direction.
@@ -460,17 +474,14 @@ public final class FluidKinetics {
                 if (c.endpoint != null && c.endpoint.available(fluid, 1) > VOLUME_EPSILON)
                     datum[c.to] = Math.max(0, material.gravityForce(c.endpoint.pressureHeight() - c.endpoint.faceHeight));
             }
-            double[] result = graph(borders, enabled).sample(initial, mass, force, datum, minutes).midpoint();
+            var layout = junctions.select(contents());
+            double[] result = layout.graph(borders, enabled).sample(initial, mass, force, datum, minutes).midpoint();
             double maximum = Arrays.stream(result).map(Math::abs).max().orElse(0), scale = 16;
             for (var c : connections) if (c.pump != null) scale = Math.max(scale, IdealFluidSolver.REFERENCE_FLOW
                 * Math.abs(speed.getOrDefault(c.pump, NetworkDynamics.preciseSpeed(c.pump))) / IdealFluidSolver.REFERENCE_RPM);
             if (maximum > 0 && members.stream().allMatch(pipe -> state(pipe).volume() == 0))
                 for (int e = 0; e < result.length; e++) result[e] *= scale / maximum;
             return result;
-        }
-        ReducedFluidGraph graph(boolean[] borders, boolean[] enabled) {
-            if (reduced == null || !reduced.matches(borders, enabled)) reduced = new ReducedFluidGraph(boundary.length, edges, borders, enabled);
-            return reduced;
         }
         double[] initial() {
             double[] flow = new double[connections.size()];
@@ -489,11 +500,11 @@ public final class FluidKinetics {
             return flow;
         }
         FluidTrial sample(double[] initial, PipeContents[] contents, double[] guess, Map<KineticBlockEntity, Double> speed,
-                          double minutes, Map<KineticBlockEntity, Double> torques) {
+                          double minutes, Map<KineticBlockEntity, Double> torques, DirectionalFluidJunctions.Layout layout) {
             if (!active) return new FluidTrial(new IdealFluidSolver.Trial(new double[connections.size()], new double[connections.size()],
-                new double[boundary.length], new double[boundary.length], 0, 0, 0, 0), null, initial, minutes, true);
+                new double[boundary.length], new double[boundary.length], 0, 0, 0, 0), null, initial, minutes, true, layout);
             if (rest != null) {
-                if (restInputs == inputs(speed)) return new FluidTrial(rest.motion, rest.filling, rest.origin, minutes, true);
+                if (restInputs == inputs(speed)) return new FluidTrial(rest.motion, rest.filling, rest.origin, minutes, true, layout);
                 rest = null;
             }
             boolean[] enabled = new boolean[connections.size()]; Arrays.fill(enabled, true);
@@ -506,8 +517,8 @@ public final class FluidKinetics {
                 Connection c = connections.get(e);
                 if (!c.pipe.canPullFluidFrom(fluid, c.pipe.blockEntity.getBlockState(), c.side == null ? Direction.UP : c.side)
                     || c.other != null && !c.other.canPullFluidFrom(fluid, c.other.blockEntity.getBlockState(), c.side.getOpposite())
-                    || state(c.pipe).volume() > VOLUME_EPSILON && !same(state(c.pipe).fluid, fluid)
-                    || c.other != null && state(c.other).volume() > VOLUME_EPSILON && !same(state(c.other).fluid, fluid)) enabled[e] = false;
+                    || !same(state(c.pipe).fluid, fluid) && state(c.pipe).volume() > VOLUME_EPSILON
+                    || c.other != null && !same(state(c.other).fluid, fluid) && state(c.other).volume() > VOLUME_EPSILON) enabled[e] = false;
                 if (c.pump != null) {
                     double rpm = axisSigns.get(c.pump) * speed.getOrDefault(c.pump, NetworkDynamics.preciseSpeed(c.pump));
                     couplings[e] = IdealFluidSolver.coupling(material, rpm, guess[e]); force[e] = couplings[e] * rpm;
@@ -529,14 +540,15 @@ public final class FluidKinetics {
             boolean equilibrium = true;
             double[] origin = initial, mass = new double[connections.size()];
             for (int e = 0; e < mass.length; e++) mass[e] = material.inertia(connections.get(e).length) * Math.max(1e-12, contents[e].fraction());
-            for (int pass = 0; pass <= enabled.length; pass++) {
-                var graph = graph(borders, enabled);
+            for (int pass = 0; pass <= enabled.length + junctions.junctions(); pass++) {
+                var graph = layout.graph(borders, enabled);
+                var inventoryBoundary = layout.boundary(boundary);
                 // Only a real connection/closed-mouth impulse projects old motion.
                 origin = graph.sample(initial, mass, new double[mass.length], new double[boundary.length], minutes).flow();
                 // A shortened prefix's mass-flux force must not act over the full
                 // horizon. Predict full-horizon coefficients; only a feasible final
                 // trajectory is transported and committed below.
-                var prediction = PipeFilling.predict(tubes, boundary.length, contents, origin, guess, boundary, supplied, material, minutes);
+                var prediction = PipeFilling.predict(layout.tubes(), boundary.length, contents, origin, guess, inventoryBoundary, supplied, material, minutes);
                 predictedLimit = prediction.allowedMinutes();
                 if (Arrays.stream(prediction.inertia()).allMatch(value -> value == 0)) {
                     // A reversed or rounded-away provisional inlet must not
@@ -553,7 +565,7 @@ public final class FluidKinetics {
                     if (!priming) {
                         double[] zero = new double[connections.size()];
                         return new FluidTrial(new IdealFluidSolver.Trial(zero, zero.clone(), new double[boundary.length], new double[boundary.length], 0, 0, 0, 0),
-                            new PipeFilling.Move(contents, new double[boundary.length], zero.clone(), zero.clone(), minutes), zero.clone(), minutes, true);
+                            new PipeFilling.Move(contents, new double[boundary.length], zero.clone(), zero.clone(), minutes), zero.clone(), minutes, true, layout);
                     }
                     equilibrium = false;
                 }
@@ -593,9 +605,13 @@ public final class FluidKinetics {
                             contactBorders[contact.node()] = false; holds = true;
                         }
                     }
-                    if (holds) motionGraph = graph(contactBorders, enabled);
+                    if (holds) motionGraph = layout.graph(contactBorders, enabled);
                 }
                 trial = motionGraph.sample(origin, averageMass, applied, pressure, minutes);
+                reduced = motionGraph;
+                var pressured = junctions.releaseDryInlets(layout, contents, trial.midpoint());
+                if (pressured == layout) pressured = junctions.pressurise(layout, contents, trial.pressure(), trial.midpoint(), material);
+                if (pressured != layout) { layout = pressured; continue; }
                 boolean changed = false;
                 for (int e = 0; e < enabled.length; e++) if (enabled[e] && connections.get(e).endpoint != null) {
                     Endpoint endpoint = connections.get(e).endpoint; double q = trial.midpoint()[e];
@@ -607,11 +623,11 @@ public final class FluidKinetics {
             }
             if (trial == null) throw new IllegalStateException("No fluid trial");
             double allowed = predictedLimit;
-            move = PipeFilling.sample(tubes, boundary.length, contents, origin, trial.midpoint(), boundary, supplied, material, minutes);
+            move = PipeFilling.sample(layout.tubes(), boundary.length, contents, origin, trial.midpoint(), layout.boundary(boundary), supplied, material, minutes);
             allowed = Math.min(allowed, move.allowedMinutes());
             for (int e = 0; e < enabled.length; e++) if (connections.get(e).pump != null)
                 torques.merge(connections.get(e).pump, -axisSigns.get(connections.get(e).pump) * couplings[e] * trial.midpoint()[e], Double::sum);
-            return new FluidTrial(trial, move, origin, allowed, equilibrium);
+            return new FluidTrial(trial, move, origin, allowed, equilibrium, layout);
         }
         void commit(FluidTrial trial, double minutes) {
             if (!active) return;
@@ -629,7 +645,7 @@ public final class FluidKinetics {
             for (var endpoint : endpoints) endpoint.commit(fluid, trial.filling.waterOutward()[endpoint.node] * minutes / RotationMath.TICK_MINUTES);
             for (var pipe : members) {
                 var saved = state(pipe);
-                if (saved.volume() <= VOLUME_EPSILON || same(saved.fluid, fluid)) saved.fluid = fluid.copyWithAmount(1);
+                if (same(saved.fluid, fluid) || saved.volume() <= VOLUME_EPSILON) saved.fluid = fluid.copyWithAmount(1);
                 saved.outward.clear();
             }
             for (int e = 0; e < connections.size(); e++) {
@@ -776,6 +792,8 @@ public final class FluidKinetics {
             this.frame = frame; this.mechanical = mechanical; this.fluids = fluids;
         }
         public void commit() {
+            frame.acceptedSteps++;
+            frame.shortestStep = Math.min(frame.shortestStep, mechanical.result.duration());
             mechanical.commit();
             for (int i = 0; i < fluids.size(); i++) frame.components.get(i).commit(fluids.get(i), mechanical.result.duration());
             for (var pool : frame.inventories) pool.deliver();
@@ -790,11 +808,14 @@ public final class FluidKinetics {
         String stalled = "iteration";
         int eventShortens = 0;
         for (int retry = 0; retry < 64; retry++) {
+            if (retry > 0) frame.retries++;
             frame.refreshHeights(null, 0);
             var speeds = new HashMap<KineticBlockEntity, Double>();
             for (var network : networks) for (var be : network.members.keySet()) speeds.put(be, NetworkDynamics.preciseSpeed(be));
             var initial = frame.components.stream().map(Component::initial).toList();
             var contents = frame.components.stream().map(Component::contents).toList();
+            var layouts = new ArrayList<DirectionalFluidJunctions.Layout>();
+            for (int c = 0; c < frame.components.size(); c++) layouts.add(frame.components.get(c).junctions.select(contents.get(c)));
             var guesses = new ArrayList<double[]>();
             for (int c = 0; c < frame.components.size(); c++) guesses.add(frame.components.get(c).seed(initial.get(c), speeds, minutes));
             var lastTorques = new HashMap<KineticBlockEntity, Double>();
@@ -802,13 +823,20 @@ public final class FluidKinetics {
             var previousStep = guesses.stream().map(q -> new double[q.length]).toList();
             boolean shorter = false;
             for (int iteration = 0; iteration < 80; iteration++) {
+                frame.jointIterations++;
                 var torques = new HashMap<KineticBlockEntity, Double>();
                 var fluids = new ArrayList<FluidTrial>();
                 double allowed = minutes;
                 Object limiting = null;
                 for (int c = 0; c < frame.components.size(); c++) {
                     var component = frame.components.get(c);
-                    var trial = component.sample(initial.get(c), contents.get(c), guesses.get(c), speeds, minutes, torques);
+                    var trial = component.sample(initial.get(c), contents.get(c), guesses.get(c), speeds, minutes, torques, layouts.get(c));
+                    // Pressure creates contact during this detached interval. Keep
+                    // that constraint through its joint Newton/fixed-point solve;
+                    // resetting it for each guess makes a dry branch chatter.
+                    // A shortened retry or the next accepted interval re-evaluates
+                    // contact from the actual, unchanged liquid fronts.
+                    layouts.set(c, trial.layout);
                     fluids.add(trial);
                     if (trial.allowed < allowed) { allowed = trial.allowed; limiting = component; }
                 }

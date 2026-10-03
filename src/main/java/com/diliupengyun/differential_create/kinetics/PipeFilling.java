@@ -31,10 +31,25 @@ public final class PipeFilling {
                                double[] midpoint, boolean[] inventory, double[] supplied,
                                IdealFluidSolver.Material material, double minutes, boolean truncate) {
         double[] inward = new double[nodes], water = new double[nodes];
+        boolean[] incident = new boolean[nodes], wet = new boolean[nodes], dry = new boolean[nodes];
+        java.util.Arrays.fill(wet, true); java.util.Arrays.fill(dry, true);
+        for (int e = 0; e < tubes.size(); e++) {
+            var tube = tubes.get(e);
+            incident[tube.from] = incident[tube.to] = true;
+            wet[tube.from] &= contents[e].atStart(); wet[tube.to] &= contents[e].atEnd();
+            dry[tube.from] &= !contents[e].atStart(); dry[tube.to] &= !contents[e].atEnd();
+        }
         double limit = minutes;
         for (int e = 0; e < tubes.size(); e++) {
             Tube tube = tubes.get(e); double q = midpoint[e];
-            if (q != 0) limit = Math.min(limit, mouthTime(contents[e].travelToMouth(q)
+            int source = q > 0 ? tube.from : tube.to;
+            boolean liquidInlet = inventory[source] ? supplied[source] == 1 : incident[source] && wet[source];
+            boolean emptyInlet = inventory[source] ? supplied[source] == 0 : incident[source] && dry[source];
+            // A uniformly full channel has no phase front. Its water may cross
+            // several lengths in this interval while all neighbouring mouths
+            // remain wet; an actual neighbouring front still limits the step.
+            if (q != 0 && !(contents[e] == PipeContents.FULL && liquidInlet)
+                && !(contents[e] == PipeContents.EMPTY && emptyInlet)) limit = Math.min(limit, mouthTime(contents[e].travelToMouth(q)
                 * tube.length * MB_PER_METRE * RotationMath.TICK_MINUTES, origin[e], q, minutes));
         }
         // Numerical face events can coalesce at machine precision. Integrating the
@@ -60,7 +75,10 @@ public final class PipeFilling {
         }
         double[] fraction = new double[nodes];
         for (int node = 0; node < nodes; node++) fraction[node] = inventory[node] ? supplied[node]
-            : inward[node] == 0 ? 0 : Math.min(1, water[node] / inward[node]);
+            // A stationary, fully wetted junction has a liquid limiting phase.
+            // A pressure gauge's roundoff-sized outflow must not seed empty gaps
+            // and keep changing the mass matrix of an entirely full closed loop.
+            : inward[node] == 0 ? incident[node] && wet[node] ? 1 : 0 : Math.min(1, water[node] / inward[node]);
         var next = new PipeContents[tubes.size()];
         double[] mass = new double[tubes.size()], correction = new double[tubes.size()], outward = new double[nodes];
         // The caller shortens the common mechanical/fluid interval before committing.

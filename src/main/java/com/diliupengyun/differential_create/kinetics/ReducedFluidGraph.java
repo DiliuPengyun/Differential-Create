@@ -15,6 +15,8 @@ public final class ReducedFluidGraph {
     private final List<Channel> channels = new ArrayList<>();
     private final boolean[] stopped;
     private final int reducedNodes;
+    private record NumericGraph(double[] mass, IdealFluidSolver.Graph graph) {}
+    private final List<NumericGraph> numericGraphs = new ArrayList<>();
 
     public ReducedFluidGraph(int nodes, List<IdealFluidSolver.Edge> edges, boolean[] boundary, boolean[] active) {
         this.nodes = nodes; this.edges = edges; this.boundary = boundary.clone(); this.active = active.clone();
@@ -111,19 +113,27 @@ public final class ReducedFluidGraph {
         for (int c = 0; c < channels.size(); c++) if (sampleIndex[c] >= 0) {
             origin[sampleIndex[c]] = channelFlow[c]; forcing[sampleIndex[c]] = channelForce[c];
         }
-        var trial = new IdealFluidSolver.Graph(reducedNodes, reducedEdges, borders, enabled).sample(origin, forcing, datum, minutes);
+        IdealFluidSolver.Graph solver = null;
+        for (var cached : numericGraphs) if (Arrays.equals(cached.mass, channelMass)) { solver = cached.graph; break; }
+        if (solver == null) {
+            solver = new IdealFluidSolver.Graph(reducedNodes, reducedEdges, borders, enabled);
+            if (numericGraphs.size() == 4) numericGraphs.remove(0);
+            numericGraphs.add(new NumericGraph(channelMass.clone(), solver));
+        }
+        var trial = solver.sample(origin, forcing, datum, minutes);
         double[] next = new double[edges.size()], midpoint = new double[next.length], outward = new double[nodes], actualPressure = new double[nodes];
+        double[] actualOrigin = new double[next.length];
         for (int i = 0; i < nodes; i++) if (index[i] >= 0) actualPressure[i] = trial.pressure()[index[i]];
         double change = 0, work = 0, boundaryWork = 0, initialEnergy = 0, originEnergy = 0;
         for (int e = 0; e < initial.length; e++) initialEnergy += .5 * inertia[e] * initial[e] * initial[e];
         for (int c = 0; c < channels.size(); c++) {
             var channel = channels.get(c); int k = sampleIndex[c];
-            double q0 = stopped[c] ? 0 : k < 0 ? channelFlow[c] : 2 * trial.midpoint()[k] - trial.flow()[k];
+            double q0 = stopped[c] ? 0 : k < 0 ? channelFlow[c] : trial.origin()[k];
             double q1 = stopped[c] ? 0 : k < 0 ? q0 + minutes * channelForce[c] / channelMass[c] : trial.flow()[k];
             int node = channel.from;
             for (int signed : channel.signedEdges) {
                 int e = Math.abs(signed) - 1; double sign = Math.signum(signed); var edge = edges.get(e);
-                next[e] = sign * q1; midpoint[e] = sign * .5 * (q0 + q1);
+                actualOrigin[e] = sign * q0; next[e] = sign * q1; midpoint[e] = sign * .5 * (q0 + q1);
                 outward[edge.from()] += midpoint[e]; outward[edge.to()] -= midpoint[e];
                 change += .5 * inertia[e] * (q1 - q0) * (q1 + q0); work += minutes * force[e] * midpoint[e];
                 originEnergy += .5 * inertia[e] * q0 * q0;
@@ -137,6 +147,6 @@ public final class ReducedFluidGraph {
         double error = change - work - boundaryWork;
         if (Math.abs(error) > 1e-10 * (Math.abs(change) + Math.abs(work) + Math.abs(boundaryWork)) + 1e-12)
             throw new IllegalStateException("Reduced fluid work imbalance: " + error);
-        return new IdealFluidSolver.Trial(next, midpoint, actualPressure, outward, change, work, boundaryWork, Math.max(0, initialEnergy - originEnergy));
+        return new IdealFluidSolver.Trial(next, midpoint, actualPressure, outward, change, work, boundaryWork, Math.max(0, initialEnergy - originEnergy), actualOrigin);
     }
 }

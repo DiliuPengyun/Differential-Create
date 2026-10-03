@@ -21,6 +21,7 @@ public final class PhysicsRegression {
 		SteamDriveRegression.run();
 		IdealFluidRegression.run();
 		PipeFillingRegression.run();
+		DirectionalFluidRegression.run();
 		LoadFactorRegression.run();
 		shaftTravel();
 		ActorContactRegression.run();

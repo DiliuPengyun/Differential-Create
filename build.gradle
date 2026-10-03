@@ -87,6 +87,14 @@ neoForge {
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
+        // Opt-in, disposable-world measurements of the complete fluid/shaft tick.
+        fluidBenchmarkServer {
+            type = "gameTestServer"
+            gameDirectory = project.file('build/fluid-network-performance/runs/' + UUID.randomUUID())
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_perf'
+            systemProperty 'differentialcreate.perf.case', providers.gradleProperty('fluidPerfCase').getOrElse('all')
+        }
+
         data {
             data()
 
@@ -121,6 +129,12 @@ neoForge {
             sourceSet(sourceSets.main)
         }
     }
+}
+
+neoForge.runs.fluidBenchmarkServer { logLevel = org.slf4j.event.Level.INFO }
+
+tasks.named('runFluidBenchmarkServer') {
+    notCompatibleWithConfigurationCache('Each performance invocation requires a new empty world.')
 }
 
 // Sets up a dependency configuration called 'localRuntime'.

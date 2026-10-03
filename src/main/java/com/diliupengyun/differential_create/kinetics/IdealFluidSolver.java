@@ -58,7 +58,12 @@ public final class IdealFluidSolver {
         }
     }
     public record Trial(double[] flow, double[] midpoint, double[] pressure, double[] outward,
-                        double energyChange, double forceWork, double boundaryWork, double projectionLoss) {}
+                        double energyChange, double forceWork, double boundaryWork, double projectionLoss, double[] origin) {
+        public Trial(double[] flow, double[] midpoint, double[] pressure, double[] outward,
+                     double energyChange, double forceWork, double boundaryWork, double projectionLoss) {
+            this(flow, midpoint, pressure, outward, energyChange, forceWork, boundaryWork, projectionLoss, flow.clone());
+        }
+    }
 
     public static final class Graph {
         private final int nodes;
@@ -67,6 +72,9 @@ public final class IdealFluidSolver {
         private final int[] variable;
         private final double[] diagonal;
         private final int variables;
+        private FlowTree flowTree;
+        private final PressureForest forest;
+        private final PressureBand band;
 
         public Graph(int nodes, List<Edge> edges, boolean[] boundary, boolean[] active) {
             if (nodes < 0 || boundary.length != nodes || active.length != edges.size())
@@ -100,6 +108,8 @@ public final class IdealFluidSolver {
                 if (variable[edge.from] >= 0) diagonal[variable[edge.from]] += weight;
                 if (variable[edge.to] >= 0) diagonal[variable[edge.to]] += weight;
             }
+            forest = PressureForest.create(variables, edges, this.active, variable);
+            band = forest == null ? PressureBand.create(variables, edges, this.active, variable, diagonal) : null;
         }
 
         public double energy(double[] flow) {
@@ -142,7 +152,7 @@ public final class IdealFluidSolver {
             if (Math.abs(error) > 1e-10 * (Math.abs(energyChange) + Math.abs(forceWork) + Math.abs(boundaryWork)) + 1e-12)
                 throw new IllegalStateException("Fluid work imbalance: " + error);
             return new Trial(next, midpoint, pressure, outward, energyChange, forceWork, boundaryWork,
-                Math.max(0, energy(initial) - energy(origin)));
+                Math.max(0, energy(initial) - energy(origin)), origin);
         }
 
         private void correct(double[] flow, double[] pressure) {
@@ -158,7 +168,15 @@ public final class IdealFluidSolver {
                 boolean continuous = true;
                 for (int i = 0; i < variables; i++) continuous &= Math.abs(rhs[i]) <= 8 * Math.ulp(scale[i]);
                 if (continuous) return;
-                if (refinement == 4) throw new IllegalStateException("Fluid flow correction did not converge");
+                if (refinement == 4) {
+                    if (flowTree == null) {
+                        boolean[] fixed = new boolean[nodes];
+                        for (int i = 0; i < nodes; i++) fixed[i] = variable[i] < 0;
+                        flowTree = FlowTree.create(nodes, edges, active, fixed);
+                    }
+                    if (flowTree.closeRoundoff(flow, edges, active, variable)) return;
+                    throw new IllegalStateException("Fluid flow correction did not converge");
+                }
                 double[] solution = solve(rhs);
                 for (int i = 0; i < nodes; i++) if (variable[i] >= 0) pressure[i] += solution[variable[i]];
                 for (int e = 0; e < edges.size(); e++) if (active[e]) {
@@ -180,6 +198,8 @@ public final class IdealFluidSolver {
         }
 
         private double[] solve(double[] rhs) {
+            if (forest != null) return forest.solve(rhs);
+            if (band != null) return band.solve(rhs);
             double[] x = new double[variables], r = rhs.clone(), z = new double[variables], p = new double[variables], ap = new double[variables];
             double scale = 0, rz = 0;
             for (int i = 0; i < variables; i++) {
@@ -239,6 +259,188 @@ public final class IdealFluidSolver {
                 quadratic = Math.fma(difference, value, quadratic);
             }
             return quadratic;
+        }
+
+        /** Close cancellation roundoff by summing incident flows on a spanning
+         * forest. This is used only after pressure refinement; changes are bounded
+         * by accumulated floating-point ULPs, never by a physical flow cutoff. */
+        private record FlowTree(int[] order, int[] parentEdge, List<List<Integer>> incident) {
+            static FlowTree create(int nodes, List<Edge> edges, boolean[] active, boolean[] fixed) {
+                var incident = new ArrayList<List<Integer>>(nodes);
+                for (int i = 0; i < nodes; i++) incident.add(new ArrayList<>());
+                for (int e = 0; e < edges.size(); e++) if (active[e]) {
+                    incident.get(edges.get(e).from).add(e); incident.get(edges.get(e).to).add(e);
+                }
+                int[] queue = new int[nodes], parent = new int[nodes], order = new int[nodes];
+                Arrays.fill(parent, -1);
+                boolean[] visited = fixed.clone(); int tail = 0, count = 0;
+                for (int i = 0; i < nodes; i++) if (fixed[i]) queue[tail++] = i;
+                for (int head = 0; head < tail; head++) for (int e : incident.get(queue[head])) {
+                    var edge = edges.get(e); int node = edge.from == queue[head] ? edge.to : edge.from;
+                    if (!visited[node]) { visited[node] = true; parent[node] = e; queue[tail++] = node; order[count++] = node; }
+                }
+                return new FlowTree(Arrays.copyOf(order, count), parent, incident);
+            }
+            boolean closeRoundoff(double[] flow, List<Edge> edges, boolean[] active, int[] variable) {
+                double maximum = 0;
+                for (double q : flow) maximum = Math.max(maximum, Math.abs(q));
+                double bound = 32 * Math.max(1, order.length) * Math.ulp(maximum);
+                double[] closed = flow.clone();
+                for (int k = order.length - 1; k >= 0; k--) {
+                    int node = order[k], parent = parentEdge[node]; double sum = 0, compensation = 0;
+                    for (int e : incident.get(node)) if (e != parent) {
+                        double value = (edges.get(e).from == node ? closed[e] : -closed[e]) - compensation;
+                        double next = sum + value; compensation = (next - sum) - value; sum = next;
+                    }
+                    double value = edges.get(parent).from == node ? -sum : sum;
+                    if (!Double.isFinite(value) || Math.abs(value - flow[parent]) > bound) return false;
+                    closed[parent] = value;
+                }
+                double[] rhs = new double[order.length], compensation = new double[order.length], scale = new double[order.length];
+                for (int e = 0; e < edges.size(); e++) if (active[e]) {
+                    var edge = edges.get(e);
+                    accumulate(rhs, compensation, scale, variable[edge.from], -closed[e]);
+                    accumulate(rhs, compensation, scale, variable[edge.to], closed[e]);
+                }
+                for (int i = 0; i < rhs.length; i++) if (Math.abs(rhs[i]) > 8 * Math.ulp(scale[i])) return false;
+                System.arraycopy(closed, 0, flow, 0, flow.length);
+                return true;
+            }
+        }
+
+        /** Exact Schur elimination when the unknown-pressure graph is a forest.
+         * Long branched networks can have exponentially small distant flows;
+         * a global CG residual cannot resolve every local continuity constraint.
+         * Positive shunt conductances avoid subtracting almost equal diagonals
+         * when a dry channel is 1e12 lighter than its liquid-filled neighbour. */
+        private record PressureForest(int[] order, int[] parent, double[] weight, double[] ground) {
+            static PressureForest create(int count, List<Edge> edges, boolean[] active, int[] variable) {
+                var adjacent = new ArrayList<List<Integer>>(count);
+                for (int i = 0; i < count; i++) adjacent.add(new ArrayList<>());
+                double[] ground = new double[count], weight = new double[count];
+                for (int e = 0; e < edges.size(); e++) if (active[e]) {
+                    var edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to];
+                    if (a >= 0 && b >= 0) { adjacent.get(a).add(e); adjacent.get(b).add(e); }
+                    else if (a >= 0) ground[a] += 1 / edge.inertia;
+                    else if (b >= 0) ground[b] += 1 / edge.inertia;
+                }
+                int[] parent = new int[count], parentEdge = new int[count], order = new int[count];
+                Arrays.fill(parent, -2); Arrays.fill(parentEdge, -1);
+                int tail = 0;
+                for (int root = 0; root < count; root++) if (parent[root] == -2) {
+                    int head = tail; parent[root] = -1; order[tail++] = root;
+                    while (head < tail) {
+                        int node = order[head++];
+                        for (int e : adjacent.get(node)) if (e != parentEdge[node]) {
+                            var edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to], next = a == node ? b : a;
+                            if (parent[next] != -2) return null; // A loop uses the existing pressure solver.
+                            parent[next] = node; parentEdge[next] = e; weight[next] = 1 / edge.inertia; order[tail++] = next;
+                        }
+                    }
+                }
+                return new PressureForest(order, parent, weight, ground);
+            }
+            double[] solve(double[] rhs) {
+                double[] shunt = ground.clone(), reduced = rhs.clone(), result = new double[rhs.length];
+                for (int k = order.length - 1; k >= 0; k--) {
+                    int node = order[k], p = parent[node];
+                    if (p < 0) continue;
+                    double ratio = weight[node] / (weight[node] + shunt[node]);
+                    shunt[p] += ratio * shunt[node];
+                    reduced[p] = Math.fma(ratio, reduced[node], reduced[p]);
+                }
+                for (int node : order) {
+                    int p = parent[node];
+                    double divisor = shunt[node] + weight[node];
+                    if (!(divisor > 0)) throw new IllegalStateException("Singular fluid pressure forest");
+                    result[node] = p < 0 ? reduced[node] / divisor : Math.fma(weight[node], result[p], reduced[node]) / divisor;
+                }
+                return result;
+            }
+        }
+
+        /** Bounded banded LDL factor for compact loop networks. The factor is
+         * immutable and reusable for different forces/initial velocities. Wide
+         * arbitrary graphs and numerically poor pivots retain the CG path. */
+        private record PressureBand(int count, int width, double[] factor, int[] permutation) {
+            static PressureBand create(int count, List<Edge> edges, boolean[] active, int[] variable, double[] diagonal) {
+                int[] permutation = ordering(count, edges, active, variable);
+                int width = 0;
+                double smallest = Double.POSITIVE_INFINITY, largest = 0;
+                for (int e = 0; e < edges.size(); e++) if (active[e]) {
+                    var edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to];
+                    if (a >= 0 && b >= 0) width = Math.max(width, Math.abs(permutation[a] - permutation[b]));
+                    smallest = Math.min(smallest, edge.inertia); largest = Math.max(largest, edge.inertia);
+                }
+                // Direct floating-point pivots are unsuitable for the extreme
+                // wet/dry mass ratio. This only selects a numerical algorithm;
+                // all masses and physical constraints stay unchanged in CG.
+                if (largest / smallest > 1e6 || width > 64 || (long) count * (width + 1) > 262144) return null;
+                int stride = width + 1;
+                double[] factor = new double[count * stride];
+                for (int i = 0; i < count; i++) factor[permutation[i] * stride] = diagonal[i];
+                for (int e = 0; e < edges.size(); e++) if (active[e]) {
+                    var edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to];
+                    if (a >= 0 && b >= 0) {
+                        a = permutation[a]; b = permutation[b];
+                        factor[Math.max(a, b) * stride + Math.abs(a - b)] -= 1 / edge.inertia;
+                    }
+                }
+                for (int row = 0; row < count; row++) {
+                    int start = Math.max(0, row - width);
+                    for (int column = start; column < row; column++) {
+                        double value = factor[row * stride + row - column];
+                        for (int k = start; k < column; k++) value = Math.fma(
+                            -factor[row * stride + row - k] * factor[k * stride], factor[column * stride + column - k], value);
+                        factor[row * stride + row - column] = value / factor[column * stride];
+                    }
+                    double value = factor[row * stride];
+                    for (int k = start; k < row; k++) {
+                        double lower = factor[row * stride + row - k];
+                        value = Math.fma(-lower * lower, factor[k * stride], value);
+                    }
+                    if (!(value > 64 * Math.ulp(factor[row * stride])) || !Double.isFinite(value)) return null;
+                    factor[row * stride] = value;
+                }
+                return new PressureBand(count, width, factor, permutation);
+            }
+            private static int[] ordering(int count, List<Edge> edges, boolean[] active, int[] variable) {
+                var adjacent = new ArrayList<List<Integer>>(count);
+                for (int i = 0; i < count; i++) adjacent.add(new ArrayList<>());
+                for (int e = 0; e < edges.size(); e++) if (active[e]) {
+                    var edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to];
+                    if (a >= 0 && b >= 0) { adjacent.get(a).add(b); adjacent.get(b).add(a); }
+                }
+                for (var neighbours : adjacent) neighbours.sort(java.util.Comparator
+                    .comparingInt((Integer n) -> adjacent.get(n).size()).thenComparingInt(n -> n));
+                int[] order = new int[count], permutation = new int[count];
+                boolean[] visited = new boolean[count]; int tail = 0;
+                while (tail < count) {
+                    int root = -1;
+                    for (int n = 0; n < count; n++) if (!visited[n] && (root < 0 || adjacent.get(n).size() < adjacent.get(root).size())) root = n;
+                    int head = tail; order[tail++] = root; visited[root] = true;
+                    while (head < tail) for (int next : adjacent.get(order[head++])) if (!visited[next]) {
+                        visited[next] = true; order[tail++] = next;
+                    }
+                }
+                for (int i = 0; i < count; i++) permutation[order[i]] = count - 1 - i;
+                return permutation;
+            }
+            double[] solve(double[] rhs) {
+                int stride = width + 1;
+                double[] result = new double[count];
+                for (int i = 0; i < count; i++) result[permutation[i]] = rhs[i];
+                for (int row = 0; row < count; row++)
+                    for (int column = Math.max(0, row - width); column < row; column++)
+                        result[row] = Math.fma(-factor[row * stride + row - column], result[column], result[row]);
+                for (int row = 0; row < count; row++) result[row] /= factor[row * stride];
+                for (int row = count - 1; row >= 0; row--)
+                    for (int column = row + 1; column < Math.min(count, row + width + 1); column++)
+                        result[row] = Math.fma(-factor[column * stride + column - row], result[column], result[row]);
+                double[] original = new double[count];
+                for (int i = 0; i < count; i++) original[i] = result[permutation[i]];
+                return original;
+            }
         }
     }
 }

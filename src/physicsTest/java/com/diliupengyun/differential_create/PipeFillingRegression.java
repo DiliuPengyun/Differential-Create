@@ -16,7 +16,7 @@ public final class PipeFillingRegression {
     private static final IdealFluidSolver.Material WATER = new IdealFluidSolver.Material(1000, false);
     private static int checks;
     public static void run() {
-        intervals(); intervalRoundoff(); acceleratedFronts(); subnormalFlow(); fullHorizonPrediction(); emptyChannelMomentum(); massAndEnergy(); branches(); residualAtMouth(); sharedInventory(); receiptCapacity(); pumpTangent(); reduction(); drySuction();
+        intervals(); intervalRoundoff(); acceleratedFronts(); subnormalFlow(); fullHorizonPrediction(); uniformFullFlow(); emptyChannelMomentum(); massAndEnergy(); branches(); residualAtMouth(); sharedInventory(); receiptCapacity(); pumpTangent(); reduction(); drySuction();
         System.out.println("Pipe filling regression: " + checks + " checks passed");
     }
     private static void intervals() {
@@ -31,6 +31,40 @@ public final class PipeFillingRegression {
         near(.3, PipeContents.of(0, .4).move(-.1, 0).fraction(), 1e-15, "a water column can retreat");
         near(.4, PipeContents.of(0, .4).move(0, 0).fraction(), 0, "stopped water remains in its pipe");
         near(.4, PipeContents.of(0, .6).interpolate(PipeContents.of(0, .2), .5).fraction(), 1e-15, "front animation interpolates actual owned water");
+    }
+    private static void uniformFullFlow() {
+        var tubes = List.of(new PipeFilling.Tube(0, 1, .25, 0, 2), new PipeFilling.Tube(1, 2, .75, 2, 4),
+            new PipeFilling.Tube(2, 0, 1, 4, 0));
+        for (double flow : new double[]{-1600, 1600}) {
+            double dt = IdealFluidSolver.MAX_STEP;
+            double[] q = {flow, flow, flow};
+            var move = PipeFilling.sample(tubes, 3, new PipeContents[]{PipeContents.FULL, PipeContents.FULL, PipeContents.FULL},
+                q, q, new boolean[3], new double[3], WATER, dt);
+            near(dt, move.allowedMinutes(), 0, "a full closed circuit has no transported phase front");
+            for (int i = 0; i < tubes.size(); i++) {
+                var tube = tubes.get(i);
+                near(1, move.contents()[i].fraction(), 0, "several pipe lengths of uniform flow remain full");
+                near(WATER.inertia(tube.length()), move.inertia()[i], 0, "uniform full flow retains actual liquid mass");
+                near(-WATER.gravityForce(tube.toHeight() - tube.fromHeight()), move.correction()[i], 0,
+                    "uniform full flow retains its exact gravitational force");
+                near(0, move.waterOutward()[i], 0, "uniform closed flow conserves inventory at every node");
+            }
+        }
+        var emptied = PipeFilling.sample(List.of(new PipeFilling.Tube(0, 1, 1, 0, 0)), 2,
+            new PipeContents[]{PipeContents.FULL}, new double[]{1600}, new double[]{1600},
+            new boolean[]{true, true}, new double[2], WATER, IdealFluidSolver.MAX_STEP);
+        near(RotationMath.TICK_MINUTES * 100 / 1600, emptied.allowedMinutes(), 1e-18,
+            "an exhausted source still creates a real draining front");
+        near(0, emptied.contents()[0].fraction(), 0, "the draining front cannot cross more than one channel");
+        var voidFlow = PipeFilling.sample(tubes, 3, new PipeContents[]{PipeContents.EMPTY, PipeContents.EMPTY, PipeContents.EMPTY},
+            new double[]{1e10, 1e10, 1e10}, new double[]{1e10, 1e10, 1e10}, new boolean[3], new double[3], WATER,
+            IdealFluidSolver.MAX_STEP);
+        near(IdealFluidSolver.MAX_STEP, voidFlow.allowedMinutes(), 0, "unmodelled empty space carries no liquid front");
+        for (int i = 0; i < 3; i++) {
+            near(0, voidFlow.contents()[i].fraction(), 0, "uniform empty flow invents no water");
+            near(0, voidFlow.inertia()[i], 0, "uniform empty flow has no physical liquid mass");
+            near(0, voidFlow.correction()[i], 0, "uniform empty flow has no gravity or mass-flux force");
+        }
     }
     private static void intervalRoundoff() {
         for (double width : new double[]{1e-20, 1e-16, Math.ulp(1d), 1e-12}) {

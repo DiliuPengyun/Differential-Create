@@ -20,6 +20,8 @@ public final class IdealFluidRegression {
         pressureConstraints();
         mixedPipeInertances();
         connectedDryBranches();
+        longBranchedPressure();
+        reorderedPressureLoops();
         workIdentity();
         coupledRotor();
         timestepRefinement();
@@ -27,6 +29,88 @@ public final class IdealFluidRegression {
     }
     private static Graph pipe(double length) {
         return new Graph(2, List.of(new Edge(0, 1, WATER.inertia(length))), new boolean[]{true, true}, new boolean[]{true});
+    }
+    private static void longBranchedPressure() {
+        // Independent closed-form solution of 3*p[i] - p[i-1] - p[i+1] = 0.
+        // Far-branch pressure spans hundreds of decimal orders; a global solver
+        // residual alone must not erase the local flow-continuity requirement.
+        MathContext precision = new MathContext(90);
+        BigDecimal ratio = BigDecimal.valueOf(3).subtract(BigDecimal.valueOf(5).sqrt(precision), precision)
+            .divide(BigDecimal.valueOf(2), precision);
+        for (int n : new int[]{64, 257, 1024}) {
+            var edges = new java.util.ArrayList<Edge>();
+            for (int i = 0; i <= n; i++) edges.add(new Edge(i, i + 1, 1));
+            for (int i = 1; i <= n; i++) edges.add(new Edge(i, n + 2, 1));
+            boolean[] boundary = new boolean[n + 3], active = new boolean[edges.size()];
+            boundary[0] = boundary[n + 1] = boundary[n + 2] = true; java.util.Arrays.fill(active, true);
+            double[] datum = new double[boundary.length]; datum[0] = 1;
+            var motion = new Graph(boundary.length, edges, boundary, active).sample(new double[edges.size()], new double[edges.size()], datum, H);
+            BigDecimal denominator = BigDecimal.ONE.subtract(ratio.pow(2 * (n + 1), precision), precision);
+            for (int i = 1; i <= n; i++) {
+                double exact = ratio.pow(i, precision).subtract(ratio.pow(2 * (n + 1) - i, precision), precision)
+                    .divide(denominator, precision).doubleValue();
+                double pressureRoundoff = 128 * ((i + 1) * Math.ulp(exact) + Math.ulp(H * exact) / H);
+                near(exact, motion.pressure()[i], pressureRoundoff, "long-tree pressure matches the independent 90-digit solution");
+                double before = motion.flow()[i - 1], after = motion.flow()[i], branch = motion.flow()[n + i];
+                near(0, before - after - branch, 8 * Math.ulp(Math.abs(before) + Math.abs(after) + Math.abs(branch)),
+                    "every far branch satisfies continuity at its own flow scale");
+            }
+            near(motion.energyChange(), motion.forceWork() + motion.boundaryWork(), 1e-14,
+                "the complete long pressure tree conserves work");
+        }
+    }
+    private static void reorderedPressureLoops() {
+        // Manufacture a known pressure field plus divergence-free acceleration
+        // from individual square circulations. Shuffle all node IDs: the answer
+        // is independent of graph ordering or the pressure factorisation used.
+        Random random = new Random(0xD1FBAAD);
+        for (int n : new int[]{5, 13, 23}) {
+            int nodes = n * n, horizontal = n * (n - 1), count = 2 * horizontal;
+            var ids = new java.util.ArrayList<Integer>();
+            for (int i = 0; i < nodes; i++) ids.add(i);
+            java.util.Collections.shuffle(ids, random);
+            double[] potential = new double[nodes], acceleration = new double[count];
+            for (int z = 0; z < n; z++) for (int x = 0; x < n; x++) potential[ids.get(z * n + x)] = x * x + 2 * z;
+            for (int z = 0; z < n - 1; z++) for (int x = 0; x < n - 1; x++) {
+                double circulation = random.nextInt(9) - 4;
+                acceleration[z * (n - 1) + x] += circulation;
+                acceleration[horizontal + z * n + x + 1] += circulation;
+                acceleration[(z + 1) * (n - 1) + x] -= circulation;
+                acceleration[horizontal + z * n + x] -= circulation;
+            }
+            var edges = new java.util.ArrayList<Edge>();
+            for (int z = 0; z < n; z++) for (int x = 0; x < n - 1; x++)
+                edges.add(new Edge(ids.get(z * n + x), ids.get(z * n + x + 1), 1 + edges.size() % 3));
+            for (int z = 0; z < n - 1; z++) for (int x = 0; x < n; x++)
+                edges.add(new Edge(ids.get(z * n + x), ids.get((z + 1) * n + x), 1 + edges.size() % 3));
+            double[] force = new double[count]; boolean[] active = new boolean[count]; java.util.Arrays.fill(active, true);
+            for (int i = 0; i < count; i++) {
+                var edge = edges.get(i);
+                force[i] = edge.inertia() * acceleration[i] - potential[edge.from()] + potential[edge.to()];
+            }
+            var trial = new Graph(nodes, edges, new boolean[nodes], active)
+                .sample(new double[count], force, new double[nodes], H);
+            for (int i = 0; i < nodes; i++) near(potential[i] - potential[0], trial.pressure()[i], 2e-10,
+                "reordered loop pressure matches the independent prescribed field");
+            for (int i = 0; i < count; i++) near(H * acceleration[i], trial.flow()[i], 2e-14,
+                "reordered loop acceleration matches independent cell circulations");
+            near(trial.energyChange(), trial.forceWork(), 1e-14, "reordered closed grid conserves work");
+            var reduced = new com.diliupengyun.differential_create.kinetics.ReducedFluidGraph(nodes, edges, new boolean[nodes], active);
+            for (int sample = 0; sample < 6; sample++) {
+                double[] mass = new double[count];
+                for (int i = 0; i < count; i++) {
+                    var edge = edges.get(i);
+                    mass[i] = edge.inertia() * (sample == 5 ? 4 : 1 + .01 * sample * (i % 7));
+                    force[i] = mass[i] * acceleration[i] - potential[edge.from()] + potential[edge.to()];
+                }
+                var changing = reduced.sample(new double[count], mass, force, new double[nodes], H);
+                for (int i = 0; i < nodes; i++) near(potential[i] - potential[0], changing.pressure()[i] - changing.pressure()[0], 2e-10,
+                    "changing loop masses preserve the prescribed pressure field");
+                for (int i = 0; i < count; i++) near(H * acceleration[i], changing.flow()[i], 2e-14,
+                    "cached layout solves today's masses and accelerations");
+                near(changing.energyChange(), changing.forceWork(), 1e-14, "changing loop masses preserve work");
+            }
+        }
     }
     private static void inertance() {
         double force = WATER.gravityForce(16);

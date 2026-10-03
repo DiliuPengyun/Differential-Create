@@ -86,9 +86,11 @@ public final class PipeContents {
     public PipeContents move(double displacement, double inletFraction) {
         if (displacement == 0) return this;
         if (displacement < 0) return reverse().move(-displacement, inletFraction).reverse();
-        if (!(inletFraction >= 0 && inletFraction <= 1) || displacement > 1 + 1e-10)
+        if (!(inletFraction >= 0 && inletFraction <= 1) || !Double.isFinite(displacement))
             throw new IllegalArgumentException("Liquid step crossed a pipe mouth");
         if (this == FULL && inletFraction == 1) return FULL;
+        if (this == EMPTY && inletFraction == 0) return EMPTY;
+        if (displacement > 1 + 1e-10) throw new IllegalArgumentException("Liquid step crossed a pipe mouth");
         double[] result = new double[ends.length + 2]; int count = 0;
         double admitted = displacement * inletFraction;
         if (admitted > 0) { result[count++] = displacement - admitted; result[count++] = Math.min(1, displacement); }
@@ -125,6 +127,8 @@ public final class PipeContents {
     /** Discrete gravitational work after accounting for transported endpoint potential. */
     public double gravityFraction(double displacement, double inletFraction) {
         if (displacement == 0) return fraction;
+        if (this == FULL && inletFraction == 1) return 1;
+        if (this == EMPTY && inletFraction == 0) return 0;
         if (displacement < 0) return reverse().gravityFraction(-displacement, inletFraction);
         if (this == EMPTY) return .5 * displacement * (2 * inletFraction - inletFraction * inletFraction);
         if (ends[ends.length - 1] == 1 && ends[ends.length - 2] <= 1 - displacement)
