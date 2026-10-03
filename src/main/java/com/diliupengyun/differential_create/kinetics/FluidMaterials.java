@@ -12,9 +12,11 @@ public final class FluidMaterials {
     public static final TagKey<Fluid> GASES = TagKey.create(Registries.FLUID,
         ResourceLocation.fromNamespaceAndPath(DifferentialCreate.MODID, "gases"));
     private FluidMaterials() {}
+    public static boolean isGas(FluidStack fluid) {
+        return fluid.getFluid().is(GASES) || fluid.getFluidType().isLighterThanAir();
+    }
     public static IdealFluidSolver.Material of(FluidStack fluid) {
         int density = fluid.getFluidType().getDensity(fluid);
-        boolean isGas = fluid.getFluid().is(GASES) || fluid.getFluidType().isLighterThanAir();
-        return new IdealFluidSolver.Material(Math.max(1, Math.abs((double) density)), isGas);
+        return new IdealFluidSolver.Material(Math.max(1, Math.abs((double) density)), isGas(fluid));
     }
 }

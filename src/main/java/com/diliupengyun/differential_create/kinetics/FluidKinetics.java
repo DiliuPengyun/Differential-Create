@@ -87,6 +87,7 @@ public final class FluidKinetics {
         final FlowSource source;
         IFluidHandler handler;
         InventoryPool inventory;
+        FluidTankBlockEntity tank;
         final PipeHydraulics.Buffer buffer;
         double referenceHeight;
         int node;
@@ -102,6 +103,39 @@ public final class FluidKinetics {
             BlockPos connected = pipe.getPos().relative(side);
             var be = pipe.getWorld().getBlockEntity(connected);
             referenceHeight = be instanceof FluidTankBlockEntity tank ? tank.getController().getY() : connected.getY();
+            tank = be instanceof FluidTankBlockEntity connectedTank && pipe.getWorld().isLoaded(connectedTank.getController())
+                ? connectedTank.getControllerBE() : null;
+            // Boiler handlers retain their native device boundary, not a free surface.
+            if (tank != null && tank.boiler.isActive()) tank = null;
+            refreshHeight(0);
+        }
+        double refreshHeight(double change) {
+            if (tank == null) return 0;
+            var stock = tank.getTankInventory();
+            double buffered = inventory == null ? buffer.amount : inventory.buffered;
+            double fraction = stock.getCapacity() == 0 ? 0 : Math.max(0, Math.min(1,
+                (stock.getFluidAmount() + buffered + change) / stock.getCapacity()));
+            // Match Create's liquid surface: 1/4-m caps and a 1/16-m puddle.
+            // Pipe heights use block centres, half a metre above the block origin.
+            double next = tank.getBlockPos().getY() - 3.0 / 16 + (tank.getHeight() - 9.0 / 16) * fraction;
+            double difference = Math.abs(next - referenceHeight);
+            referenceHeight = next;
+            return difference;
+        }
+        double tankAmount() {
+            return tank.getTankInventory().getFluidAmount() + (inventory == null ? buffer.amount : inventory.buffered);
+        }
+        double contactAmount() {
+            return tank.getTankInventory().getCapacity() * (faceHeight - tank.getBlockPos().getY() + 3.0 / 16)
+                / (tank.getHeight() - 9.0 / 16);
+        }
+        double pressureHeight() {
+            // An exposed port discharges into unmodelled air, not a suction tube
+            // reaching below the surface. Only immersed ports carry hydrostatic pressure.
+            return tank == null ? referenceHeight : Math.max(faceHeight, referenceHeight);
+        }
+        boolean draws(FluidStack fluid) {
+            return tank == null || FluidMaterials.isGas(fluid) || tankAmount() > contactAmount();
         }
         FluidStack identity() {
             if (buffer.amount > 0) return buffer.fluid;
@@ -111,6 +145,7 @@ public final class FluidKinetics {
         }
         double available(FluidStack fluid, int requested) {
             if (handler == null || !buffer.matches(fluid)) return 0;
+            if (!draws(fluid)) return buffer.amount;
             FluidStack drained = handler.drain(fluid.copyWithAmount(requested), FluidAction.SIMULATE);
             return buffer.amount + (same(drained, fluid) ? drained.getAmount() : 0);
         }
@@ -142,11 +177,14 @@ public final class FluidKinetics {
         final FluidStack fluid;
         final List<InventoryPort> ports = new ArrayList<>();
         double pending;
+        double buffered;
         InventoryPool(IFluidHandler handler, FluidStack fluid) { this.handler = handler; this.fluid = fluid; }
         void refresh() {
-            pending = 0; double roundoff = 0;
+            pending = 0; buffered = 0; double roundoff = 0, bufferRoundoff = 0;
             for (var port : ports) {
                 var buffer = port.endpoint.buffer;
+                double owned = buffer.amount - bufferRoundoff, sum = buffered + owned;
+                bufferRoundoff = (sum - buffered) - owned; buffered = sum;
                 if (!buffer.delivery) continue;
                 double amount = buffer.amount - roundoff, next = pending + amount;
                 roundoff = (next - pending) - amount; pending = next;
@@ -166,16 +204,27 @@ public final class FluidKinetics {
         }
         double allowed(List<FluidTrial> trials, double minutes) {
             double[] rates = rates(trials), owned = new double[rates.length];
-            double incoming = 0;
+            double incoming = 0, net = 0;
+            for (double rate : rates) net += rate;
+            double limit = minutes;
+            if (net != 0 && !FluidMaterials.isGas(fluid)) for (var port : ports) {
+                var endpoint = port.endpoint;
+                if (endpoint.tank == null) continue;
+                double contact = endpoint.contactAmount(), distance = endpoint.tankAmount() - contact;
+                if (contact > 0 && contact < endpoint.tank.getTankInventory().getCapacity()
+                    && distance * net > 0) limit = Math.min(limit, distance / net);
+            }
             for (int i = 0; i < rates.length; i++) {
                 var buffer = ports.get(i).endpoint.buffer;
                 if (rates[i] < 0) { incoming -= rates[i]; rates[i] = 0; }
                 owned[i] = buffer.amount;
+                if (rates[i] > 0 && !ports.get(i).endpoint.draws(fluid))
+                    limit = Math.min(limit, owned[i] / rates[i]);
             }
-            double wanted = FluidBudget.needed(rates, owned, minutes), limit = minutes;
+            double wanted = FluidBudget.needed(rates, owned, minutes);
             if (wanted > 1e-10) {
                 FluidStack stock = handler.drain(fluid.copyWithAmount(request(wanted)), FluidAction.SIMULATE);
-                limit = FluidBudget.limit(rates, owned, same(stock, fluid) ? stock.getAmount() : 0, minutes);
+                limit = Math.min(limit, FluidBudget.limit(rates, owned, same(stock, fluid) ? stock.getAmount() : 0, minutes));
             }
             if (incoming > 0) limit = Math.min(limit, receiptSpace(incoming * minutes) / incoming);
             return limit;
@@ -185,6 +234,7 @@ public final class FluidKinetics {
             double total = 0; int last = -1;
             for (int i = 0; i < need.length; i++) {
                 need[i] = Math.max(0, rates[i] * minutes - ports.get(i).endpoint.buffer.amount);
+                if (need[i] > 1e-10 && !ports.get(i).endpoint.draws(fluid)) return false;
                 if (need[i] > 0) { total += need[i]; last = i; }
             }
             if (total <= 1e-10) return true;
@@ -295,11 +345,25 @@ public final class FluidKinetics {
             // Complete saved integer-boundary receipts before projecting motion.
             // Native open ends may consume that integer and immediately reopen.
             for (var pool : inventories) pool.deliver();
+            refreshHeights(null, 0);
             for (var component : components) if (component.rest != null && component.restInputs != component.inputs(null)) component.rest = null;
+        }
+        double refreshHeights(List<FluidTrial> trials, double minutes) {
+            double difference = 0;
+            for (var pool : inventories) {
+                double change = 0;
+                if (trials != null) for (var port : pool.ports)
+                    change -= trials.get(port.component).filling.waterOutward()[port.endpoint.node] * minutes / (2 * RotationMath.TICK_MINUTES);
+                // Every port of a shared original inventory sees the same midpoint
+                // surface. Owned fractions avoid pressure jumps at integer receipts.
+                for (var port : pool.ports) difference = Math.max(difference, port.endpoint.refreshHeight(change));
+            }
+            return difference;
         }
         public boolean active() { return components.stream().anyMatch(c -> c.active); }
     }
-    private record FluidTrial(IdealFluidSolver.Trial motion, PipeFilling.Move filling, double[] origin, double allowed) {}
+    private record FluidTrial(IdealFluidSolver.Trial motion, PipeFilling.Move filling, double[] origin, double allowed,
+                              boolean equilibrium) {}
     private static final class Component {
         FluidStack fluid;
         IdealFluidSolver.Material material;
@@ -394,7 +458,7 @@ public final class FluidKinetics {
                 }
                 if (c.sealed) borders[c.to] = !c.contents().atEnd();
                 if (c.endpoint != null && c.endpoint.available(fluid, 1) > VOLUME_EPSILON)
-                    datum[c.to] = Math.max(0, material.gravityForce(c.endpoint.referenceHeight - c.endpoint.faceHeight));
+                    datum[c.to] = Math.max(0, material.gravityForce(c.endpoint.pressureHeight() - c.endpoint.faceHeight));
             }
             double[] result = graph(borders, enabled).sample(initial, mass, force, datum, minutes).midpoint();
             double maximum = Arrays.stream(result).map(Math::abs).max().orElse(0), scale = 16;
@@ -427,9 +491,9 @@ public final class FluidKinetics {
         FluidTrial sample(double[] initial, PipeContents[] contents, double[] guess, Map<KineticBlockEntity, Double> speed,
                           double minutes, Map<KineticBlockEntity, Double> torques) {
             if (!active) return new FluidTrial(new IdealFluidSolver.Trial(new double[connections.size()], new double[connections.size()],
-                new double[boundary.length], new double[boundary.length], 0, 0, 0, 0), null, initial, minutes);
+                new double[boundary.length], new double[boundary.length], 0, 0, 0, 0), null, initial, minutes, true);
             if (rest != null) {
-                if (restInputs == inputs(speed)) return new FluidTrial(rest.motion, rest.filling, rest.origin, minutes);
+                if (restInputs == inputs(speed)) return new FluidTrial(rest.motion, rest.filling, rest.origin, minutes, true);
                 rest = null;
             }
             boolean[] enabled = new boolean[connections.size()]; Arrays.fill(enabled, true);
@@ -454,14 +518,15 @@ public final class FluidKinetics {
                     if (guess[e] < 0 && !c.endpoint.identity().isEmpty() && !same(c.endpoint.identity(), fluid)) enabled[e] = false;
                     double liquid = guess[e] < 0 ? supplied[c.to] : contents[e].atEnd() ? 1 : 0;
                     if (guess[e] == 0 && c.endpoint.referenceHeight > c.endpoint.faceHeight) liquid = supplied[c.to];
-                    pressure[c.to] = liquid * material.gravityForce(c.endpoint.referenceHeight - c.endpoint.faceHeight);
-                    double liquidPressure = material.gravityForce(c.endpoint.referenceHeight - c.endpoint.faceHeight);
+                    pressure[c.to] = liquid * material.gravityForce(c.endpoint.pressureHeight() - c.endpoint.faceHeight);
+                    double liquidPressure = material.gravityForce(c.endpoint.pressureHeight() - c.endpoint.faceHeight);
                     if (!contents[e].atEnd() && supplied[c.to] != 0 && liquidPressure < 0)
                         contacts.add(new FluidPressureBounds.Contact(c.to, liquidPressure));
                 }
             }
             IdealFluidSolver.Trial trial = null; PipeFilling.Move move = null;
             double predictedLimit = minutes;
+            boolean equilibrium = true;
             double[] origin = initial, mass = new double[connections.size()];
             for (int e = 0; e < mass.length; e++) mass[e] = material.inertia(connections.get(e).length) * Math.max(1e-12, contents[e].fraction());
             for (int pass = 0; pass <= enabled.length; pass++) {
@@ -474,9 +539,23 @@ public final class FluidKinetics {
                 var prediction = PipeFilling.predict(tubes, boundary.length, contents, origin, guess, boundary, supplied, material, minutes);
                 predictedLimit = prediction.allowedMinutes();
                 if (Arrays.stream(prediction.inertia()).allMatch(value -> value == 0)) {
-                    double[] zero = new double[connections.size()];
-                    return new FluidTrial(new IdealFluidSolver.Trial(zero, zero.clone(), new double[boundary.length], new double[boundary.length], 0, 0, 0, 0),
-                        new PipeFilling.Move(contents, new double[boundary.length], zero.clone(), zero.clone(), minutes), zero.clone(), minutes);
+                    // A reversed or rounded-away provisional inlet must not
+                    // collapse real source pressure into a dry zero-flow root.
+                    double[] drive = seed(new double[initial.length], speed, RotationMath.TICK_MINUTES);
+                    boolean priming = false;
+                    for (int e = 0; e < drive.length; e++) {
+                        var endpoint = connections.get(e).endpoint;
+                        if (endpoint != null && drive[e] < 0 && supplied[endpoint.node] != 0) {
+                            priming = true;
+                            pressure[endpoint.node] = material.gravityForce(endpoint.pressureHeight() - endpoint.faceHeight);
+                        }
+                    }
+                    if (!priming) {
+                        double[] zero = new double[connections.size()];
+                        return new FluidTrial(new IdealFluidSolver.Trial(zero, zero.clone(), new double[boundary.length], new double[boundary.length], 0, 0, 0, 0),
+                            new PipeFilling.Move(contents, new double[boundary.length], zero.clone(), zero.clone(), minutes), zero.clone(), minutes, true);
+                    }
+                    equilibrium = false;
                 }
                 double[] averageMass = prediction.inertia().clone(), applied = force.clone();
                 for (int e = 0; e < mass.length; e++) {
@@ -486,7 +565,7 @@ public final class FluidKinetics {
                     var endpoint = connections.get(e).endpoint;
                     if (endpoint != null && guess[e] > 0) {
                         double liquid = Math.max(0, Math.min(1, -prediction.waterOutward()[endpoint.node] / guess[e]));
-                        pressure[endpoint.node] = liquid * material.gravityForce(endpoint.referenceHeight - endpoint.faceHeight);
+                        pressure[endpoint.node] = liquid * material.gravityForce(endpoint.pressureHeight() - endpoint.faceHeight);
                         applied[e] -= liquid * material.outletForce(guess[e]);
                     }
                     if (connections.get(e).pump != null) {
@@ -532,7 +611,7 @@ public final class FluidKinetics {
             allowed = Math.min(allowed, move.allowedMinutes());
             for (int e = 0; e < enabled.length; e++) if (connections.get(e).pump != null)
                 torques.merge(connections.get(e).pump, -axisSigns.get(connections.get(e).pump) * couplings[e] * trial.midpoint()[e], Double::sum);
-            return new FluidTrial(trial, move, origin, allowed);
+            return new FluidTrial(trial, move, origin, allowed, equilibrium);
         }
         void commit(FluidTrial trial, double minutes) {
             if (!active) return;
@@ -577,7 +656,7 @@ public final class FluidKinetics {
                         saved.outward.getOrDefault(entry.getKey(), 0d));
                 pipe.blockEntity.setChanged();
             }
-            if (stationary) {
+            if (stationary && trial.equilibrium) {
                 restIndependentSpeed = reduced != null && reduced.stationary();
                 // A suction front reopens when pump pressure overcomes its datum.
                 if (restIndependentSpeed) for (var endpoint : endpoints) if (endpoint.referenceHeight < endpoint.faceHeight
@@ -700,6 +779,7 @@ public final class FluidKinetics {
             mechanical.commit();
             for (int i = 0; i < fluids.size(); i++) frame.components.get(i).commit(fluids.get(i), mechanical.result.duration());
             for (var pool : frame.inventories) pool.deliver();
+            frame.refreshHeights(null, 0);
         }
     }
 
@@ -710,6 +790,7 @@ public final class FluidKinetics {
         String stalled = "iteration";
         int eventShortens = 0;
         for (int retry = 0; retry < 64; retry++) {
+            frame.refreshHeights(null, 0);
             var speeds = new HashMap<KineticBlockEntity, Double>();
             for (var network : networks) for (var be : network.members.keySet()) speeds.put(be, NetworkDynamics.preciseSpeed(be));
             var initial = frame.components.stream().map(Component::initial).toList();
@@ -735,7 +816,7 @@ public final class FluidKinetics {
                     double limit = pool.allowed(fluids, minutes);
                     if (limit < allowed) { allowed = limit; limiting = pool; }
                 }
-                double fluidDifference = 0;
+                double fluidDifference = frame.refreshHeights(fluids, minutes);
                 for (int c = 0; c < fluids.size(); c++) for (int e = 0; e < guesses.get(c).length; e++)
                     fluidDifference = Math.max(fluidDifference, Math.abs(fluids.get(c).motion.midpoint()[e] - guesses.get(c)[e])
                         / (1 + Math.abs(fluids.get(c).motion.midpoint()[e])));
