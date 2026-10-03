@@ -16,7 +16,7 @@ public final class PipeFillingRegression {
     private static final IdealFluidSolver.Material WATER = new IdealFluidSolver.Material(1000, false);
     private static int checks;
     public static void run() {
-        intervals(); intervalRoundoff(); acceleratedFronts(); subnormalFlow(); massAndEnergy(); branches(); residualAtMouth(); sharedInventory(); receiptCapacity(); pumpTangent(); reduction(); drySuction();
+        intervals(); intervalRoundoff(); acceleratedFronts(); subnormalFlow(); fullHorizonPrediction(); emptyChannelMomentum(); massAndEnergy(); branches(); residualAtMouth(); sharedInventory(); receiptCapacity(); pumpTangent(); reduction(); drySuction();
         System.out.println("Pipe filling regression: " + checks + " checks passed");
     }
     private static void intervals() {
@@ -99,6 +99,71 @@ public final class PipeFillingRegression {
                     checks++;
                 }
             }
+        }
+    }
+    private static void fullHorizonPrediction() {
+        double length = .5, minutes = IdealFluidSolver.MAX_STEP;
+        double capacity = length * PipeFilling.MB_PER_METRE;
+        for (double direction : new double[]{1, -1}) for (double width : new double[]{8.007729e-10, 3.1146e-12, .05})
+            for (double inlet : new double[]{0, 1}) for (double q0 : new double[]{-62.352667219014954, 0, 62.352667219014954}) {
+                var old = PipeContents.of(1 - width, 1); if (direction < 0) old = old.reverse();
+                var original = old.data();
+                double q = direction * 8.36153831376767;
+                var tube = new PipeFilling.Tube(0, 1, length, 2, 2 + direction * length);
+                var predicted = PipeFilling.predict(List.of(tube), 2, new PipeContents[]{old}, new double[]{q0},
+                    new double[]{q}, new boolean[]{true, true}, new double[]{inlet, inlet}, WATER, minutes);
+                double displacement = q * minutes / (RotationMath.TICK_MINUTES * capacity);
+                var next = old.move(displacement, inlet);
+                double exchanged = minutes * (predicted.waterOutward()[0] + predicted.waterOutward()[1]) / RotationMath.TICK_MINUTES;
+                near((next.fraction() - old.fraction()) * capacity, exchanged, 1e-12,
+                    "full-horizon coefficients use the full interval's actual liquid flux");
+                near(WATER.inertia(length) * .5 * (old.fraction() + next.fraction()), predicted.inertia()[0], 1e-18,
+                    "predicted mean mass and applied force share the requested duration");
+                double q1 = 2 * q - q0;
+                double force = predicted.inertia()[0] * (q1 - q0) / minutes - predicted.correction()[0];
+                double energy = .5 * WATER.inertia(length) * (next.fraction() * q1 * q1 - old.fraction() * q0 * q0);
+                energy += capacity * RotationMath.TICK_MINUTES * (WATER.gravityForce(tube.fromHeight()) * (next.fraction() - old.fraction())
+                    + WATER.gravityForce(tube.toHeight() - tube.fromHeight()) * (next.moment() - old.moment()));
+                double work = minutes * (force * q + WATER.gravityForce(tube.fromHeight()) * predicted.waterOutward()[0]
+                    + WATER.gravityForce(tube.toHeight()) * predicted.waterOutward()[1]);
+                near(energy, work, 1e-14, "a mouth-crossing prediction retains moving-mass and gravitational work balance");
+                if (!Arrays.equals(original, old.data())) throw new AssertionError("a detached prediction cannot move owned water");
+                checks++;
+                var feasible = PipeFilling.sample(List.of(tube), 2, new PipeContents[]{old}, new double[]{q0},
+                    new double[]{q}, new boolean[]{true, true}, new double[]{inlet, inlet}, WATER, minutes);
+                near(feasible.allowedMinutes(), predicted.allowedMinutes(), 0, "prediction retains the real mouth event for later resolution");
+            }
+        for (double direction : new double[]{1, -1}) {
+            var old = PipeContents.of(.2, .8);
+            var predicted = PipeFilling.predict(List.of(new PipeFilling.Tube(0, 1, length, 0, 0)), 2,
+                new PipeContents[]{old}, new double[]{direction * 10000}, new double[]{direction * 10000},
+                new boolean[]{true, true}, new double[]{1, 1}, WATER, minutes);
+            if (!(predicted.allowedMinutes() > 0 && predicted.allowedMinutes() < minutes))
+                throw new AssertionError("an oversized provisional trajectory must retain its mouth event");
+            if (!Double.isFinite(predicted.inertia()[0]) || !Double.isFinite(predicted.correction()[0]))
+                throw new AssertionError("event search coefficients cannot require premature multi-pipe transport");
+            near(.6, old.fraction(), 1e-15, "a rejected oversized prediction cannot create or remove owned water");
+        }
+    }
+    private static void emptyChannelMomentum() {
+        var edges = List.of(new IdealFluidSolver.Edge(0, 1, WATER.inertia(1)), new IdealFluidSolver.Edge(1, 2, WATER.inertia(26)));
+        var graph = new ReducedFluidGraph(3, edges, new boolean[]{true, false, true}, new boolean[]{true, true});
+        var contents = new PipeContents[]{PipeContents.EMPTY, PipeContents.EMPTY};
+        if (!graph.emptyBoundaryChannel(2, contents)) throw new AssertionError("a completely dry pressure channel has no physical momentum");
+        checks++;
+        double[] weights = {WATER.inertia(1) * 1e-12, WATER.inertia(26) * 1e-12};
+        for (double q : new double[]{-62.35266648986439, 1.5, 62.35266648986439}) {
+            var held = new ReducedFluidGraph(3, edges, new boolean[]{true, false, false}, new boolean[]{true, true})
+                .sample(new double[]{q, q}, weights, new double[2], new double[3], IdealFluidSolver.MAX_STEP);
+            near(0, held.flow()[0], 0, "a held empty channel does not reflect fictitious matrix momentum");
+            near(0, held.flow()[1], 0, "dry source mouth has exact zero flow after imposing its pressure constraint");
+            near(.5 * (weights[0] + weights[1]) * q * q, held.projectionLoss(), 1e-25,
+                "the constraint projection accounts for all removed numerical-weight energy");
+        }
+        for (int e = 0; e < contents.length; e++) {
+            contents[e] = PipeContents.of(0, 1e-20);
+            if (graph.emptyBoundaryChannel(2, contents)) throw new AssertionError("even a tiny representable liquid slug keeps its real inertia");
+            checks++; contents[e] = PipeContents.EMPTY;
         }
     }
     private static void drySuction() {

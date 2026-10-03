@@ -72,6 +72,16 @@ public final class ReducedFluidGraph {
         return Arrays.equals(this.boundary, boundary) && Arrays.equals(this.active, active);
     }
     public int channels() { return channels.size(); }
+    /** Empty-space matrix weights have no physical momentum to retain at a held
+     * dry front. Any representable liquid in the channel keeps its real inertia. */
+    public boolean emptyBoundaryChannel(int node, PipeContents[] contents) {
+        boolean found = false;
+        for (var channel : channels) if (channel.from == node || channel.to == node) {
+            found = true;
+            for (int signed : channel.signedEdges) if (contents[Math.abs(signed) - 1].fraction() != 0) return false;
+        }
+        return found;
+    }
     public boolean stationary() {
         for (boolean closed : stopped) if (!closed) return false;
         return true;

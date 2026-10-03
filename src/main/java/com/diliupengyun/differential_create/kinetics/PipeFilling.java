@@ -10,10 +10,26 @@ public final class PipeFilling {
     public record Tube(int from, int to, double length, double fromHeight, double toHeight) {}
     public record Move(PipeContents[] contents, double[] waterOutward, double[] inertia,
                        double[] correction, double allowedMinutes) {}
+    public record Prediction(double[] waterOutward, double[] inertia, double[] correction, double allowedMinutes) {}
 
     public static Move sample(List<Tube> tubes, int nodes, PipeContents[] contents, double[] origin,
                               double[] midpoint, boolean[] inventory, double[] supplied,
                               IdealFluidSolver.Material material, double minutes) {
+        return sample(tubes, nodes, contents, origin, midpoint, inventory, supplied, material, minutes, true);
+    }
+
+    /** Detached coefficients for the requested horizon, even when its provisional
+     * trajectory crosses a face. The caller must resolve allowedMinutes before commit. */
+    public static Prediction predict(List<Tube> tubes, int nodes, PipeContents[] contents, double[] origin,
+                                     double[] midpoint, boolean[] inventory, double[] supplied,
+                                     IdealFluidSolver.Material material, double minutes) {
+        var result = sample(tubes, nodes, contents, origin, midpoint, inventory, supplied, material, minutes, false);
+        return new Prediction(result.waterOutward, result.inertia, result.correction, result.allowedMinutes);
+    }
+
+    private static Move sample(List<Tube> tubes, int nodes, PipeContents[] contents, double[] origin,
+                               double[] midpoint, boolean[] inventory, double[] supplied,
+                               IdealFluidSolver.Material material, double minutes, boolean truncate) {
         double[] inward = new double[nodes], water = new double[nodes];
         double limit = minutes;
         for (int e = 0; e < tubes.size(); e++) {
@@ -23,7 +39,7 @@ public final class PipeFilling {
         }
         // Numerical face events can coalesce at machine precision. Integrating the
         // actual outgoing interval keeps their tiny inventory exact, in either direction.
-        double dt = Math.min(minutes, limit);
+        double dt = truncate ? Math.min(minutes, limit) : minutes;
         double[] transport = midpoint;
         if (dt < minutes) {
             transport = new double[midpoint.length];
@@ -53,7 +69,7 @@ public final class PipeFilling {
             double capacity = tube.length * MB_PER_METRE;
             double displacement = q * dt / (RotationMath.TICK_MINUTES * capacity);
             double inlet = fraction[q > 0 ? tube.from : tube.to];
-            next[e] = old.move(displacement, inlet);
+            next[e] = truncate ? old.move(displacement, inlet) : old;
             double waterFrom = q > 0 ? q * inlet : q * exiting[e];
             double waterTo = q > 0 ? q * exiting[e] : q * inlet;
             outward[tube.from] += waterFrom; outward[tube.to] -= waterTo;

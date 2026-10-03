@@ -688,6 +688,92 @@ public final class PumpPhysicsTests {
         ratios.forEach((be, ratio) -> ElasticKinetics.state(be).physicalSpeed = speed * ratio / reference);
     }
 
+    @GameTest(template = TEMPLATE, batch = "pump_filling", timeoutTicks = 240)
+    public static void placingSuctionBranchAdvancesWithValidInventory(GameTestHelper h) {
+        placingBranch(h, false);
+    }
+
+    @GameTest(template = TEMPLATE, batch = "pump_filling", timeoutTicks = 240)
+    public static void placingPressureBranchAdvancesWithValidInventory(GameTestHelper h) {
+        placingBranch(h, true);
+    }
+
+    private static void placingBranch(GameTestHelper h, boolean pushing) {
+        var fixture = suctionLoop(h);
+        if (pushing) h.setBlock(fixture.pumpPos, AllBlocks.MECHANICAL_PUMP.getDefaultState().setValue(PumpBlock.FACING, Direction.WEST));
+        BlockPos junction = fixture.corner.above(15), branch = junction.east();
+        pipe(h, junction, Direction.DOWN, Direction.UP);
+        var watched = new java.util.ArrayList<>(fixture.pipes); watched.add(branch);
+        double[] total = {0};
+        h.runAfterDelay(20, () -> {
+            var fluid = new FluidStack(Fluids.WATER, 1);
+            fixture.tank.getTankInventory().fill(fluid.copyWithAmount(16000), FluidAction.EXECUTE);
+            suctionSpeed(fixture.motor, 32);
+            pipe(h, branch, Direction.WEST, Direction.EAST);
+            pipe(h, junction, Direction.DOWN, Direction.UP, Direction.EAST);
+            // The placement crash retained a slow lower column and opposite flows
+            // between two almost empty upper mouths. Keep that detached state to
+            // exercise event predictions during the actual topology change.
+            double lower = 7.29150564383068e-7, upper = 62.35266648986439;
+            for (var pos : fixture.pipes) {
+                var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(pos));
+                var saved = FluidKinetics.state(pipe); saved.fluid = fluid.copy();
+                for (var side : pipe.interfaces.keySet()) {
+                    saved.contents.put(side, pos.getY() <= fixture.corner.getY() + 4
+                        ? com.diliupengyun.differential_create.kinetics.PipeContents.FULL
+                        : com.diliupengyun.differential_create.kinetics.PipeContents.EMPTY);
+                    double q = pos.getY() > junction.getY() ? upper : -lower;
+                    saved.outward.put(side, side == Direction.UP || side == Direction.EAST ? q : -q);
+                }
+                if (pos.equals(fixture.corner.above(5))) saved.contents.put(Direction.DOWN,
+                    com.diliupengyun.differential_create.kinetics.PipeContents.of(.9183650717023051, .9576122989793929, .9576122989796594, 1));
+                if (pos.equals(fixture.pumpPos.above(26))) saved.contents.put(Direction.EAST,
+                    com.diliupengyun.differential_create.kinetics.PipeContents.of(.9999999999998117, 1));
+                if (pos.equals(junction)) {
+                    saved.outward.put(Direction.UP, upper);
+                    saved.outward.put(Direction.EAST, -(upper + lower));
+                }
+                if (pos.equals(fixture.pumpPos)) {
+                    saved.core = com.diliupengyun.differential_create.kinetics.PipeContents.FULL;
+                    saved.pumpFlow = pushing ? -lower : lower; saved.pumpFacing = pushing ? Direction.WEST : Direction.EAST;
+                    saved.outward.put(Direction.WEST, -lower); saved.outward.put(Direction.EAST, lower);
+                }
+            }
+            var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(branch));
+            var saved = FluidKinetics.state(pipe); saved.fluid = fluid.copy();
+            saved.contents.put(Direction.EAST, com.diliupengyun.differential_create.kinetics.PipeContents.of(.9999999991992271, 1));
+            saved.outward.put(Direction.WEST, upper + lower); saved.outward.put(Direction.EAST, -(upper + lower));
+            total[0] = fixture.tank.getTankInventory().getFluidAmount() + watched.stream().mapToDouble(pos -> pipeOwned(h, pos)).sum();
+        });
+        h.onEachTick(() -> {
+            if (total[0] == 0) return;
+            double actual = fixture.tank.getTankInventory().getFluidAmount();
+            for (var pos : watched) {
+                var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(pos));
+                if (pipe == null) continue;
+                var packet = new net.minecraft.nbt.CompoundTag(); var state = FluidKinetics.state(pipe);
+                state.write(packet, h.getLevel().registryAccess());
+                var decoded = new com.diliupengyun.differential_create.kinetics.PipeHydraulics();
+                decoded.read(packet, h.getLevel().registryAccess());
+                h.assertTrue(decoded.volume() == state.volume(), "placed/reconnected pipes publish readable owned intervals");
+                h.assertTrue(state.outward.values().stream().allMatch(Double::isFinite), "placed branch has finite physical flow");
+                actual += pipeOwned(h, pos);
+            }
+            h.assertTrue(Math.abs(actual - total[0]) < 1e-6, "placement and reconnection conserve retained water: " + actual + " / " + total[0]);
+        });
+        for (int tick : new int[]{70, 130}) h.runAfterDelay(tick, () -> {
+            total[0] -= pipeOwned(h, branch);
+            h.getLevel().destroyBlock(h.absolutePos(branch), false);
+        });
+        for (int tick : new int[]{95, 155}) h.runAfterDelay(tick, () -> pipe(h, branch, Direction.WEST, Direction.EAST));
+        h.runAfterDelay(210, () -> {
+            PumpBlockEntity pump = h.getBlockEntity(fixture.pumpPos);
+            h.assertTrue(Double.isFinite(pump.getSpeed()) && Double.isFinite(((IPumpDynamics) pump).differentialcreate$flow()),
+                "clock advances through placement, removal and repeated reconnection of the suction branch");
+            h.succeed();
+        });
+    }
+
     @GameTest(template = TEMPLATE, batch = "pump_filling", timeoutTicks = 460)
     public static void insufficientHeadFillsLowerPipes(GameTestHelper h) {
         Fixture f = fixture(h, false, false);

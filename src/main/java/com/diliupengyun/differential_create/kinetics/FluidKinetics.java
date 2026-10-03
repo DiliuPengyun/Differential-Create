@@ -461,26 +461,31 @@ public final class FluidKinetics {
                 }
             }
             IdealFluidSolver.Trial trial = null; PipeFilling.Move move = null;
+            double predictedLimit = minutes;
             double[] origin = initial, mass = new double[connections.size()];
             for (int e = 0; e < mass.length; e++) mass[e] = material.inertia(connections.get(e).length) * Math.max(1e-12, contents[e].fraction());
             for (int pass = 0; pass <= enabled.length; pass++) {
                 var graph = graph(borders, enabled);
                 // Only a real connection/closed-mouth impulse projects old motion.
                 origin = graph.sample(initial, mass, new double[mass.length], new double[boundary.length], minutes).flow();
-                move = PipeFilling.sample(tubes, boundary.length, contents, origin, guess, boundary, supplied, material, minutes);
-                if (Arrays.stream(move.inertia()).allMatch(value -> value == 0)) {
+                // A shortened prefix's mass-flux force must not act over the full
+                // horizon. Predict full-horizon coefficients; only a feasible final
+                // trajectory is transported and committed below.
+                var prediction = PipeFilling.predict(tubes, boundary.length, contents, origin, guess, boundary, supplied, material, minutes);
+                predictedLimit = prediction.allowedMinutes();
+                if (Arrays.stream(prediction.inertia()).allMatch(value -> value == 0)) {
                     double[] zero = new double[connections.size()];
                     return new FluidTrial(new IdealFluidSolver.Trial(zero, zero.clone(), new double[boundary.length], new double[boundary.length], 0, 0, 0, 0),
                         new PipeFilling.Move(contents, new double[boundary.length], zero.clone(), zero.clone(), minutes), zero.clone(), minutes);
                 }
-                double[] averageMass = move.inertia().clone(), applied = force.clone();
+                double[] averageMass = prediction.inertia().clone(), applied = force.clone();
                 for (int e = 0; e < mass.length; e++) {
                     // Positive matrix weights approach the zero-mass empty-space limit.
                     averageMass[e] = Math.max(averageMass[e], material.inertia(connections.get(e).length) * 1e-12);
-                    applied[e] += move.correction()[e];
+                    applied[e] += prediction.correction()[e];
                     var endpoint = connections.get(e).endpoint;
                     if (endpoint != null && guess[e] > 0) {
-                        double liquid = Math.max(0, Math.min(1, -move.waterOutward()[endpoint.node] / guess[e]));
+                        double liquid = Math.max(0, Math.min(1, -prediction.waterOutward()[endpoint.node] / guess[e]));
                         pressure[endpoint.node] = liquid * material.gravityForce(endpoint.referenceHeight - endpoint.faceHeight);
                         applied[e] -= liquid * material.outletForce(guess[e]);
                     }
@@ -500,11 +505,14 @@ public final class FluidKinetics {
                     boolean[] pinned = FluidPressureBounds.solve(graph, origin, averageMass, applied, pressure, contacts, minutes);
                     boolean[] contactBorders = borders.clone(); boolean holds = false;
                     for (var contact : contacts) if (pinned[contact.node()]) {
-                        // A stationary dry front constrains zero flow exactly. Existing
-                        // moving water keeps its midpoint pressure solution and inertia.
+                        // A held dry front constrains a stationary or wholly empty
+                        // channel. Numerical empty-space weights cannot retain a
+                        // sign-alternating momentum; any actual water keeps inertia.
                         boolean stationary = true;
                         for (int e = 0; e < origin.length; e++) if (connections.get(e).to == contact.node() && origin[e] != 0) stationary = false;
-                        if (stationary) { contactBorders[contact.node()] = false; holds = true; }
+                        if (stationary || graph.emptyBoundaryChannel(contact.node(), contents)) {
+                            contactBorders[contact.node()] = false; holds = true;
+                        }
                     }
                     if (holds) motionGraph = graph(contactBorders, enabled);
                 }
@@ -519,7 +527,7 @@ public final class FluidKinetics {
                 if (!changed) break;
             }
             if (trial == null) throw new IllegalStateException("No fluid trial");
-            double allowed = move.allowedMinutes();
+            double allowed = predictedLimit;
             move = PipeFilling.sample(tubes, boundary.length, contents, origin, trial.midpoint(), boundary, supplied, material, minutes);
             allowed = Math.min(allowed, move.allowedMinutes());
             for (int e = 0; e < enabled.length; e++) if (connections.get(e).pump != null)
@@ -700,6 +708,7 @@ public final class FluidKinetics {
     public static JointTrial sample(Frame frame, List<KineticNetwork> networks, double horizon, List<ElasticKinetics.WorkEvent> events) {
         double minutes = horizon;
         String stalled = "iteration";
+        int eventShortens = 0;
         for (int retry = 0; retry < 64; retry++) {
             var speeds = new HashMap<KineticBlockEntity, Double>();
             for (var network : networks) for (var be : network.members.keySet()) speeds.put(be, NetworkDynamics.preciseSpeed(be));
@@ -726,24 +735,38 @@ public final class FluidKinetics {
                     double limit = pool.allowed(fluids, minutes);
                     if (limit < allowed) { allowed = limit; limiting = pool; }
                 }
+                double fluidDifference = 0;
+                for (int c = 0; c < fluids.size(); c++) for (int e = 0; e < guesses.get(c).length; e++)
+                    fluidDifference = Math.max(fluidDifference, Math.abs(fluids.get(c).motion.midpoint()[e] - guesses.get(c)[e])
+                        / (1 + Math.abs(fluids.get(c).motion.midpoint()[e])));
                 if (allowed < minutes * (1 - 1e-12)) {
+                    // Intermediate velocities can reverse an almost empty branch.
+                    // Converge that fluid prediction before searching its event or
+                    // sampling the shaft with an inadmissible transport interval.
+                    if (fluidDifference >= 1e-10 || iteration == 0) {
+                        stalled = "fluid iteration residual " + fluidDifference;
+                        relax(fluids, guesses, previousResidual, previousStep, iteration);
+                        continue;
+                    }
                     stalled = (limiting instanceof Component component ? "pipe mouth at " + component.members.getFirst().getPos()
                         : limiting instanceof InventoryPool pool ? "inventory at " + pool.ports.getFirst().endpoint.pipe.getPos()
                             + (allowed > 1e-18 ? "" : " pending=" + pool.pending + " rates=" + Arrays.toString(pool.rates(fluids))
                                 + " owned=" + pool.ports.stream().map(p -> p.endpoint.buffer.amount).toList()) : "fluid volume")
                         + " " + allowed + " / " + minutes;
-                    minutes = allowed; shorter = true; break;
+                    // Use a sharp event estimate first. If re-solving keeps moving
+                    // it, backtrack to a feasible prefix instead of approaching
+                    // the revised face time forever from above.
+                    minutes = ++eventShortens <= 2 ? allowed : Math.min(allowed, .5 * minutes);
+                    shorter = true; break;
                 }
                 var capture = ElasticKinetics.snapshot(networks, torques);
                 ElasticKinetics.Trial mechanical = events.isEmpty() ? capture.sample(minutes) : capture.advanceToEvent(minutes, events);
                 if (mechanical.result.duration() < minutes * (1 - 1e-9)) { stalled = "mechanical event"; minutes = mechanical.result.duration(); shorter = true; break; }
-                double difference = 0;
+                double difference = fluidDifference;
                 var nextSpeeds = new HashMap<KineticBlockEntity, Double>();
                 for (var be : mechanical.members) nextSpeeds.put(be, mechanical.signedTravel(be) * RotationMath.TICK_MINUTES / minutes);
                 for (var entry : torques.entrySet()) difference = Math.max(difference,
                     Math.abs(entry.getValue() - lastTorques.getOrDefault(entry.getKey(), 0d)) / (1 + Math.abs(entry.getValue())));
-                for (int c = 0; c < fluids.size(); c++) for (int e = 0; e < guesses.get(c).length; e++)
-                    difference = Math.max(difference, Math.abs(fluids.get(c).motion.midpoint()[e] - guesses.get(c)[e]) / (1 + Math.abs(fluids.get(c).motion.midpoint()[e])));
                 if (difference < 1e-10 && iteration > 0) {
                     double exchanged = 0, shaftWork = 0;
                     for (int c = 0; c < fluids.size(); c++) {
@@ -771,24 +794,28 @@ public final class FluidKinetics {
                 }
                 lastTorques = torques;
                 stalled = "iteration residual " + difference;
-                double numerator = 0, denominator = 0;
-                for (int c = 0; c < fluids.size(); c++) for (int e = 0; e < guesses.get(c).length; e++) {
-                    double residual = fluids.get(c).motion.midpoint()[e] - guesses.get(c)[e];
-                    double change = residual - previousResidual.get(c)[e];
-                    numerator -= previousStep.get(c)[e] * change; denominator += change * change;
-                }
-                double relaxation = iteration == 0 ? .1 : denominator == 0 ? 1 : Math.max(.03, Math.min(1, numerator / denominator));
-                for (int c = 0; c < fluids.size(); c++) for (int e = 0; e < guesses.get(c).length; e++) {
-                    double residual = fluids.get(c).motion.midpoint()[e] - guesses.get(c)[e];
-                    previousResidual.get(c)[e] = residual; previousStep.get(c)[e] = relaxation * residual;
-                    guesses.get(c)[e] += previousStep.get(c)[e];
-                }
+                relax(fluids, guesses, previousResidual, previousStep, iteration);
                 speeds = nextSpeeds;
             }
             if (!shorter) minutes /= 2;
             if (!(minutes > 1e-18)) throw new IllegalStateException("Fluid event failed to advance: " + stalled + "; step=" + minutes);
         }
         throw new IllegalStateException("Ideal fluid / shaft coupling did not converge: " + stalled + "; step " + minutes);
+    }
+    private static void relax(List<FluidTrial> fluids, List<double[]> guesses, List<double[]> previousResidual,
+                              List<double[]> previousStep, int iteration) {
+        double numerator = 0, denominator = 0;
+        for (int c = 0; c < fluids.size(); c++) for (int e = 0; e < guesses.get(c).length; e++) {
+            double residual = fluids.get(c).motion.midpoint()[e] - guesses.get(c)[e];
+            double change = residual - previousResidual.get(c)[e];
+            numerator -= previousStep.get(c)[e] * change; denominator += change * change;
+        }
+        double relaxation = iteration == 0 ? .1 : denominator == 0 ? 1 : Math.max(.03, Math.min(1, numerator / denominator));
+        for (int c = 0; c < fluids.size(); c++) for (int e = 0; e < guesses.get(c).length; e++) {
+            double residual = fluids.get(c).motion.midpoint()[e] - guesses.get(c)[e];
+            previousResidual.get(c)[e] = residual; previousStep.get(c)[e] = relaxation * residual;
+            guesses.get(c)[e] += previousStep.get(c)[e];
+        }
     }
     public static void publish(Frame frame) {
         for (var pipe : frame.captured.keySet()) if (!pipe.blockEntity.isRemoved()) {
