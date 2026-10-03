@@ -31,6 +31,17 @@ public final class PipeContents {
         return canonical(ends.clone());
     }
     private static PipeContents canonical(double[] ends) {
+        int count = 0;
+        for (int i = 0; i < ends.length; i += 2) {
+            double a = ends[i], b = ends[i + 1];
+            // Affine coordinate changes can round both ends of a sub-ULP slug to
+            // the same position. It owns no representable length in this frame
+            // and must not survive as an invalid interval in saved/client data.
+            if (a == b) continue;
+            if (count > 0 && ends[count - 1] == a) ends[count - 1] = b;
+            else { ends[count++] = a; ends[count++] = b; }
+        }
+        if (count != ends.length) ends = Arrays.copyOf(ends, count);
         if (ends.length == 0) return EMPTY;
         if (ends.length == 2 && ends[0] == 0 && ends[1] == 1) return FULL;
         return new PipeContents(ends);

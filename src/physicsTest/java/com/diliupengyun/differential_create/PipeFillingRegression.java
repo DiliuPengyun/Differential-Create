@@ -16,7 +16,7 @@ public final class PipeFillingRegression {
     private static final IdealFluidSolver.Material WATER = new IdealFluidSolver.Material(1000, false);
     private static int checks;
     public static void run() {
-        intervals(); massAndEnergy(); branches(); residualAtMouth(); sharedInventory(); receiptCapacity(); pumpTangent(); reduction(); drySuction();
+        intervals(); intervalRoundoff(); acceleratedFronts(); subnormalFlow(); massAndEnergy(); branches(); residualAtMouth(); sharedInventory(); receiptCapacity(); pumpTangent(); reduction(); drySuction();
         System.out.println("Pipe filling regression: " + checks + " checks passed");
     }
     private static void intervals() {
@@ -31,6 +31,75 @@ public final class PipeFillingRegression {
         near(.3, PipeContents.of(0, .4).move(-.1, 0).fraction(), 1e-15, "a water column can retreat");
         near(.4, PipeContents.of(0, .4).move(0, 0).fraction(), 0, "stopped water remains in its pipe");
         near(.4, PipeContents.of(0, .6).interpolate(PipeContents.of(0, .2), .5).fraction(), 1e-15, "front animation interpolates actual owned water");
+    }
+    private static void intervalRoundoff() {
+        for (double width : new double[]{1e-20, 1e-16, Math.ulp(1d), 1e-12}) {
+            var slug = PipeContents.of(0, width);
+            valid(slug.reverse(), "reversing a thin slug remains readable by the client");
+            valid(PipeContents.join(PipeContents.EMPTY, slug, .5), "joining neighbouring arms cannot publish a collapsed interval");
+            valid(slug.move(-.5, .25), "reverse flow cannot retain zero-length liquid");
+            var nearCut = PipeContents.of(.5 - Math.ulp(.5), .5 + Math.ulp(.5));
+            valid(nearCut.slice(.5, 1).reverse(), "an ownership split preserves valid reversed endpoints");
+            near(slug.fraction(), slug.reverse().fraction(), 2 * Math.ulp(1d),
+                "position arithmetic loses at most its representational precision");
+        }
+        Random random = new Random(0xB12A2026);
+        var contents = PipeContents.of(.2, .8);
+        for (int step = 0; step < 1000; step++) {
+            double old = contents.fraction();
+            var rejoined = PipeContents.join(contents.slice(0, .5), contents.slice(.5, 1), .5);
+            valid(rejoined, "every split and join can round-trip through interval decoding");
+            near(old, rejoined.fraction(), 4 * Math.ulp(1d), "splitting cannot create or erase representable water");
+            contents = rejoined.move((random.nextDouble() - .5) * .02, random.nextBoolean() ? 1 : 0);
+            valid(contents, "moving mixed liquid in both directions remains serializable");
+        }
+    }
+    private static void valid(PipeContents contents, String reason) {
+        try { PipeContents.of(contents.data()); checks++; }
+        catch (IllegalArgumentException e) { throw new AssertionError(reason + ": " + Arrays.toString(contents.data()), e); }
+    }
+    private static void acceleratedFronts() {
+        var tube = new PipeFilling.Tube(0, 1, .5, 0, 0);
+        // The retained upper-mouth slug and almost stopped flow from the crash save.
+        var slug = PipeContents.of(.9999999999968854, 1);
+        double distance = slug.fraction() * .5 * PipeFilling.MB_PER_METRE * RotationMath.TICK_MINUTES;
+        for (double direction : new double[]{1, -1}) for (double[] trajectory : new double[][]{
+            {0, 7200}, {1.1345337505861621e-5, 7200}, {10, 7200}, {10, -7200}}) {
+            double initial = trajectory[0], acceleration = trajectory[1];
+            var contents = direction > 0 ? slug : slug.reverse();
+            double minutes = IdealFluidSolver.MAX_STEP;
+            PipeFilling.Move move = null;
+            for (int attempt = 0; attempt < 8; attempt++) {
+                double midpoint = initial + .5 * acceleration * minutes;
+                move = PipeFilling.sample(List.of(tube), 2, new PipeContents[]{contents}, new double[]{direction * initial},
+                    new double[]{direction * midpoint}, new boolean[]{true, true}, new double[2], WATER, minutes);
+                if (move.allowedMinutes() >= minutes * (1 - 1e-12)) break;
+                minutes = move.allowedMinutes();
+            }
+            double travelled = initial * minutes + .5 * acceleration * minutes * minutes;
+            near(distance, travelled, 1e-26, "a front event occurs at the acceleration trajectory's actual mouth crossing");
+            near(0, move.contents()[0].fraction(), Math.ulp(1d), "the thin upper-mouth slug exits in one resolved event");
+            if (initial < 1 && !(minutes > 1e-9)) throw new AssertionError("near-rest acceleration must not repeatedly commit microscopic time steps");
+            checks++;
+        }
+    }
+    private static void subnormalFlow() {
+        var tube = new PipeFilling.Tube(0, 1, .5, 0, .5);
+        for (var old : new PipeContents[]{PipeContents.EMPTY, PipeContents.FULL, PipeContents.of(.2, .8),
+            PipeContents.of(0, .25), PipeContents.of(.75, 1)}) {
+            for (double q : new double[]{Double.MIN_VALUE, -Double.MIN_VALUE, 8.607e-321, -8.607e-321}) {
+                var move = PipeFilling.sample(List.of(tube), 2, new PipeContents[]{old}, new double[]{0}, new double[]{q},
+                    new boolean[]{true, true}, new double[]{1, 1}, WATER, 4.437747585623393e-8);
+                valid(move.contents()[0], "subnormal trial flow keeps valid owned contents");
+                near(old.fraction(), move.contents()[0].fraction(), 0, "unrepresentable travel cannot move stored water");
+                near(WATER.inertia(.5) * old.fraction(), move.inertia()[0], 0, "zero displacement retains the actual moving mass");
+                near(-WATER.gravityForce(.5) * old.fraction(), move.correction()[0], 0, "underflow cannot generate a nonfinite force");
+                for (double outward : move.waterOutward()) {
+                    if (!Double.isFinite(outward)) throw new AssertionError("limiting mouth phase must have finite transport");
+                    checks++;
+                }
+            }
+        }
     }
     private static void drySuction() {
         var edges = List.of(new IdealFluidSolver.Edge(0, 1, WATER.inertia(1)), new IdealFluidSolver.Edge(1, 2, WATER.inertia(26)));

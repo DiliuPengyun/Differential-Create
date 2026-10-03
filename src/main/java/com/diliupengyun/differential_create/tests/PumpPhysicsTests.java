@@ -564,22 +564,8 @@ public final class PumpPhysicsTests {
 
     @GameTest(template = TEMPLATE, batch = "pump_filling", timeoutTicks = 220)
     public static void drySuctionWaitsForEnoughPressure(GameTestHelper h) {
-        BlockPos pumpPos = new BlockPos(7, 1, 8), tankPos = pumpPos.east(), corner = pumpPos.west();
-        var pipes = new java.util.ArrayList<BlockPos>();
-        for (int y = 0; y <= 26; y++) h.setBlock(tankPos.above(y), AllBlocks.FLUID_TANK.getDefaultState());
-        pipe(h, corner, Direction.EAST, Direction.UP); pipes.add(corner);
-        for (int y = 1; y < 26; y++) {
-            h.setBlock(corner.above(y), AllBlocks.GLASS_FLUID_PIPE.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.Y));
-            pipes.add(corner.above(y));
-        }
-        pipe(h, corner.above(26), Direction.DOWN, Direction.EAST); pipes.add(corner.above(26));
-        pipe(h, pumpPos.above(26), Direction.WEST, Direction.EAST); pipes.add(pumpPos.above(26));
-        h.setBlock(pumpPos, AllBlocks.MECHANICAL_PUMP.getDefaultState().setValue(PumpBlock.FACING, Direction.EAST)); pipes.add(pumpPos);
-        h.setBlock(pumpPos.south(), AllBlocks.COGWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
-        h.setBlock(pumpPos.south().west(), AllBlocks.SHAFT.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
-        h.setBlock(pumpPos.south().west(2), AllBlocks.CREATIVE_MOTOR.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
-        CreativeMotorBlockEntity motor = h.getBlockEntity(pumpPos.south().west(2)); motor.generatedSpeed.setValue(0);
-        FluidTankBlockEntity tank = h.getBlockEntity(tankPos);
+        var fixture = suctionLoop(h);
+        var motor = fixture.motor; var tank = fixture.tank; var pipes = fixture.pipes; var pumpPos = fixture.pumpPos;
         h.runAfterDelay(20, () -> {
             tank.getTankInventory().fill(new FluidStack(Fluids.WATER, 16000), FluidAction.EXECUTE);
             suctionSpeed(motor, 32);
@@ -606,6 +592,91 @@ public final class PumpPhysicsTests {
             h.assertTrue(owned > 100, "increased pump pressure reopens the cached dry source and admits actual water");
             h.assertTrue(Math.abs(tank.getTankInventory().getFluidAmount() + owned - 16000) < 1e-6,
                 "a shared upper/lower tank conserves inventory while priming the loop");
+            h.succeed();
+        });
+    }
+
+    private record SuctionFixture(CreativeMotorBlockEntity motor, FluidTankBlockEntity tank,
+                                   java.util.List<BlockPos> pipes, BlockPos pumpPos, BlockPos corner) {}
+    private static SuctionFixture suctionLoop(GameTestHelper h) {
+        BlockPos pumpPos = new BlockPos(7, 1, 8), tankPos = pumpPos.east(), corner = pumpPos.west();
+        var pipes = new java.util.ArrayList<BlockPos>();
+        for (int y = 0; y <= 26; y++) h.setBlock(tankPos.above(y), AllBlocks.FLUID_TANK.getDefaultState());
+        pipe(h, corner, Direction.EAST, Direction.UP); pipes.add(corner);
+        for (int y = 1; y < 26; y++) {
+            h.setBlock(corner.above(y), AllBlocks.GLASS_FLUID_PIPE.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.Y));
+            pipes.add(corner.above(y));
+        }
+        pipe(h, corner.above(26), Direction.DOWN, Direction.EAST); pipes.add(corner.above(26));
+        pipe(h, pumpPos.above(26), Direction.WEST, Direction.EAST); pipes.add(pumpPos.above(26));
+        h.setBlock(pumpPos, AllBlocks.MECHANICAL_PUMP.getDefaultState().setValue(PumpBlock.FACING, Direction.EAST)); pipes.add(pumpPos);
+        h.setBlock(pumpPos.south(), AllBlocks.COGWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+        h.setBlock(pumpPos.south().west(), AllBlocks.SHAFT.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+        h.setBlock(pumpPos.south().west(2), AllBlocks.CREATIVE_MOTOR.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
+        CreativeMotorBlockEntity motor = h.getBlockEntity(pumpPos.south().west(2)); motor.generatedSpeed.setValue(0);
+        FluidTankBlockEntity tank = h.getBlockEntity(tankPos);
+        return new SuctionFixture(motor, tank, pipes, pumpPos, corner);
+    }
+
+    @GameTest(template = TEMPLATE, batch = "pump_filling", timeoutTicks = 180)
+    public static void breakingSuctionTeeRetainsValidFronts(GameTestHelper h) {
+        var fixture = suctionLoop(h);
+        BlockPos junction = fixture.corner.above(4), branch = junction.east();
+        pipe(h, junction, Direction.DOWN, Direction.UP, Direction.EAST);
+        pipe(h, branch, Direction.WEST, Direction.EAST);
+        double[] total = {0};
+        h.runAfterDelay(20, () -> {
+            var fluid = new FluidStack(Fluids.WATER, 1);
+            fixture.tank.getTankInventory().fill(fluid.copyWithAmount(16000), FluidAction.EXECUTE);
+            suctionSpeed(fixture.motor, 32);
+            double q = 1.1345337505861621e-5;
+            // Preserve the crashed column's actual partial ownership and its tiny
+            // upper-mouth remainder while exercising the real block-removal path.
+            for (var pos : fixture.pipes) {
+                var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(pos));
+                var saved = FluidKinetics.state(pipe); saved.fluid = fluid.copy();
+                for (var side : pipe.interfaces.keySet()) {
+                    saved.contents.put(side, pos.getY() <= junction.getY()
+                        ? com.diliupengyun.differential_create.kinetics.PipeContents.FULL
+                        : com.diliupengyun.differential_create.kinetics.PipeContents.EMPTY);
+                    saved.outward.put(side, side == Direction.UP || side == Direction.EAST && pos.getY() > junction.getY() ? q : -q);
+                }
+                if (pos.equals(junction.above())) saved.contents.put(Direction.DOWN,
+                    com.diliupengyun.differential_create.kinetics.PipeContents.of(.9183650709088671, .957612298185955, .9576122981862214, 1));
+                if (pos.equals(fixture.pumpPos.above(26))) saved.contents.put(Direction.EAST,
+                    com.diliupengyun.differential_create.kinetics.PipeContents.of(.9999999999968854, 1));
+                if (pos.equals(fixture.pumpPos)) {
+                    saved.core = com.diliupengyun.differential_create.kinetics.PipeContents.FULL;
+                    saved.pumpFlow = -q; saved.pumpFacing = Direction.EAST;
+                    saved.outward.put(Direction.WEST, q); saved.outward.put(Direction.EAST, -q);
+                }
+            }
+            var branchPipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(branch));
+            var saved = FluidKinetics.state(branchPipe); saved.fluid = fluid.copy();
+            saved.contents.put(Direction.WEST, com.diliupengyun.differential_create.kinetics.PipeContents.FULL);
+            saved.contents.put(Direction.EAST, com.diliupengyun.differential_create.kinetics.PipeContents.FULL);
+            h.getLevel().destroyBlock(h.absolutePos(branch), false);
+            total[0] = fixture.tank.getTankInventory().getFluidAmount()
+                + fixture.pipes.stream().mapToDouble(pos -> pipeOwned(h, pos)).sum();
+        });
+        h.onEachTick(() -> {
+            if (total[0] == 0) return;
+            for (var pos : fixture.pipes) {
+                var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(pos));
+                var packet = new net.minecraft.nbt.CompoundTag();
+                FluidKinetics.state(pipe).write(packet, h.getLevel().registryAccess());
+                var decoded = new com.diliupengyun.differential_create.kinetics.PipeHydraulics();
+                decoded.read(packet, h.getLevel().registryAccess());
+                h.assertTrue(decoded.volume() == FluidKinetics.state(pipe).volume(), "every surviving pipe retains readable client/NBT intervals");
+            }
+        });
+        h.runAfterDelay(150, () -> {
+            PumpBlockEntity pump = h.getBlockEntity(fixture.pumpPos);
+            h.assertTrue(Double.isFinite(pump.getSpeed()) && Double.isFinite(((IPumpDynamics) pump).differentialcreate$flow()),
+                "breaking a running three-way connection cannot stall the physical clock or corrupt pump flow");
+            double after = fixture.tank.getTankInventory().getFluidAmount()
+                + fixture.pipes.stream().mapToDouble(pos -> pipeOwned(h, pos)).sum();
+            h.assertTrue(Math.abs(after - total[0]) < 1e-6, "surviving column and tank conserve water after branch removal: " + after + " / " + total[0]);
             h.succeed();
         });
     }

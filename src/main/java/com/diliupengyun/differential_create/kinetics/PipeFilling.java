@@ -18,17 +18,27 @@ public final class PipeFilling {
         double limit = minutes;
         for (int e = 0; e < tubes.size(); e++) {
             Tube tube = tubes.get(e); double q = midpoint[e];
-            if (q != 0) limit = Math.min(limit, contents[e].travelToMouth(q)
-                * tube.length * MB_PER_METRE * RotationMath.TICK_MINUTES / Math.abs(q));
+            if (q != 0) limit = Math.min(limit, mouthTime(contents[e].travelToMouth(q)
+                * tube.length * MB_PER_METRE * RotationMath.TICK_MINUTES, origin[e], q, minutes));
         }
         // Numerical face events can coalesce at machine precision. Integrating the
         // actual outgoing interval keeps their tiny inventory exact, in either direction.
         double dt = Math.min(minutes, limit);
+        double[] transport = midpoint;
+        if (dt < minutes) {
+            transport = new double[midpoint.length];
+            for (int e = 0; e < transport.length; e++) transport[e] = origin[e] + (midpoint[e] - origin[e]) * (dt / minutes);
+        }
         double[] exiting = new double[tubes.size()];
         for (int e = 0; e < tubes.size(); e++) {
-            Tube tube = tubes.get(e); double q = midpoint[e];
+            Tube tube = tubes.get(e); double q = transport[e];
             double displacement = q * dt / (RotationMath.TICK_MINUTES * tube.length * MB_PER_METRE);
-            exiting[e] = q == 0 ? 0 : contents[e].exiting(displacement) / Math.abs(displacement);
+            var old = contents[e];
+            // A subnormal iterative flow can underflow to zero displacement.
+            // Use the mouth's limiting phase instead of dividing zero by zero;
+            // retain the flow itself and impose no minimum physical rate.
+            exiting[e] = displacement != 0 ? old.exiting(displacement) / Math.abs(displacement)
+                : q != 0 && old.intervals() != 0 && (q > 0 ? old.end(old.intervals() - 1) == 1 : old.start(0) == 0) ? 1 : 0;
             int destination = q > 0 ? tube.to : tube.from;
             inward[destination] += Math.abs(q); water[destination] += Math.abs(q) * exiting[e];
         }
@@ -39,7 +49,7 @@ public final class PipeFilling {
         double[] mass = new double[tubes.size()], correction = new double[tubes.size()], outward = new double[nodes];
         // The caller shortens the common mechanical/fluid interval before committing.
         for (int e = 0; e < tubes.size(); e++) {
-            Tube tube = tubes.get(e); PipeContents old = contents[e]; double q = midpoint[e];
+            Tube tube = tubes.get(e); PipeContents old = contents[e]; double q = transport[e];
             double capacity = tube.length * MB_PER_METRE;
             double displacement = q * dt / (RotationMath.TICK_MINUTES * capacity);
             double inlet = fraction[q > 0 ? tube.from : tube.to];
@@ -65,5 +75,18 @@ public final class PipeFilling {
                     * (nextFlow * nextFlow + origin[e] * origin[e]);
         }
         return new Move(next, outward, mass, correction, limit);
+    }
+
+    /** Locate a front along the detached step's linear velocity trajectory.
+     * Scaling a full-step midpoint as though it were the initial velocity makes
+     * an accelerating near-rest column repeatedly accept almost zero time. */
+    private static double mouthTime(double distance, double initial, double midpoint, double minutes) {
+        double speed = Math.abs(midpoint);
+        if (speed * minutes <= distance) return minutes;
+        double first = Math.copySign(1, midpoint) * initial;
+        double acceleration = (speed - first) / minutes;
+        if (acceleration == 0) return distance / speed;
+        double root = Math.sqrt(Math.max(0, first * first + 4 * acceleration * distance));
+        return first >= 0 ? 2 * distance / (first + root) : (root - first) / (2 * acceleration);
     }
 }
