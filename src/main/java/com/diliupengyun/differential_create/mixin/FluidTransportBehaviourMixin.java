@@ -18,7 +18,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class FluidTransportBehaviourMixin implements IPipeDynamics {
     @Unique private PipeHydraulics differentialcreate$state = new PipeHydraulics();
     @Override public PipeHydraulics differentialcreate$fluidState() { return differentialcreate$state; }
-    @Override public void differentialcreate$adoptFluidState(PipeHydraulics state) { differentialcreate$state = state; }
+    @Override public void differentialcreate$adoptFluidState(PipeHydraulics state) {
+        differentialcreate$state = state;
+        var self = (FluidTransportBehaviour) (Object) this;
+        if (self.getWorld() != null && !self.getWorld().isClientSide) FluidKinetics.invalidate(self.getWorld());
+    }
 
     @Inject(method = "cacheFlows", at = @At("HEAD"))
     private static void differentialcreate$cacheState(LevelAccessor level, BlockPos pos, CallbackInfo ci) {
@@ -36,13 +40,16 @@ public abstract class FluidTransportBehaviourMixin implements IPipeDynamics {
     @Inject(method = "tick", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$physicalTick(CallbackInfo ci) {
         var self = (FluidTransportBehaviour) (Object) this;
-        if (self.getWorld().isClientSide || self.blockEntity.isVirtual()) return;
+        if (self.getWorld().isClientSide) { differentialcreate$state.tickVisual(); return; }
+        if (self.blockEntity.isVirtual()) return;
         FluidKinetics.register(self);
         ci.cancel();
     }
     @Inject(method = "read", at = @At("RETURN"))
     private void differentialcreate$read(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
         differentialcreate$state.read(tag, registries);
+        var self = (FluidTransportBehaviour) (Object) this;
+        if (self.getWorld() != null && !self.getWorld().isClientSide) FluidKinetics.invalidate(self.getWorld());
     }
     @Inject(method = "write", at = @At("RETURN"))
     private void differentialcreate$write(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {

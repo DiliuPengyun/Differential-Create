@@ -46,6 +46,10 @@ public final class IdealFluidSolver {
         return fluid.pumpScale() / REFERENCE_RPM
             * (Math.abs(rpm) / REFERENCE_RPM - Math.abs(flow) / REFERENCE_FLOW);
     }
+    public static double pumpSlope(Material fluid, double rpm, double flow) {
+        double direction = flow == 0 ? Math.signum(rpm) : Math.signum(flow);
+        return -fluid.pumpScale() / REFERENCE_RPM / REFERENCE_FLOW * rpm * direction;
+    }
 
     public record Edge(int from, int to, double inertia) {
         public Edge {

@@ -212,6 +212,12 @@ tasks.register('physicsTest', JavaExec) {
 }
 tasks.named('check') { dependsOn tasks.named('physicsTest') }
 
+tasks.register('fluidBenchmark', JavaExec) {
+    dependsOn tasks.named('physicsTestClasses')
+    classpath = sourceSets.physicsTest.runtimeClasspath
+    mainClass = 'com.diliupengyun.differential_create.FluidBenchmark'
+}
+
 // IDEA no longer automatically downloads sources/javadoc jars for dependencies, so we need to explicitly enable the behavior.
 idea {
     module {
