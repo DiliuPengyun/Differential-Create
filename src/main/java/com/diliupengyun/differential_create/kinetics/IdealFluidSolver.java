@@ -147,18 +147,36 @@ public final class IdealFluidSolver {
 
         private void correct(double[] flow, double[] pressure) {
             if (variables == 0) return;
-            double[] rhs = new double[variables];
-            for (int e = 0; e < edges.size(); e++) if (active[e]) {
-                Edge edge = edges.get(e);
-                if (variable[edge.from] >= 0) rhs[variable[edge.from]] -= flow[e];
-                if (variable[edge.to] >= 0) rhs[variable[edge.to]] += flow[e];
+            double[] rhs = new double[variables], compensation = new double[variables], scale = new double[variables];
+            for (int refinement = 0; refinement < 5; refinement++) {
+                Arrays.fill(rhs, 0); Arrays.fill(compensation, 0); Arrays.fill(scale, 0);
+                for (int e = 0; e < edges.size(); e++) if (active[e]) {
+                    Edge edge = edges.get(e);
+                    accumulate(rhs, compensation, scale, variable[edge.from], -flow[e]);
+                    accumulate(rhs, compensation, scale, variable[edge.to], flow[e]);
+                }
+                boolean continuous = true;
+                for (int i = 0; i < variables; i++) continuous &= Math.abs(rhs[i]) <= 8 * Math.ulp(scale[i]);
+                if (continuous) return;
+                if (refinement == 4) throw new IllegalStateException("Fluid flow correction did not converge");
+                double[] solution = solve(rhs);
+                for (int i = 0; i < nodes; i++) if (variable[i] >= 0) pressure[i] += solution[variable[i]];
+                for (int e = 0; e < edges.size(); e++) if (active[e]) {
+                    Edge edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to];
+                    flow[e] += ((a < 0 ? 0 : solution[a]) - (b < 0 ? 0 : solution[b])) / edge.inertia;
+                }
+                // A dry segment can be 1e12 lighter than a wet one. Subtracting its
+                // large unconstrained impulse loses digits even when pressure's
+                // linear residual is small. Refine the resulting physical flows;
+                // this is the same constraint solve, with no damping or cutoff.
             }
-            double[] solution = solve(rhs);
-            for (int i = 0; i < nodes; i++) if (variable[i] >= 0) pressure[i] = solution[variable[i]];
-            for (int e = 0; e < edges.size(); e++) if (active[e]) {
-                Edge edge = edges.get(e);
-                flow[e] += (pressure[edge.from] - pressure[edge.to]) / edge.inertia;
-            }
+        }
+
+        private static void accumulate(double[] rhs, double[] compensation, double[] scale, int node, double value) {
+            if (node < 0) return;
+            double term = value - compensation[node], next = rhs[node] + term;
+            compensation[node] = (next - rhs[node]) - term; rhs[node] = next;
+            scale[node] += Math.abs(value);
         }
 
         private double[] solve(double[] rhs) {
@@ -169,8 +187,7 @@ public final class IdealFluidSolver {
             }
             if (scale == 0) return x;
             for (int iteration = 0; iteration < Math.max(64, variables * 4); iteration++) {
-                multiply(p, ap);
-                double pap = dot(p, ap);
+                double pap = multiply(p, ap);
                 if (!(pap > 0) || !Double.isFinite(pap)) throw new IllegalStateException("Singular fluid pressure constraint");
                 double alpha = rz / pap;
                 for (int i = 0; i < variables; i++) { x[i] += alpha * p[i]; r[i] -= alpha * ap[i]; }
@@ -180,28 +197,48 @@ public final class IdealFluidSolver {
                     // Accept a fresh residual, not only the recursively updated vector.
                     multiply(x, ap); next = 0;
                     for (int i = 0; i < variables; i++) { r[i] = rhs[i] - ap[i]; z[i] = r[i] / diagonal[i]; next += r[i] * z[i]; }
-                    if (next <= 1e-24 * scale) return x;
+                    if (next <= 1e-24 * scale || roundoffResidual(rhs, x, r)) return x;
                     System.arraycopy(z, 0, p, 0, variables); rz = next; continue;
                 }
                 double beta = next / rz;
                 for (int i = 0; i < variables; i++) p[i] = z[i] + beta * p[i];
                 rz = next;
             }
+            multiply(x, ap);
+            for (int i = 0; i < variables; i++) r[i] = rhs[i] - ap[i];
+            if (roundoffResidual(rhs, x, r)) return x;
             throw new IllegalStateException("Fluid pressure solve did not converge");
         }
-        private void multiply(double[] x, double[] result) {
-            Arrays.fill(result, 0);
+        private boolean roundoffResidual(double[] rhs, double[] x, double[] residual) {
+            double[] magnitude = new double[variables];
+            for (int i = 0; i < variables; i++) magnitude[i] = Math.abs(rhs[i]);
             for (int e = 0; e < edges.size(); e++) if (active[e]) {
                 Edge edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to];
-                double value = ((a < 0 ? 0 : x[a]) - (b < 0 ? 0 : x[b])) / edge.inertia;
+                // Bound rounding from both pressure operands before subtracting
+                // nearly equal values across a very light pipe. Actual flow is
+                // checked and refined separately, at its own much smaller scale.
+                double value = ((a < 0 ? 0 : Math.abs(x[a])) + (b < 0 ? 0 : Math.abs(x[b]))) / edge.inertia;
+                if (a >= 0) magnitude[a] += value;
+                if (b >= 0) magnitude[b] += value;
+            }
+            for (int i = 0; i < variables; i++)
+                if (!Double.isFinite(magnitude[i]) || !(Math.abs(residual[i]) <= 8 * Math.ulp(magnitude[i]))) return false;
+            return true;
+        }
+        private double multiply(double[] x, double[] result) {
+            Arrays.fill(result, 0);
+            double quadratic = 0;
+            for (int e = 0; e < edges.size(); e++) if (active[e]) {
+                Edge edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to];
+                double difference = (a < 0 ? 0 : x[a]) - (b < 0 ? 0 : x[b]);
+                double value = difference / edge.inertia;
                 if (a >= 0) result[a] += value;
                 if (b >= 0) result[b] -= value;
+                // The edge energy form stays positive even when x and A*x
+                // contain cancelling terms from adjacent dry segments.
+                quadratic = Math.fma(difference, value, quadratic);
             }
-        }
-        private static double dot(double[] a, double[] b) {
-            double sum = 0;
-            for (int i = 0; i < a.length; i++) sum = Math.fma(a[i], b[i], sum);
-            return sum;
+            return quadratic;
         }
     }
 }

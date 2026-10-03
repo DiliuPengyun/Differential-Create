@@ -1,5 +1,7 @@
 package com.diliupengyun.differential_create;
 
+import java.math.BigDecimal;
+import java.math.MathContext;
 import java.util.List;
 import java.util.Random;
 import com.diliupengyun.differential_create.kinetics.IdealFluidSolver;
@@ -16,6 +18,8 @@ public final class IdealFluidRegression {
     public static void run() {
         inertance();
         pressureConstraints();
+        mixedPipeInertances();
+        connectedDryBranches();
         workIdentity();
         coupledRotor();
         timestepRefinement();
@@ -61,6 +65,130 @@ public final class IdealFluidRegression {
         near(0, stop.flow()[0], 0, "closed port stops flow");
         near(.125, stop.projectionLoss(), 1e-13, "boundary impulse accounts for removed motion");
     }
+    private static void mixedPipeInertances() {
+        // The saved-world crash: a pressure-response probe beside two wet arms
+        // and one dry arm. Its raw dry-arm impulse is about 1e10 mB/tick;
+        // the physical result is only about 1e3 and must still conserve volume.
+        mixedBranch(new double[]{1.2420830652771467e-5, 1.787437178166065e-6, 7.339338676852757e-14},
+            new double[]{8.123363575303479, .6446518389977431, 9.548981098824112e-16},
+            new double[]{0, 0, 15.3036}, new double[3], 9.088507055356709e-5);
+        Random random = new Random(0xD1F10A26);
+        for (int sample = 0; sample < 240; sample++) {
+            double[] mass = new double[3], force = new double[3], datum = new double[3];
+            for (int i = 0; i < 3; i++) {
+                mass[i] = WATER.inertia(.25 + random.nextDouble() * 30);
+                force[i] = random.nextDouble() * 40 - 20; datum[i] = random.nextDouble() * 40 - 20;
+            }
+            mass[sample % 3] *= 1e-12;
+            double[] initial = sample % 2 == 0 ? new double[3] : new double[]{3, -8, 5};
+            double minutes = sample % 4 == 0 ? 1e-14 : IdealFluidSolver.MAX_STEP;
+            mixedBranch(mass, force, datum, initial, minutes);
+        }
+    }
+
+    private static void mixedBranch(double[] mass, double[] force, double[] datum, double[] initial, double minutes) {
+        var edges = List.of(new Edge(0, 1, mass[0]), new Edge(0, 2, mass[1]), new Edge(0, 3, mass[2]));
+        var trial = new Graph(4, edges, new boolean[]{false, true, true, true}, new boolean[]{true, true, true})
+            .sample(initial, force, new double[]{0, datum[0], datum[1], datum[2]}, minutes);
+        // Independent high-precision solution of the three-arm momentum and
+        // continuity equations, including the small difference at the dry arm.
+        MathContext precision = new MathContext(50);
+        BigDecimal weight = BigDecimal.ZERO, weightedPressure = BigDecimal.ZERO;
+        for (int i = 0; i < 3; i++) {
+            BigDecimal inverse = BigDecimal.ONE.divide(BigDecimal.valueOf(mass[i]), precision);
+            weight = weight.add(inverse, precision);
+            weightedPressure = weightedPressure.add(BigDecimal.valueOf(datum[i]).subtract(BigDecimal.valueOf(force[i]))
+                .multiply(inverse, precision), precision);
+        }
+        BigDecimal junction = weightedPressure.divide(weight, precision);
+        double sum = 0, scale = 0;
+        for (int i = 0; i < 3; i++) {
+            double exact = BigDecimal.valueOf(minutes).multiply(BigDecimal.valueOf(force[i]).add(junction, precision)
+                .subtract(BigDecimal.valueOf(datum[i]), precision), precision).divide(BigDecimal.valueOf(mass[i]), precision)
+                .add(BigDecimal.valueOf(initial[i]), precision).doubleValue();
+            near(exact, trial.flow()[i], 2e-12 * Math.max(1, Math.abs(exact)), "wet/dry branch momentum matches an independent solution");
+            sum += trial.flow()[i]; scale += Math.abs(trial.flow()[i]);
+        }
+        near(0, sum, 8 * Math.ulp(scale), "wet/dry junction conserves flow at the scale of its actual motion");
+        near(trial.energyChange(), trial.forceWork() + trial.boundaryWork(), 1e-12
+            + 1e-10 * (Math.abs(trial.energyChange()) + Math.abs(trial.forceWork()) + Math.abs(trial.boundaryWork())),
+            "wet/dry pressure response retains the original work tolerance");
+    }
+
+    private static void connectedDryBranches() {
+        Random random = new Random(0xD1F10A);
+        int[] from = {0, 1, 2, 0, 1, 2}, to = {1, 2, 0, 3, 4, 5};
+        MathContext precision = new MathContext(50);
+        for (int sample = 0; sample < 300; sample++) {
+            var edges = new java.util.ArrayList<Edge>();
+            double[] force = new double[6], pressure = new double[6], initial = new double[6];
+            BigDecimal[][] matrix = new BigDecimal[3][3]; BigDecimal[] rhs = new BigDecimal[3];
+            for (int i = 0; i < 3; i++) { java.util.Arrays.fill(matrix[i], BigDecimal.ZERO); rhs[i] = BigDecimal.ZERO; }
+            for (int i = 0; i < 6; i++) {
+                double mass = 1e-4 * (1 + random.nextDouble());
+                boolean dry = switch (sample % 4) {
+                    case 0 -> (sample + i) % 3 == 0;
+                    case 1 -> i < 2;
+                    case 2 -> i == 0;
+                    default -> i < 3;
+                };
+                if (dry) mass *= 1e-12;
+                edges.add(new Edge(from[i], to[i], mass));
+                force[i] = random.nextDouble() * 30 - 15;
+                if (dry && i < 3) force[i] = 0; // Empty internal arms carry no liquid gravity.
+                if (i > 2) pressure[i] = random.nextDouble() * 30 - 15;
+                if (sample % 2 == 0 && i < 3) initial[i] = 7; // Compatible circulating motion.
+            }
+            double minutes = sample % 5 == 0 ? 1e-14 : IdealFluidSolver.MAX_STEP;
+            var trial = new Graph(6, edges, new boolean[]{false, false, false, true, true, true},
+                new boolean[]{true, true, true, true, true, true}).sample(initial, force, pressure, minutes);
+            for (int e = 0; e < edges.size(); e++) {
+                int a = from[e], b = to[e];
+                BigDecimal inverse = BigDecimal.ONE.divide(BigDecimal.valueOf(edges.get(e).inertia()), precision);
+                BigDecimal drive = BigDecimal.valueOf(force[e]).add(BigDecimal.valueOf(pressure[a]))
+                    .subtract(BigDecimal.valueOf(pressure[b])).multiply(inverse, precision);
+                matrix[a][a] = matrix[a][a].add(inverse, precision); rhs[a] = rhs[a].subtract(drive, precision);
+                if (b < 3) {
+                    matrix[b][b] = matrix[b][b].add(inverse, precision); rhs[b] = rhs[b].add(drive, precision);
+                    matrix[a][b] = matrix[a][b].subtract(inverse, precision); matrix[b][a] = matrix[b][a].subtract(inverse, precision);
+                }
+            }
+            BigDecimal[] exactPressure = decimalSolve(matrix, rhs, precision);
+            double[] sum = new double[3], scale = new double[3];
+            for (int e = 0; e < edges.size(); e++) {
+                int a = from[e], b = to[e];
+                BigDecimal pTo = b < 3 ? exactPressure[b] : BigDecimal.valueOf(pressure[b]);
+                double exact = BigDecimal.valueOf(force[e]).add(exactPressure[a], precision).subtract(pTo, precision)
+                    .multiply(BigDecimal.valueOf(minutes), precision).divide(BigDecimal.valueOf(edges.get(e).inertia()), precision)
+                    .add(BigDecimal.valueOf(initial[e]), precision).doubleValue();
+                near(exact, trial.flow()[e], 2e-11 * Math.max(1, Math.abs(exact)), "connected dry branches match independent momentum equations");
+                sum[a] += trial.flow()[e]; scale[a] += Math.abs(trial.flow()[e]);
+                if (b < 3) { sum[b] -= trial.flow()[e]; scale[b] += Math.abs(trial.flow()[e]); }
+            }
+            for (int i = 0; i < 3; i++) near(0, sum[i], 8 * Math.ulp(scale[i]), "each adjacent dry junction conserves actual flow");
+            near(trial.energyChange(), trial.forceWork() + trial.boundaryWork(), 1e-12
+                + 1e-10 * (Math.abs(trial.energyChange()) + Math.abs(trial.forceWork()) + Math.abs(trial.boundaryWork())),
+                "connected dry branches preserve the original work tolerance");
+        }
+    }
+
+    private static BigDecimal[] decimalSolve(BigDecimal[][] matrix, BigDecimal[] rhs, MathContext precision) {
+        for (int column = 0; column < rhs.length; column++) {
+            for (int row = column + 1; row < rhs.length; row++) {
+                BigDecimal factor = matrix[row][column].divide(matrix[column][column], precision);
+                for (int i = column + 1; i < rhs.length; i++) matrix[row][i] = matrix[row][i].subtract(factor.multiply(matrix[column][i], precision), precision);
+                rhs[row] = rhs[row].subtract(factor.multiply(rhs[column], precision), precision);
+            }
+        }
+        BigDecimal[] result = new BigDecimal[rhs.length];
+        for (int row = rhs.length - 1; row >= 0; row--) {
+            BigDecimal value = rhs[row];
+            for (int i = row + 1; i < rhs.length; i++) value = value.subtract(matrix[row][i].multiply(result[i], precision), precision);
+            result[row] = value.divide(matrix[row][row], precision);
+        }
+        return result;
+    }
+
     private static void workIdentity() {
         Random random = new Random(0xF10D26);
         for (int i = 0; i < 1000; i++) {
