@@ -15,7 +15,7 @@ public final class PipeFillingRegression {
     private static final IdealFluidSolver.Material WATER = new IdealFluidSolver.Material(1000, false);
     private static int checks;
     public static void run() {
-        intervals(); massAndEnergy(); branches(); residualAtMouth(); sharedInventory(); pumpTangent(); reduction();
+        intervals(); massAndEnergy(); branches(); residualAtMouth(); sharedInventory(); receiptCapacity(); pumpTangent(); reduction();
         System.out.println("Pipe filling regression: " + checks + " checks passed");
     }
     private static void intervals() {
@@ -133,6 +133,32 @@ public final class PipeFillingRegression {
             "single source hits its exact volume event");
         near(1, FluidBudget.limit(new double[]{0, 0}, new double[]{0, 0}, 0, 1), 0,
             "dry mouths require no fictional extraction");
+    }
+    private static void receiptCapacity() {
+        near(0, FluidBudget.receiptSpace(1, .9999999999999992), 0,
+            "crash-save receipt roundoff is a capacity event, not a sub-machine-precision time step");
+        near(0, FluidBudget.receiptSpace(1, .4 + .5999999999999992), 0,
+            "all receiver ports share the same pending-capacity constraint");
+        near(.75, FluidBudget.receiptSpace(1, .25), 0, "real fractional receipt space remains usable");
+        near(0, FluidBudget.receiptSpace(0, .25), 0, "an externally filled receiver retains its owned pending receipt");
+        near(1, FluidBudget.deliveryAmount(.9999999999999992), 0, "the saved integer receipt completes within roundoff");
+        near(1, FluidBudget.deliveryAmount(.9999999999999787), 0,
+            "front-position arithmetic uses pipe-volume precision at the receipt event");
+        near(0, FluidBudget.deliveryAmount(.999999), 0, "a real fractional deficit cannot create one free mB");
+        near(0, FluidBudget.deliveryAmount(1e-12), 0, "small flow has no minimum-rate integer delivery");
+        near(1, FluidBudget.deliveryAmount(1.25), 0, "ordinary delivery keeps the actual fractional remainder");
+        for (double capacity : new double[]{1, 2, 64, 8000, 576000, Integer.MAX_VALUE}) {
+            double ulp = Math.ulp(Math.max(capacity, PipeFilling.MB_PER_METRE));
+            near(0, FluidBudget.receiptSpace(capacity, capacity - 4 * ulp), 0,
+                "capacity event tolerance scales with floating-point precision");
+            near(capacity, FluidBudget.deliveryAmount(capacity - 4 * ulp), 0,
+                "integer receipts complete at capacity-sized arithmetic precision");
+            double pending = capacity - 64 * ulp;
+            near(capacity - pending, FluidBudget.receiptSpace(capacity, pending), 0,
+                "representable space beyond roundoff is not discarded");
+            near(capacity - 1, FluidBudget.deliveryAmount(pending), 0,
+                "a real fractional deficit remains owned even at large capacities");
+        }
     }
     private static void pumpTangent() {
         double dt = RotationMath.TICK_MINUTES / 8, rpm = 64, q0 = 9;

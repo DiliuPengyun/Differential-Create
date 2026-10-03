@@ -86,6 +86,7 @@ public final class FluidKinetics {
         final Direction side;
         final FlowSource source;
         IFluidHandler handler;
+        InventoryPool inventory;
         final PipeHydraulics.Buffer buffer;
         double referenceHeight;
         int node;
@@ -114,7 +115,8 @@ public final class FluidKinetics {
             return buffer.amount + (same(drained, fluid) ? drained.getAmount() : 0);
         }
         boolean receives(FluidStack fluid) {
-            return handler != null && buffer.matches(fluid) && handler.fill(fluid.copyWithAmount(1), FluidAction.SIMULATE) > 0;
+            return handler != null && buffer.matches(fluid) && (inventory == null
+                ? handler.fill(fluid.copyWithAmount(1), FluidAction.SIMULATE) > 0 : inventory.receiptSpace(1) > 0);
         }
         void commit(FluidStack fluid, double outward) {
             if (outward > 0) buffer.add(fluid, -outward);
@@ -139,7 +141,21 @@ public final class FluidKinetics {
         final IFluidHandler handler;
         final FluidStack fluid;
         final List<InventoryPort> ports = new ArrayList<>();
+        double pending;
         InventoryPool(IFluidHandler handler, FluidStack fluid) { this.handler = handler; this.fluid = fluid; }
+        void refresh() {
+            pending = 0; double roundoff = 0;
+            for (var port : ports) {
+                var buffer = port.endpoint.buffer;
+                if (!buffer.delivery) continue;
+                double amount = buffer.amount - roundoff, next = pending + amount;
+                roundoff = (next - pending) - amount; pending = next;
+            }
+        }
+        double receiptSpace(double volume) {
+            int capacity = handler.fill(fluid.copyWithAmount(request(pending + volume)), FluidAction.SIMULATE);
+            return FluidBudget.receiptSpace(capacity, pending);
+        }
         double[] rates(List<FluidTrial> trials) {
             double[] rates = new double[ports.size()];
             for (int i = 0; i < rates.length; i++) {
@@ -150,22 +166,18 @@ public final class FluidKinetics {
         }
         double allowed(List<FluidTrial> trials, double minutes) {
             double[] rates = rates(trials), owned = new double[rates.length];
-            double incoming = 0, pending = 0;
+            double incoming = 0;
             for (int i = 0; i < rates.length; i++) {
                 var buffer = ports.get(i).endpoint.buffer;
                 if (rates[i] < 0) { incoming -= rates[i]; rates[i] = 0; }
                 owned[i] = buffer.amount;
-                if (buffer.delivery) pending += buffer.amount;
             }
             double wanted = FluidBudget.needed(rates, owned, minutes), limit = minutes;
             if (wanted > 1e-10) {
                 FluidStack stock = handler.drain(fluid.copyWithAmount(request(wanted)), FluidAction.SIMULATE);
                 limit = FluidBudget.limit(rates, owned, same(stock, fluid) ? stock.getAmount() : 0, minutes);
             }
-            if (incoming > 0) {
-                int capacity = handler.fill(fluid.copyWithAmount(request(pending + incoming * minutes)), FluidAction.SIMULATE);
-                limit = Math.min(limit, Math.max(0, capacity - pending) / incoming);
-            }
+            if (incoming > 0) limit = Math.min(limit, receiptSpace(incoming * minutes) / incoming);
             return limit;
         }
         boolean reserve(List<FluidTrial> trials, double minutes) {
@@ -186,17 +198,19 @@ public final class FluidKinetics {
                     endpoint.buffer.add(fluid, share); endpoint.buffer.delivery = false;
                     endpoint.pipe.blockEntity.setChanged();
                 }
+                refresh();
             }
             for (int i = 0; i < need.length; i++) if (rates[i] * minutes > ports.get(i).endpoint.buffer.amount + 1e-10) return false;
             return true;
         }
         void deliver() {
-            double total = 0; int last = -1;
+            refresh();
+            double total = pending; int last = -1;
             for (int i = 0; i < ports.size(); i++) {
                 var buffer = ports.get(i).endpoint.buffer;
-                if (buffer.delivery && buffer.amount > 0) { total += buffer.amount; last = i; }
+                if (buffer.delivery && buffer.amount > 0) last = i;
             }
-            int amount = (int) Math.min(Integer.MAX_VALUE, Math.floor(total));
+            int amount = FluidBudget.deliveryAmount(total);
             if (amount == 0) return;
             int accepted = handler.fill(fluid.copyWithAmount(amount), FluidAction.EXECUTE);
             if (accepted < 0 || accepted > amount) throw new IllegalStateException("Invalid external fluid acceptance");
@@ -204,9 +218,11 @@ public final class FluidKinetics {
             for (int i = 0; i < ports.size(); i++) {
                 var endpoint = ports.get(i).endpoint; var buffer = endpoint.buffer;
                 if (!buffer.delivery || buffer.amount == 0) continue;
-                double share = i == last ? left : accepted * buffer.amount / total; left -= share;
+                double share = Math.max(0, Math.min(buffer.amount, i == last ? left : accepted * (buffer.amount / total)));
+                left -= share;
                 buffer.add(fluid, -share); endpoint.pipe.blockEntity.setChanged();
             }
+            refresh();
         }
     }
     private record Connection(int from, int to, FluidTransportBehaviour pipe, Direction side,
@@ -263,6 +279,7 @@ public final class FluidKinetics {
         }
         void beginTick() {
             for (var component : components) component.beginTick();
+            for (var component : components) for (var endpoint : component.endpoints) endpoint.inventory = null;
             inventories.clear();
             var shared = new IdentityHashMap<IFluidHandler, List<InventoryPool>>();
             for (int c = 0; c < components.size(); c++) {
@@ -272,8 +289,13 @@ public final class FluidKinetics {
                     var pool = candidates.stream().filter(p -> same(p.fluid, component.fluid)).findFirst().orElse(null);
                     if (pool == null) { pool = new InventoryPool(endpoint.handler, component.fluid); candidates.add(pool); inventories.add(pool); }
                     pool.ports.add(new InventoryPort(c, endpoint));
+                    endpoint.inventory = pool;
                 }
             }
+            // Complete saved integer-boundary receipts before projecting motion.
+            // Native open ends may consume that integer and immediately reopen.
+            for (var pool : inventories) pool.deliver();
+            for (var component : components) if (component.rest != null && component.restInputs != component.inputs(null)) component.rest = null;
         }
         public boolean active() { return components.stream().anyMatch(c -> c.active); }
     }
@@ -339,7 +361,6 @@ public final class FluidKinetics {
                 ((IPumpDynamics) c.pump).differentialcreate$hydraulicState(
                     IdealFluidSolver.pressurePa(IdealFluidSolver.coupling(material, rpm, 0) * rpm) / (material.density() * IdealFluidSolver.GRAVITY), 0, 0);
             }
-            if (rest != null && restInputs != inputs(null)) rest = null;
         }
         long inputs(Map<KineticBlockEntity, Double> speed) {
             long key = 1;
@@ -474,7 +495,7 @@ public final class FluidKinetics {
                 boolean changed = false;
                 for (int e = 0; e < enabled.length; e++) if (enabled[e] && connections.get(e).endpoint != null) {
                     Endpoint endpoint = connections.get(e).endpoint; double q = trial.midpoint()[e];
-                    if (q > 1e-12 && contents[e].atEnd() && !endpoint.receives(fluid)) {
+                    if (q > 0 && contents[e].atEnd() && !endpoint.receives(fluid)) {
                         enabled[e] = false; changed = true;
                     }
                 }
@@ -673,14 +694,23 @@ public final class FluidKinetics {
                 var torques = new HashMap<KineticBlockEntity, Double>();
                 var fluids = new ArrayList<FluidTrial>();
                 double allowed = minutes;
+                Object limiting = null;
                 for (int c = 0; c < frame.components.size(); c++) {
                     var component = frame.components.get(c);
                     var trial = component.sample(initial.get(c), contents.get(c), guesses.get(c), speeds, minutes, torques);
-                    fluids.add(trial); allowed = Math.min(allowed, trial.allowed);
+                    fluids.add(trial);
+                    if (trial.allowed < allowed) { allowed = trial.allowed; limiting = component; }
                 }
-                for (var pool : frame.inventories) allowed = Math.min(allowed, pool.allowed(fluids, minutes));
+                for (var pool : frame.inventories) {
+                    double limit = pool.allowed(fluids, minutes);
+                    if (limit < allowed) { allowed = limit; limiting = pool; }
+                }
                 if (allowed < minutes * (1 - 1e-12)) {
-                    stalled = "source volume " + allowed + " / " + minutes;
+                    stalled = (limiting instanceof Component component ? "pipe mouth at " + component.members.getFirst().getPos()
+                        : limiting instanceof InventoryPool pool ? "inventory at " + pool.ports.getFirst().endpoint.pipe.getPos()
+                            + (allowed > 1e-18 ? "" : " pending=" + pool.pending + " rates=" + Arrays.toString(pool.rates(fluids))
+                                + " owned=" + pool.ports.stream().map(p -> p.endpoint.buffer.amount).toList()) : "fluid volume")
+                        + " " + allowed + " / " + minutes;
                     minutes = allowed; shorter = true; break;
                 }
                 var capture = ElasticKinetics.snapshot(networks, torques);

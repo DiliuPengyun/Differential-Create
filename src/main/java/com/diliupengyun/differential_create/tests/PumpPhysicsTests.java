@@ -406,6 +406,77 @@ public final class PumpPhysicsTests {
         });
     }
 
+    @GameTest(template = TEMPLATE, batch = "pump", timeoutTicks = 145)
+    public static void nearlyFullReceiptSurvivesReload(GameTestHelper h) {
+        Fixture f = fixture(h, false, false);
+        double[] total = {0};
+        h.runAfterDelay(80, () -> {
+            var target = f.boiler.getTankInventory();
+            target.drain(Integer.MAX_VALUE, FluidAction.EXECUTE);
+            target.fill(new FluidStack(Fluids.WATER, target.getCapacity() - 1), FluidAction.EXECUTE);
+            var outlet = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(PUMP.east(4)));
+            var buffer = FluidKinetics.state(outlet).buffers.computeIfAbsent(Direction.EAST,
+                side -> new com.diliupengyun.differential_create.kinetics.PipeHydraulics.Buffer());
+            // Actual crash-save value: the receiver's final mB is already owned,
+            // apart from floating-point roundoff, and cannot create a new time event.
+            buffer.amount = .9999999999999992;
+            buffer.fluid = new FluidStack(Fluids.WATER, 1); buffer.delivery = true;
+            var original = outlet.blockEntity;
+            var saved = original.saveWithoutMetadata(h.getLevel().registryAccess());
+            var restored = original.getType().create(original.getBlockPos(), original.getBlockState());
+            restored.loadWithComponents(saved, h.getLevel().registryAccess());
+            h.getLevel().removeBlockEntity(original.getBlockPos()); h.getLevel().setBlockEntity(restored);
+            total[0] = stored(f);
+        });
+        h.runAfterDelay(110, () -> {
+            h.assertTrue(Math.abs(stored(f) - total[0]) < 1e-8, "receipt roundoff must retain actual water ownership");
+            h.assertTrue(Math.abs(FluidKinetics.state(f.pump.getBehaviour(FluidTransportBehaviour.TYPE)).pumpFlow) < 1e-10,
+                "roundoff-sized receiver space closes the wet mouth instead of shrinking the physical clock");
+            var outlet = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(PUMP.east(4)));
+            h.assertTrue(f.boiler.getTankInventory().getFluidAmount() == f.boiler.getTankInventory().getCapacity()
+                && FluidKinetics.state(outlet).buffers.get(Direction.EAST).amount == 0,
+                "the last integer receipt completes once, within floating-point precision");
+            f.boiler.getTankInventory().drain(4000, FluidAction.EXECUTE);
+            total[0] -= 4000;
+        });
+        h.runAfterDelay(135, () -> {
+            h.assertTrue(FluidKinetics.state(f.pump.getBehaviour(FluidTransportBehaviour.TYPE)).pumpFlow > 1,
+                "consuming real receiver stock reopens its wet mouth");
+            h.assertTrue(Math.abs(stored(f) - total[0]) < 1e-8, "resumed receipt preserves the retained fraction");
+            h.succeed();
+        });
+    }
+
+    @GameTest(template = TEMPLATE, batch = "pump", timeoutTicks = 95)
+    public static void roundedReceiptReopensNativeOpenEnd(GameTestHelper h) {
+        Fixture f = fixture(h, false, false);
+        for (int x = 0; x < 2; x++) for (int y = 0; y < 2; y++) for (int z = 0; z < 2; z++)
+            h.setBlock(BOILER.offset(x, y, z), Blocks.AIR);
+        double[] total = {0};
+        h.runAfterDelay(80, () -> {
+            h.setBlock(BOILER, Blocks.AIR);
+            var outlet = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(PUMP.east(4)));
+            var source = ((com.diliupengyun.differential_create.kinetics.IPipePressure) outlet.getConnection(Direction.EAST)).differentialcreate$source();
+            h.assertTrue(source instanceof com.simibubi.create.content.fluids.OpenEndedPipe, "fixture exercises the native open-end receipt limit");
+            ((net.neoforged.neoforge.fluids.capability.templates.FluidTank) source.provideHandler().getCapability()).setFluid(FluidStack.EMPTY);
+            var buffer = FluidKinetics.state(outlet).buffers.computeIfAbsent(Direction.EAST,
+                side -> new com.diliupengyun.differential_create.kinetics.PipeHydraulics.Buffer());
+            buffer.amount = .9999999999999992; buffer.fluid = new FluidStack(Fluids.WATER, 1); buffer.delivery = true;
+            FluidKinetics.invalidate(h.getLevel());
+            total[0] = f.water() + localOwned(h);
+        });
+        h.runAfterDelay(85, () -> {
+            var outlet = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(PUMP.east(4)));
+            var source = ((com.diliupengyun.differential_create.kinetics.IPipePressure) outlet.getConnection(Direction.EAST)).differentialcreate$source();
+            int received = source.provideHandler().getCapability().getFluidInTank(0).getAmount();
+            h.assertTrue(received > 1 && FluidKinetics.state(f.pump.getBehaviour(FluidTransportBehaviour.TYPE)).pumpFlow > 1,
+                "the native open end consumes the rounded integer and continues receiving, instead of staying blocked: " + received);
+            h.assertTrue(Math.abs(f.water() + localOwned(h) + received - total[0]) < 1e-6,
+                "native open-end receipt and fractional ownership conserve water within numerical precision");
+            h.succeed();
+        });
+    }
+
     @GameTest(template = TEMPLATE, batch = "pump", timeoutTicks = 90)
     public static void openEndKeepsOriginalBuffer(GameTestHelper h) {
         BlockPos pos = new BlockPos(6, 3, 8);
@@ -584,6 +655,57 @@ public final class PumpPhysicsTests {
                 "two source ports cannot double one mB: " + leftOwned + " / " + rightOwned);
             h.assertTrue(Math.abs(leftOwned - .5) < 1e-6 && Math.abs(rightOwned - .5) < 1e-6,
                 "symmetric pumps share the fractional extraction without starving the later port: " + leftOwned + " / " + rightOwned);
+            h.succeed();
+        });
+    }
+
+    @GameTest(template = TEMPLATE, batch = "pump_filling", timeoutTicks = 120)
+    public static void sharedReceiverCombinesPendingReceipts(GameTestHelper h) {
+        BlockPos targetPos = new BlockPos(8, 3, 8), left = targetPos.west(3), right = targetPos.east(3);
+        h.setBlock(targetPos, AllBlocks.FLUID_TANK.getDefaultState());
+        h.setBlock(targetPos.west(5), AllBlocks.FLUID_TANK.getDefaultState());
+        h.setBlock(targetPos.east(5), AllBlocks.FLUID_TANK.getDefaultState());
+        for (int x = -4; x <= 4; x++) if (x != 0 && Math.abs(x) != 3)
+            pipe(h, targetPos.east(x), Direction.WEST, Direction.EAST);
+        h.setBlock(left, AllBlocks.MECHANICAL_PUMP.getDefaultState().setValue(PumpBlock.FACING, Direction.EAST));
+        h.setBlock(right, AllBlocks.MECHANICAL_PUMP.getDefaultState().setValue(PumpBlock.FACING, Direction.WEST));
+        for (int x = -4; x <= 3; x++) h.setBlock(targetPos.above().east(x),
+            (Math.abs(x) == 3 ? AllBlocks.COGWHEEL : AllBlocks.SHAFT).getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+        h.setBlock(targetPos.above().west(5), AllBlocks.CREATIVE_MOTOR.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
+        CreativeMotorBlockEntity motor = h.getBlockEntity(targetPos.above().west(5)); motor.generatedSpeed.setValue(0);
+        FluidTankBlockEntity sourceLeft = h.getBlockEntity(targetPos.west(5)), sourceRight = h.getBlockEntity(targetPos.east(5)), target = h.getBlockEntity(targetPos);
+        h.runAfterDelay(20, () -> {
+            sourceLeft.getTankInventory().fill(new FluidStack(Fluids.WATER, 5000), FluidAction.EXECUTE);
+            sourceRight.getTankInventory().fill(new FluidStack(Fluids.WATER, 5000), FluidAction.EXECUTE);
+            motor.generatedSpeed.setValue(32); NetworkTopology.flush();
+            var ratios = ((INetworkDynamics) motor.getOrCreateNetwork()).differentialcreate$getRatios();
+            double speed = SourcePhysics.curve(motor).noLoadSpeed(); float reference = ratios.get(motor);
+            ratios.forEach((be, ratio) -> ElasticKinetics.state(be).physicalSpeed = speed * ratio / reference);
+        });
+        double[] total = {0};
+        h.runAfterDelay(80, () -> {
+            target.getTankInventory().drain(Integer.MAX_VALUE, FluidAction.EXECUTE);
+            target.getTankInventory().fill(new FluidStack(Fluids.WATER, target.getTankInventory().getCapacity() - 1), FluidAction.EXECUTE);
+            for (int sign : new int[]{-1, 1}) {
+                var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(targetPos.east(sign)));
+                var buffer = FluidKinetics.state(pipe).buffers.computeIfAbsent(sign < 0 ? Direction.EAST : Direction.WEST,
+                    side -> new com.diliupengyun.differential_create.kinetics.PipeHydraulics.Buffer());
+                buffer.amount = sign < 0 ? .4 : .5999999999999992;
+                buffer.fluid = new FluidStack(Fluids.WATER, 1); buffer.delivery = true;
+            }
+            total[0] = sourceLeft.getTankInventory().getFluidAmount() + sourceRight.getTankInventory().getFluidAmount()
+                + target.getTankInventory().getFluidAmount() + localOwned(h);
+        });
+        h.runAfterDelay(105, () -> {
+            h.assertTrue(target.getTankInventory().getFluidAmount() == target.getTankInventory().getCapacity(),
+                "shared receipt completes exactly one integer across both ports");
+            double after = sourceLeft.getTankInventory().getFluidAmount() + sourceRight.getTankInventory().getFluidAmount()
+                + target.getTankInventory().getFluidAmount() + localOwned(h);
+            h.assertTrue(Math.abs(after - total[0]) < 1e-6, "shared receiver neither duplicates the last mB nor deletes a port's fraction");
+            PumpBlockEntity pumpLeft = h.getBlockEntity(left), pumpRight = h.getBlockEntity(right);
+            h.assertTrue(FluidKinetics.state(pumpLeft.getBehaviour(FluidTransportBehaviour.TYPE)).pumpFlow == 0
+                && FluidKinetics.state(pumpRight.getBehaviour(FluidTransportBehaviour.TYPE)).pumpFlow == 0,
+                "both wet mouths observe the shared full-receiver constraint");
             h.succeed();
         });
     }
