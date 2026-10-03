@@ -10,6 +10,8 @@ import com.diliupengyun.differential_create.kinetics.KineticGoggleInfo;
 import com.diliupengyun.differential_create.kinetics.InertiaRegistry;
 import com.diliupengyun.differential_create.kinetics.NetworkDynamics;
 import com.diliupengyun.differential_create.kinetics.PhysicsTuning;
+import com.diliupengyun.differential_create.kinetics.NetworkLoad;
+import com.diliupengyun.differential_create.kinetics.LoadFactor;
 import com.simibubi.create.AllBlocks;
 import com.simibubi.create.content.fluids.tank.FluidTankBlockEntity;
 import com.simibubi.create.content.kinetics.steamEngine.PoweredShaftBlockEntity;
@@ -322,6 +324,15 @@ public final class SteamEngineTests {
 				near(h, 1, fraction, .001, "fan demand remains near the steam power budget during residual oscillation");
 				LoadFactorTests.fraction(h, shaft, fraction, "fan demand follows its actual speed during elastic oscillation");
 				LoadFactorTests.tooltip(h, shaft, "100%", net.minecraft.ChatFormatting.YELLOW);
+				double fanSpeed = NetworkDynamics.preciseSpeed(fan);
+				double weakSpeed = Math.nextDown(PhysicsTuning.STEAM_GOVERNOR_RPM);
+				ElasticKinetics.state(shaft).physicalSpeed = weakSpeed;
+				ElasticKinetics.state(fan).physicalSpeed = weakSpeed * ratios.get(fan) / reference;
+				var weak = NetworkLoad.of(shaft);
+				h.assertTrue(weak.status() == LoadFactor.Status.AVAILABLE && Double.isFinite(weak.fraction()) && weak.fraction() > 1e10,
+					"genuine tiny governor admission retains a finite load deficit rather than being erased as roundoff: " + weak);
+				ElasticKinetics.state(shaft).physicalSpeed = actualSpeed;
+				ElasticKinetics.state(fan).physicalSpeed = fanSpeed;
 				h.setBlock(fanPos, Blocks.AIR);
 				NetworkTopology.flush();
 				double unloaded = shaft.getSpeed();

@@ -6,6 +6,11 @@ import com.diliupengyun.differential_create.kinetics.INetworkDynamics;
 import com.diliupengyun.differential_create.kinetics.NetworkTopology;
 import com.diliupengyun.differential_create.kinetics.FluidKinetics;
 import com.diliupengyun.differential_create.kinetics.IPumpDynamics;
+import com.diliupengyun.differential_create.kinetics.IdealFluidSolver;
+import com.diliupengyun.differential_create.kinetics.LoadFactor;
+import com.diliupengyun.differential_create.kinetics.NetworkDynamics;
+import com.diliupengyun.differential_create.kinetics.NetworkLoad;
+import com.diliupengyun.differential_create.kinetics.SourcePhysics;
 import com.simibubi.create.AllBlocks;
 import com.simibubi.create.content.fluids.FluidTransportBehaviour;
 import com.simibubi.create.content.fluids.pipes.FluidPipeBlock;
@@ -272,6 +277,63 @@ public final class PumpPhysicsTests {
         });
     }
 
+    @GameTest(template = TEMPLATE, batch = "pump", timeoutTicks = 160)
+    public static void blockedPumpLoadReadout(GameTestHelper h) {
+        Fixture f = fixture(h, false, false);
+        h.runAfterDelay(50, () -> {
+            double input = SourcePhysics.curve(f.motor).torque(NetworkDynamics.preciseSpeed(f.motor))
+                * NetworkDynamics.preciseSpeed(f.motor);
+            double demand = ((IPumpDynamics) f.pump).differentialcreate$torque() * NetworkDynamics.preciseSpeed(f.pump);
+            var reading = NetworkLoad.of(f.motor);
+            h.assertTrue(input > 0 && demand > 0 && reading.status() == LoadFactor.Status.AVAILABLE
+                && Math.abs(reading.fraction() - demand / input) < 1e-10,
+                "a running pump retains its actual shaft demand and source supply: " + reading);
+        });
+        h.runAfterDelay(60, () -> {
+            f.boiler.getTankInventory().fill(new FluidStack(Fluids.WATER, Integer.MAX_VALUE), FluidAction.EXECUTE);
+            f.motor.generatedSpeed.setValue(-32);
+            f.speed(SourcePhysics.curve(f.motor).noLoadSpeed());
+        });
+        h.runAfterDelay(100, () -> {
+            // Reproduce the saved 64-RPM blocked-pump state: two speed ulps of
+            // overshoot and a pressure-projection residual of about 1e-15 mB/tick.
+            for (int direction : new int[]{1, -1}) for (int ulps : new int[]{-2, 0, 2}) for (int flowSign : new int[]{-1, 1}) {
+                f.motor.generatedSpeed.setValue(direction * 32);
+                double target = SourcePhysics.curve(f.motor).noLoadSpeed();
+                f.speed(target + Math.copySign(Math.ulp(target), target) * ulps);
+                var pipe = f.pump.getBehaviour(FluidTransportBehaviour.TYPE);
+                double axis = FluidKinetics.state(pipe).pumpAxisSign;
+                double rpm = axis * NetworkDynamics.preciseSpeed(f.pump);
+                double flow = flowSign * Math.ulp(8d);
+                double torque = axis * IdealFluidSolver.coupling(new IdealFluidSolver.Material(1000, false), rpm, flow) * flow;
+                ((IPumpDynamics) f.pump).differentialcreate$hydraulicState(16, flow, torque);
+                assertZeroPumpLoad(h, f);
+                LoadFactorTests.tooltip(h, f.motor, "0%", net.minecraft.ChatFormatting.GREEN);
+            }
+            int before = f.water();
+            h.onEachTick(() -> {
+                if (h.getTick() > 100 && h.getTick() < 130) assertZeroPumpLoad(h, f);
+            });
+            h.runAfterDelay(30, () -> {
+                assertZeroPumpLoad(h, f);
+                h.assertTrue(before == f.water(), "readout correction cannot restart a blocked flow");
+                h.assertTrue(Math.abs(f.motor.getSpeed()) == 64, "readout correction preserves the physical motor speed");
+                f.motor.generatedSpeed.setValue(0);
+                NetworkTopology.flush();
+                h.assertTrue(NetworkLoad.of(f.motor).status() == LoadFactor.Status.NO_POWER,
+                    "roundoff in a blocked pump cannot masquerade as an active source after the motor shuts off");
+                h.succeed();
+            });
+        });
+    }
+
+    private static void assertZeroPumpLoad(GameTestHelper h, Fixture f) {
+        var reading = NetworkLoad.of(f.motor);
+        h.assertTrue(reading.status() == LoadFactor.Status.AVAILABLE && reading.fraction() == 0,
+            "blocked pump has zero load instead of dividing roundoff residues: " + reading
+                + "; motor=" + NetworkDynamics.preciseSpeed(f.motor) + "; pumpTorque=" + ((IPumpDynamics) f.pump).differentialcreate$torque());
+    }
+
     @GameTest(template = TEMPLATE, batch = "pump", timeoutTicks = 180)
     public static void lowSpeedHasNoFreeMinimumFlow(GameTestHelper h) {
         Fixture f = fixture(h, false, false);
@@ -384,6 +446,8 @@ public final class PumpPhysicsTests {
         h.runAfterDelay(80, () -> {
             h.assertTrue(destination.getTankInventory().getFluidAmount() > 200, "height difference transports water without a motor");
             h.assertTrue(Math.abs(pump.getSpeed()) > .1, "gravity-fed water backdrives the real pump");
+            h.assertTrue(NetworkLoad.of(pump).status() == LoadFactor.Status.AVAILABLE,
+                "meaningful fluid backdrive remains an active shaft supply in the readout");
             double total = source.getTankInventory().getFluidAmount() + destination.getTankInventory().getFluidAmount() + localOwned(h);
             h.assertTrue(Math.abs(total - supplied[0]) < 1e-6, "gravity transfer conserves original tank inventory and fractions: expected=" + supplied[0] + "; actual="
                 + total + "; source=" + source.getTankInventory().getFluidAmount() + "; destination=" + destination.getTankInventory().getFluidAmount() + "; owned=" + localOwned(h));
