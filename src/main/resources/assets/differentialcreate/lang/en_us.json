@@ -47,7 +47,10 @@
   "gui.differentialcreate.gauge.range_setting": "Speedometer range",
   "gui.differentialcreate.gauge.range": "Range: 0–%s RPM",
   "gui.differentialcreate.gauge.over_range": "Out of range",
-  "gui.differentialcreate.goggles.pump_head": "Pump pressure head: %s m",
-  "gui.differentialcreate.goggles.pump_flow": "Flow (positive along arrow): %s mB/tick",
+  "gui.differentialcreate.goggles.pump_head": "Pressure head (positive toward %2$s): %1$s m",
+  "gui.differentialcreate.goggles.pump_flow": "Flow (positive toward %2$s): %1$s mB/tick",
+  "gui.differentialcreate.goggles.pump_axis_x": "east",
+  "gui.differentialcreate.goggles.pump_axis_y": "up",
+  "gui.differentialcreate.goggles.pump_axis_z": "south",
   "gui.differentialcreate.goggles.pump_reaction": "Fluid torque on shaft: %s su/RPM"
 }

@@ -16,7 +16,7 @@
 - **负载率**：运行时比较网络的持续需求功率与可用驱动功率，整体停转时比较起动扭矩。加速储能不算持续负载，100% 表示当前收支平衡，没有主动供能时显示“无动力”。
 - **转速表**：移除原版轴速上限设置。手持扳手瞄准表盘并长按右键，可选择 64–1048576 RPM 量程；默认 256，指针与比较器按固定量程输出，超量程仍显示真实转速。
 
-动力泵与管道已接入理想流体首版：压力推动有惯性的流体，液体受重力，水流可以反拖泵轴；管壁无摩擦。泵的负载来自实际传能，断开动力后可惰行供水。完整规则和参数见 [设计与实现范围](DESIGN.md)。
+动力泵与管道使用不可压缩队列：新管全空气，每格保存有序的空气与真实流体，保留重力、水位差、泵负载与反拖。空管泵可以引液，没有排气路径会困气。正转速沿泵箭头增压，负转速逆箭头增压；扳手翻向或反转实际轴运动都可以调向。完整规则见 [流体说明](docs/FLUIDS.md)。
 
 ## 黄铜离合器配方
 
@@ -28,21 +28,21 @@
 ## 构建与验证
 
 ```powershell
-.\gradlew.bat build runGameTestServer
+.\gradlew.bat build runGameTestServer runVirtualAirServer
 ```
 
-Linux 使用 `./gradlew build runGameTestServer`，首次运行需要下载依赖。成品位于 `build/libs/differentialcreate-1.0.0.jar`。
+Linux 使用 `./gradlew build runGameTestServer runVirtualAirServer`，首次运行需要下载依赖。成品位于 `build/libs/differentialcreate-1.0.0.jar`。
 
 客户端和服务端均安装同一版本，并安装对应的 Create 及其依赖。当前网络兼容版本为 **8**，不能与旧版客户端混用。
 
-`build` 自动执行独立数值回归，覆盖物理、求解精度、树形求解回退、储能、渲染数学和工具轨迹；`runGameTestServer` 验证真实游戏中的拓扑、配方、物品控制、蒸汽机、水泵和动态结构。测试使用独立的 `run-gametest/`，CI 执行相同检查并保存日志。验证入口见 [设计文档](DESIGN.md#9-验证与维护)。
+`build` 自动运行数值回归；`runGameTestServer` 验证拓扑、配方、物品控制、供汽和动态结构，默认使用 `run-gametest/`。`runVirtualAirServer` 在 `build/` 中运行流体、机器、动态管网与卸载场景，可用 `-PvirtualAirSelect=pump_direction_.*,structure_.*` 选择子集。CI 执行上述完整命令并保存日志，验证入口见 [设计文档](DESIGN.md#9-验证与维护) 和 [流体覆盖矩阵](docs/FLUID_COVERAGE.md)。
 
-流体网络专项性能测试使用 `.\gradlew.bat runFluidBenchmarkServer`，测试世界位于 `build/`。可用 `-PfluidPerfCase=loops` 单独测量多泵回路；其他类别为 `straight`、`branches`、`slugs`。场景和测量口径见 [性能记录](docs/FLUID_PERFORMANCE.md)。
+专项性能命令为 `.\gradlew.bat runFluidBenchmarkServer`，可用 `-PfluidPerfCase=loops` 选择多泵回路；类别和测量范围见 [性能测试](docs/FLUID_PERFORMANCE.md)。
 
 ## 当前边界与待办
 
 结构使用等质量方块与外露面平方空气阻力，不模拟真实流场或水阻力。列车、矿车等独立载具及其他附属模组的特殊逻辑尚未全面适配。
 
-水泵与管道使用[一维灌注的理想模型](docs/FLUIDS.md)，保存实际管内库存和流体前沿；扬程不足时下方管道可以存水，停流后透明管继续显示水柱。原版储罐与锅炉保持原有规则。旧版没有管内库存的存档从空管重新灌注，不凭空补水。完整燃烧器燃料链、多人中途加入或切维度、自然跨区块长期卸载重载、复杂管网和全部配方组合仍需专项验收。轴承普通渲染与 Flywheel 已有针对性验证，其他完整客户端场景仍需扩展。
+管网不模拟真空、压缩、密度分层、同口逆向交换或管内反应，泛用机器使用近似水头。原生整数接口保留真实小数余量，普通重载不补气。流体预算不足时推迟更新，不积累补算任务。完整燃料链、多人中途加入或切维度、长期大型工厂、全部配方组合与完整客户端交互仍需专项验收。
 
 参数目前集中在 `PhysicsTuning`、`InertiaRegistry` 和 `ContraptionGeometry`，黄铜强度名单使用方块标签，尚无配置界面。具体待办见 [设计文档](DESIGN.md#10-后续待办)。

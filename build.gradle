@@ -83,7 +83,10 @@ neoForge {
         // The gametest system is also enabled by default for other run configs under the /test command.
         gameTestServer {
             type = "gameTestServer"
-            gameDirectory = project.file('run-gametest')
+            def regressionId = providers.gradleProperty('regressionRunId')
+            if (regressionId.isPresent() && !(regressionId.get() ==~ /[a-zA-Z0-9_-]{1,64}/))
+                throw new GradleException('regressionRunId must be a simple owned run name')
+            gameDirectory = regressionId.isPresent() ? project.file('build/regression/' + regressionId.get()) : project.file('run-gametest')
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
@@ -93,6 +96,30 @@ neoForge {
             gameDirectory = project.file('build/fluid-network-performance/runs/' + UUID.randomUUID())
             systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_perf'
             systemProperty 'differentialcreate.perf.case', providers.gradleProperty('fluidPerfCase').getOrElse('all')
+        }
+
+        // Opt-in behavioural partitions in an owned disposable world. A named
+        // run can be reused for the explicit prepare/resume restart pair.
+        fluidCoverageServer {
+            type = "gameTestServer"
+            def coverageRunId = providers.gradleProperty('fluidCoverageRunId').getOrElse(UUID.randomUUID().toString())
+            if (!(coverageRunId ==~ /[a-zA-Z0-9_-]{1,64}/))
+                throw new GradleException('fluidCoverageRunId must be a simple owned run name')
+            gameDirectory = project.file('build/fluid-coverage/runs/' + coverageRunId)
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_coverage'
+            systemProperty 'differentialcreate.coverage.select', providers.gradleProperty('fluidCoverageSelect').getOrElse('.*')
+            systemProperty 'differentialcreate.coverage.restart', providers.gradleProperty('fluidCoverageRestart').getOrElse('')
+        }
+
+        virtualAirServer {
+            type = "gameTestServer"
+            gameDirectory = project.file('build/virtual-air/runs/' + UUID.randomUUID())
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_air'
+            systemProperty 'differentialcreate.air.select', providers.gradleProperty('virtualAirSelect').getOrElse('.*')
+            systemProperty 'differentialcreate.air.legacy', providers.gradleProperty('virtualAirLegacy').getOrElse('false')
+            systemProperty 'differentialcreate.coverage.audit', 'true'
+            systemProperty 'differentialcreate.structureAudit', providers.gradleProperty('virtualAirAudit').getOrElse('false')
+            logLevel = org.slf4j.event.Level.INFO
         }
 
         data {
@@ -135,6 +162,16 @@ neoForge.runs.fluidBenchmarkServer { logLevel = org.slf4j.event.Level.INFO }
 
 tasks.named('runFluidBenchmarkServer') {
     notCompatibleWithConfigurationCache('Each performance invocation requires a new empty world.')
+}
+
+tasks.named('runVirtualAirServer') {
+    notCompatibleWithConfigurationCache('Each native virtual-air run requires a fresh disposable world.')
+    doLast {
+        def directory = neoForge.runs.getByName('virtualAirServer').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !(log.text =~ /All \d+ required tests passed/))
+            throw new GradleException('Virtual-air server did not report a completed successful test run; inspect its latest.log.')
+    }
 }
 
 // Sets up a dependency configuration called 'localRuntime'.

@@ -22,6 +22,11 @@ public final class PhysicsRegression {
 		IdealFluidRegression.run();
 		PipeFillingRegression.run();
 		DirectionalFluidRegression.run();
+		AirLiquidRegression.run();
+		MacroFluidRegression.run();
+		FluidPartitionRegression.run();
+		QueuedFluidRegression.run();
+		PumpDirectionRegression.run();
 		LoadFactorRegression.run();
 		shaftTravel();
 		ActorContactRegression.run();

@@ -3,8 +3,9 @@ package com.diliupengyun.differential_create.kinetics;
 import java.util.Arrays;
 
 /** Liquid intervals in an existing pipe arm, measured from its centre to its face.
- * Empty space has no inventory, mass, gravity or compression in this ideal model. */
+ * Its complement is unfilled space, not an owned fluid inventory. */
 public final class PipeContents {
+    public static final double FRONT_ROUNDOFF = 1e-12;
     public static final PipeContents EMPTY = new PipeContents(new double[0]);
     public static final PipeContents FULL = new PipeContents(new double[]{0, 1});
     private final double[] ends;
@@ -51,8 +52,8 @@ public final class PipeContents {
     public int intervals() { return ends.length / 2; }
     public double start(int interval) { return ends[interval * 2]; }
     public double end(int interval) { return ends[interval * 2 + 1]; }
-    public boolean atStart() { return ends.length != 0 && ends[0] <= 1e-12; }
-    public boolean atEnd() { return ends.length != 0 && ends[ends.length - 1] >= 1 - 1e-12; }
+    public boolean atStart() { return ends.length != 0 && ends[0] <= FRONT_ROUNDOFF; }
+    public boolean atEnd() { return ends.length != 0 && ends[ends.length - 1] >= 1 - FRONT_ROUNDOFF; }
     public double[] data() { return ends.clone(); }
     public PipeContents reverse() {
         if (this == EMPTY || this == FULL) return this;
@@ -85,12 +86,12 @@ public final class PipeContents {
      * A junction with mixed liquid/empty inflow routes its owned liquid in flow proportion. */
     public PipeContents move(double displacement, double inletFraction) {
         if (displacement == 0) return this;
-        if (displacement < 0) return reverse().move(-displacement, inletFraction).reverse();
         if (!(inletFraction >= 0 && inletFraction <= 1) || !Double.isFinite(displacement))
             throw new IllegalArgumentException("Liquid step crossed a pipe mouth");
         if (this == FULL && inletFraction == 1) return FULL;
         if (this == EMPTY && inletFraction == 0) return EMPTY;
-        if (displacement > 1 + 1e-10) throw new IllegalArgumentException("Liquid step crossed a pipe mouth");
+        if (Math.abs(displacement) > 1 + 1e-10) throw new IllegalArgumentException("Liquid step crossed a pipe mouth");
+        if (displacement < 0) return moveBackward(-displacement, inletFraction);
         double[] result = new double[ends.length + 2]; int count = 0;
         double admitted = displacement * inletFraction;
         if (admitted > 0) { result[count++] = displacement - admitted; result[count++] = Math.min(1, displacement); }
@@ -102,13 +103,37 @@ public final class PipeContents {
         }
         return canonical(Arrays.copyOf(result, count));
     }
+    private PipeContents moveBackward(double distance, double inletFraction) {
+        // Translate in the stored frame. A reverse/translate/reverse round trip
+        // loses small coordinates near zero to the ULP of the opposite mouth;
+        // direct translation retains those small fluid coordinates.
+        double[] result = new double[ends.length + 2]; int count = 0;
+        for (int i = 0; i < ends.length; i += 2) {
+            double a = Math.max(0, ends[i] - distance), b = Math.min(1, ends[i + 1] - distance);
+            if (b <= a) continue;
+            if (count > 0 && a <= result[count - 1] + 1e-14) result[count - 1] = b;
+            else { result[count++] = a; result[count++] = b; }
+        }
+        double admitted = distance * inletFraction;
+        if (admitted > 0) {
+            double a = Math.max(0, 1 - distance), b = Math.min(1, 1 - distance + admitted);
+            if (b > a) {
+                if (count > 0 && a <= result[count - 1] + 1e-14) result[count - 1] = b;
+                else { result[count++] = a; result[count++] = b; }
+            }
+        }
+        return canonical(Arrays.copyOf(result, count));
+    }
     public double travelToMouth(double direction) {
+        return travelToMouth(direction, FRONT_ROUNDOFF);
+    }
+    public double travelToMouth(double direction, double roundoff) {
         double distance = 1;
         for (double end : ends) {
             double next = direction > 0 ? 1 - end : end;
             // Coalesce face events at position roundoff, without erasing inventory:
             // exiting() still integrates every owned interval across this step.
-            if (next > 1e-12) distance = Math.min(distance, next);
+            if (next > roundoff) distance = Math.min(distance, next);
         }
         return distance;
     }
@@ -116,7 +141,14 @@ public final class PipeContents {
      * Mouth contact alone must never promote such a slug to a whole step of water. */
     public double exiting(double displacement) {
         if (displacement == 0 || this == EMPTY) return 0;
-        if (displacement < 0) return reverse().exiting(-displacement);
+        if (displacement < 0) {
+            double distance = -displacement;
+            if (this == FULL || ends[0] == 0 && ends[1] >= distance) return distance;
+            double amount = 0;
+            for (int i = 0; i < ends.length; i += 2)
+                amount += Math.max(0, Math.min(ends[i + 1], distance) - ends[i]);
+            return Math.min(distance, amount);
+        }
         if (this == FULL) return displacement;
         if (ends[ends.length - 1] == 1 && ends[ends.length - 2] <= 1 - displacement) return displacement;
         double amount = 0;
@@ -129,7 +161,20 @@ public final class PipeContents {
         if (displacement == 0) return fraction;
         if (this == FULL && inletFraction == 1) return 1;
         if (this == EMPTY && inletFraction == 0) return 0;
-        if (displacement < 0) return reverse().gravityFraction(-displacement, inletFraction);
+        if (displacement < 0) {
+            double distance = -displacement;
+            if (this == EMPTY) return .5 * distance * (2 * inletFraction - inletFraction * inletFraction);
+            if (ends[0] == 0 && ends[1] >= distance)
+                return fraction + .5 * distance * (2 * inletFraction - inletFraction * inletFraction - 1);
+            double remaining = fraction, exitMoment = 0;
+            for (int i = 0; i < ends.length; i += 2) {
+                double a = ends[i], b = Math.min(ends[i + 1], distance);
+                if (b <= a) continue;
+                remaining -= b - a;
+                exitMoment += (b - a) * (a + b) * .5 / distance;
+            }
+            return remaining + exitMoment + .5 * distance * (2 * inletFraction - inletFraction * inletFraction);
+        }
         if (this == EMPTY) return .5 * displacement * (2 * inletFraction - inletFraction * inletFraction);
         if (ends[ends.length - 1] == 1 && ends[ends.length - 2] <= 1 - displacement)
             return fraction + .5 * displacement * (2 * inletFraction - inletFraction * inletFraction - 1);

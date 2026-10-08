@@ -3,7 +3,7 @@ package com.diliupengyun.differential_create.kinetics;
 import java.util.List;
 
 /** Inventory-conserving one-dimensional advection. A fixed connection graph transports
- * liquid and displaces unmodelled empty space; only liquid contributes inertia and weight. */
+ * actual fluid between its contacts. The live macro model has no ambient-air state. */
 public final class PipeFilling {
     public static final double MB_PER_METRE = IdealFluidSolver.AREA / IdealFluidSolver.MB_VOLUME;
     private PipeFilling() {}
@@ -17,6 +17,11 @@ public final class PipeFilling {
                               IdealFluidSolver.Material material, double minutes) {
         return sample(tubes, nodes, contents, origin, midpoint, inventory, supplied, material, minutes, true);
     }
+    public static Move sampleResolved(List<Tube> tubes, int nodes, PipeContents[] contents, double[] origin,
+                                      double[] midpoint, boolean[] inventory, double[] supplied,
+                                      IdealFluidSolver.Material material, double minutes) {
+        return sample(tubes, nodes, contents, origin, midpoint, inventory, supplied, material, minutes, true, 0);
+    }
 
     /** Detached coefficients for the requested horizon, even when its provisional
      * trajectory crosses a face. The caller must resolve allowedMinutes before commit. */
@@ -26,10 +31,21 @@ public final class PipeFilling {
         var result = sample(tubes, nodes, contents, origin, midpoint, inventory, supplied, material, minutes, false);
         return new Prediction(result.waterOutward, result.inertia, result.correction, result.allowedMinutes);
     }
+    public static Prediction predictResolved(List<Tube> tubes, int nodes, PipeContents[] contents, double[] origin,
+                                             double[] midpoint, boolean[] inventory, double[] supplied,
+                                             IdealFluidSolver.Material material, double minutes) {
+        var result = sample(tubes, nodes, contents, origin, midpoint, inventory, supplied, material, minutes, false, 0);
+        return new Prediction(result.waterOutward, result.inertia, result.correction, result.allowedMinutes);
+    }
 
     private static Move sample(List<Tube> tubes, int nodes, PipeContents[] contents, double[] origin,
                                double[] midpoint, boolean[] inventory, double[] supplied,
                                IdealFluidSolver.Material material, double minutes, boolean truncate) {
+        return sample(tubes, nodes, contents, origin, midpoint, inventory, supplied, material, minutes, truncate, PipeContents.FRONT_ROUNDOFF);
+    }
+    private static Move sample(List<Tube> tubes, int nodes, PipeContents[] contents, double[] origin,
+                               double[] midpoint, boolean[] inventory, double[] supplied,
+                               IdealFluidSolver.Material material, double minutes, boolean truncate, double frontRoundoff) {
         double[] inward = new double[nodes], water = new double[nodes];
         boolean[] incident = new boolean[nodes], wet = new boolean[nodes], dry = new boolean[nodes];
         java.util.Arrays.fill(wet, true); java.util.Arrays.fill(dry, true);
@@ -49,8 +65,16 @@ public final class PipeFilling {
             // several lengths in this interval while all neighbouring mouths
             // remain wet; an actual neighbouring front still limits the step.
             if (q != 0 && !(contents[e] == PipeContents.FULL && liquidInlet)
-                && !(contents[e] == PipeContents.EMPTY && emptyInlet)) limit = Math.min(limit, mouthTime(contents[e].travelToMouth(q)
-                * tube.length * MB_PER_METRE * RotationMath.TICK_MINUTES, origin[e], q, minutes));
+                && !(contents[e] == PipeContents.EMPTY && emptyInlet)) {
+                double distance = contents[e].travelToMouth(q, frontRoundoff) * tube.length * MB_PER_METRE * RotationMath.TICK_MINUTES;
+                // A resolved liquid/air solve advances by its implicit midpoint
+                // displacement. Stiff gas reversals do not follow a constant
+                // acceleration through the requested horizon: extrapolating
+                // their fast initial velocity repeatedly predicts a mouth that
+                // the resampled liquid never reaches.
+                double event = frontRoundoff == 0 ? Math.min(minutes, distance / Math.abs(q)) : mouthTime(distance, origin[e], q, minutes);
+                limit = Math.min(limit, event);
+            }
         }
         // Numerical face events can coalesce at machine precision. Integrating the
         // actual outgoing interval keeps their tiny inventory exact, in either direction.

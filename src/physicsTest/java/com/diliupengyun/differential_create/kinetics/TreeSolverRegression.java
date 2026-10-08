@@ -27,6 +27,7 @@ public final class TreeSolverRegression {
     public static void run() {
         decimalReference();
         guardedCaptures();
+        microscopicFluidEvent();
         searchRestart();
         disconnectedSearchRestart();
         System.out.println("Tree solver regression: " + checks + " checks passed");
@@ -225,6 +226,46 @@ public final class TreeSolverRegression {
         var event = List.of(new EventLimit(31, budget, INF, INF));
         compare(graph.capture(true).advanceToEvent(DT / 8, H, event),
             graph.capture(false).advanceToEvent(DT / 8, H, event), true);
+    }
+
+    private static void microscopicFluidEvent() {
+        // Captured from a short pipe-mouth event. One coasting rotor drives a
+        // passive tree: every midpoint spring torque is zero, so stored twists
+        // reverse sign while the rotor's momentum and total energy stay fixed.
+        var bodies = new ArrayList<Body>();
+        for (int i = 0; i < 15; i++) bodies.add(new Body(i == 0 ? .5 : 0, 0, 0, 0, 0));
+        var links = List.of(new Link(0, 1, 1, 1e7, 0, 65536, INF),
+            new Link(1, 3, -.5, 1.6e7, 0, 65536, INF), new Link(2, 3, 1, 1e7, 0, 65536, INF),
+            new Link(2, 5, -.5, 1.6e7, 0, 65536, INF), new Link(4, 5, 1, 1e7, 0, 65536, INF),
+            new Link(4, 8, -.5, 1.6e7, 0, 65536, INF), new Link(6, 7, 1, 1e7, 0, 65536, INF),
+            new Link(7, 14, -.5, 1.6e7, 0, 65536, INF), new Link(8, 9, 1, 1e7, 0, 65536, INF),
+            new Link(9, 10, 1, 1e7, 0, 65536, INF), new Link(10, 11, 1, 1e7, 0, 65536, INF),
+            new Link(11, 12, 1, 1e7, 0, 65536, 327.68), new Link(12, 13, 1, 1e7, 0, 65536, INF),
+            new Link(13, 14, 1, 1e7, 0, 65536, INF));
+        double[] ratios = {1, 1, -.5, -.5, .25, .25, .25, .25, -.125, -.125, -.125, -.125, -.125, -.125, -.125};
+        double[] speed = Arrays.stream(ratios).map(q -> q * 181.69045339502782).toArray();
+        double[] twist = {-6.141866306411053e-7, 2.839608435033852e-7, 6.29643145580684e-8,
+            7.870539326759338e-8, -1.2592862909719303e-7, -1.574107865472464e-7,
+            -1.2592862893254057e-7, 1.5741078663693166e-7, -2.5185725817992635e-7,
+            -2.5185725813250744e-7, -2.388763373688889e-7, -2.3887633726913385e-7,
+            -2.5185725822266774e-7, -2.5185725810035936e-7};
+        var graph = new Graph(bodies, links, speed, twist);
+        for (boolean reference : new boolean[]{false, true}) for (double h : new double[]{1.797583005019622e-15, 1e-16, 1e-14}) {
+            var result = graph.capture(reference).advanceToEvent(h, h, List.of(new EventLimit(0, INF, 1, INF)));
+            check(result.duration() == h && result.broken() < 0, "microscopic event advances its full duration");
+            for (int i = 0; i < speed.length; i++)
+                check(Math.abs(result.speed()[i] - speed[i]) <= 1e-12, "passive endpoint recovers the coasting speed");
+            double energyChange = 0;
+            for (int e = 0; e < links.size(); e++) {
+                var link = links.get(e);
+                check(Math.abs(result.twist()[e] + twist[e]) <= 1e-19, "massless midpoint spring torque vanishes");
+                check(Math.abs(link.ratio() * result.angle()[link.a()] - result.angle()[link.b()] + 2 * twist[e]) <= 1e-19,
+                    "passive displacement solves the original spring equation");
+                check(!result.slipping()[e], "tiny interval does not invent clutch slip");
+                energyChange += .5 * link.stiffness() * (result.twist()[e] - twist[e]) * (result.twist()[e] + twist[e]);
+            }
+            check(Math.abs(energyChange) <= 1e-18, "short passive solve conserves elastic energy");
+        }
     }
 
     private static void compare(Result expected, Result actual, boolean exact) {

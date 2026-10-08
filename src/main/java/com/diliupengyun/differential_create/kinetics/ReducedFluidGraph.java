@@ -13,8 +13,12 @@ public final class ReducedFluidGraph {
     private final boolean[] boundary, active;
     private final int[] index;
     private final List<Channel> channels = new ArrayList<>();
+    private final List<List<Integer>> incidentChannels;
     private final boolean[] stopped;
     private final int reducedNodes;
+    private final int[] sampleIndex;
+    private final int sampleEdges;
+    private final boolean[] reducedBoundary, reducedActive;
     private record NumericGraph(double[] mass, IdealFluidSolver.Graph graph) {}
     private final List<NumericGraph> numericGraphs = new ArrayList<>();
 
@@ -59,6 +63,7 @@ public final class ReducedFluidGraph {
             var channel = channels.get(c); degree[channel.from]++; degree[channel.to]++;
             incident.get(channel.from).add(c); incident.get(channel.to).add(c);
         }
+        incidentChannels = List.copyOf(incident);
         int head = 0, tail = 0;
         for (int i = 0; i < nodes; i++) if (!boundary[i] && degree[i] == 1) queue[tail++] = i;
         while (head < tail) {
@@ -69,6 +74,16 @@ public final class ReducedFluidGraph {
                 if (!boundary[next] && --degree[next] == 1) queue[tail++] = next;
             }
         }
+        sampleIndex = new int[channels.size()]; Arrays.fill(sampleIndex, -1);
+        int samples = 0;
+        for (int c = 0; c < channels.size(); c++) {
+            var channel = channels.get(c);
+            if (!stopped[c] && channel.from != channel.to) sampleIndex[c] = samples++;
+        }
+        sampleEdges = samples;
+        reducedBoundary = new boolean[reducedNodes]; reducedActive = new boolean[sampleEdges];
+        Arrays.fill(reducedActive, true);
+        for (int i = 0; i < nodes; i++) if (index[i] >= 0) reducedBoundary[index[i]] = boundary[i];
     }
     public boolean matches(boolean[] boundary, boolean[] active) {
         return Arrays.equals(this.boundary, boundary) && Arrays.equals(this.active, active);
@@ -89,9 +104,7 @@ public final class ReducedFluidGraph {
         return true;
     }
     public IdealFluidSolver.Trial sample(double[] initial, double[] inertia, double[] force, double[] pressure, double minutes) {
-        var reducedEdges = new ArrayList<IdealFluidSolver.Edge>();
         double[] channelMass = new double[channels.size()], channelFlow = new double[channels.size()], channelForce = new double[channels.size()];
-        int[] sampleIndex = new int[channels.size()]; Arrays.fill(sampleIndex, -1);
         for (int c = 0; c < channels.size(); c++) {
             var channel = channels.get(c);
             double uniform = initial[Math.abs(channel.signedEdges[0]) - 1] * Math.signum(channel.signedEdges[0]);
@@ -102,21 +115,21 @@ public final class ReducedFluidGraph {
                 channelMass[c] += inertia[e]; channelFlow[c] += inertia[e] * initial[e] * sign; channelForce[c] += force[e] * sign;
             }
             channelFlow[c] = compatible ? uniform : channelFlow[c] / channelMass[c];
-            if (!stopped[c] && channel.from != channel.to) {
-                sampleIndex[c] = reducedEdges.size();
-                reducedEdges.add(new IdealFluidSolver.Edge(index[channel.from], index[channel.to], channelMass[c]));
-            }
         }
-        double[] origin = new double[reducedEdges.size()], forcing = new double[origin.length], datum = new double[reducedNodes];
-        boolean[] borders = new boolean[reducedNodes], enabled = new boolean[origin.length]; Arrays.fill(enabled, true);
-        for (int i = 0; i < nodes; i++) if (index[i] >= 0) { borders[index[i]] = boundary[i]; datum[index[i]] = pressure[i]; }
+        double[] origin = new double[sampleEdges], forcing = new double[origin.length], datum = new double[reducedNodes];
+        for (int i = 0; i < nodes; i++) if (index[i] >= 0) datum[index[i]] = pressure[i];
         for (int c = 0; c < channels.size(); c++) if (sampleIndex[c] >= 0) {
             origin[sampleIndex[c]] = channelFlow[c]; forcing[sampleIndex[c]] = channelForce[c];
         }
         IdealFluidSolver.Graph solver = null;
         for (var cached : numericGraphs) if (Arrays.equals(cached.mass, channelMass)) { solver = cached.graph; break; }
         if (solver == null) {
-            solver = new IdealFluidSolver.Graph(reducedNodes, reducedEdges, borders, enabled);
+            var reducedEdges = new ArrayList<IdealFluidSolver.Edge>(sampleEdges);
+            for (int c = 0; c < channels.size(); c++) if (sampleIndex[c] >= 0) {
+                var channel = channels.get(c);
+                reducedEdges.add(new IdealFluidSolver.Edge(index[channel.from], index[channel.to], channelMass[c]));
+            }
+            solver = new IdealFluidSolver.Graph(reducedNodes, reducedEdges, reducedBoundary, reducedActive);
             if (numericGraphs.size() == 4) numericGraphs.remove(0);
             numericGraphs.add(new NumericGraph(channelMass.clone(), solver));
         }
@@ -124,6 +137,7 @@ public final class ReducedFluidGraph {
         double[] next = new double[edges.size()], midpoint = new double[next.length], outward = new double[nodes], actualPressure = new double[nodes];
         double[] actualOrigin = new double[next.length];
         for (int i = 0; i < nodes; i++) if (index[i] >= 0) actualPressure[i] = trial.pressure()[index[i]];
+        restoreStoppedPressure(actualPressure, channelForce);
         double change = 0, work = 0, boundaryWork = 0, initialEnergy = 0, originEnergy = 0;
         for (int e = 0; e < initial.length; e++) initialEnergy += .5 * inertia[e] * initial[e] * initial[e];
         for (int c = 0; c < channels.size(); c++) {
@@ -146,7 +160,35 @@ public final class ReducedFluidGraph {
         for (int i = 0; i < nodes; i++) if (boundary[i]) boundaryWork += minutes * pressure[i] * outward[i];
         double error = change - work - boundaryWork;
         if (Math.abs(error) > 1e-10 * (Math.abs(change) + Math.abs(work) + Math.abs(boundaryWork)) + 1e-12)
-            throw new IllegalStateException("Reduced fluid work imbalance: " + error);
+            throw new IdealFluidSolver.WorkConvergenceException("Reduced fluid work imbalance: " + error);
         return new IdealFluidSolver.Trial(next, midpoint, actualPressure, outward, change, work, boundaryWork, Math.max(0, initialEnergy - originEnergy), actualOrigin);
+    }
+    /** Eliminating a closed leaf removes its flow unknown, not its static head.
+     * A stopped tree inherits pressure from its inventory or moving junction;
+     * an entirely closed tree chooses only an arbitrary reference pressure. */
+    private void restoreStoppedPressure(double[] pressure, double[] force) {
+        boolean[] known = boundary.clone(); int[] queue = new int[nodes]; int tail = 0;
+        for (int c = 0; c < channels.size(); c++) if (!stopped[c]) {
+            known[channels.get(c).from] = known[channels.get(c).to] = true;
+        }
+        for (int n = 0; n < nodes; n++) if (known[n]) queue[tail++] = n;
+        int head = 0;
+        for (int root = -1; root < nodes; root++) {
+            if (root >= 0) {
+                if (known[root] || index[root] < 0) continue;
+                known[root] = true; queue[tail++] = root;
+            }
+            while (head < tail) {
+                int node = queue[head++];
+                for (int c : incidentChannels.get(node)) if (stopped[c]) {
+                    var channel = channels.get(c); boolean forward = channel.from == node;
+                    int next = forward ? channel.to : channel.from;
+                    if (!known[next]) {
+                        pressure[next] = pressure[node] + (forward ? 1 : -1) * force[c];
+                        known[next] = true; queue[tail++] = next;
+                    }
+                }
+            }
+        }
     }
 }

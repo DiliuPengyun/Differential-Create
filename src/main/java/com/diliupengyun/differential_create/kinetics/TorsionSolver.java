@@ -84,7 +84,7 @@ public final class TorsionSolver {
         private final List<Link> links;
         private final double[] initialSpeed, initialTwist;
         private final List<Component> components;
-        private final SpeedFrame frame;
+        private SpeedFrame frame;
         private final MatrixGraph matrix;
         private final ComponentBatch[] batches;
         private final boolean[] analyticShafts;
@@ -96,7 +96,7 @@ public final class TorsionSolver {
         private boolean referenceMode, lastReference;
         private int fallbacks;
         private Prepared(List<Body> bodies, List<Link> links, double[] initialSpeed, double[] initialTwist, boolean accelerated) {
-            this.bodies = List.copyOf(bodies); this.links = List.copyOf(links);
+            this.bodies = new ArrayList<>(bodies); this.links = List.copyOf(links);
             this.initialSpeed = initialSpeed.clone(); this.initialTwist = initialTwist.clone();
             components = components(this.bodies, this.links, this.initialSpeed, this.initialTwist);
             frame = components.size() <= 1 ? integrationFrame(this.bodies, this.links) : null;
@@ -124,6 +124,44 @@ public final class TorsionSolver {
         public synchronized Motion motion(double duration, double maxStep) {
             var result = advanceCaptured(duration, maxStep, false);
             return new Motion(result.duration, result.angle, result.travel);
+        }
+        /** Retarget only detached drive forces during a coupling solve. Captured
+         * positions, speeds, inertia and links stay fixed until the world commits.
+         * Unchanged components retain exact integration and segment caches. */
+        public synchronized void updateDrives(double[] drives) {
+            if (drives.length != bodies.size()) throw new IllegalArgumentException("Drive count differs from captured bodies");
+            for (double drive : drives) if (!Double.isFinite(drive)) throw new IllegalArgumentException("Non-finite coupled drive");
+            boolean changed = false;
+            for (int i = 0; i < drives.length; i++) {
+                Body body = bodies.get(i);
+                if (Double.doubleToLongBits(body.drive) == Double.doubleToLongBits(drives[i])) continue;
+                bodies.set(i, new Body(body.inertia, drives[i], body.damping, body.load, body.drag,
+                    body.powerLimit, body.governorSpeed, body.governorRange));
+                changed = true;
+            }
+            if (!changed) return;
+            // Restart numerical guards as a fresh force capture would. A cached
+            // segment also keys its reference/accelerated path, so this cannot
+            // reuse an earlier result across a fallback change.
+            referenceMode = lastReference = false; fallbacks = 0;
+            if (components.size() <= 1) {
+                frame = integrationFrame(bodies, links);
+                cache.clear();
+                if (referenceCache != null) referenceCache.clear();
+            } else for (var component : components) {
+                boolean affected = false;
+                for (int i = 0; i < component.nodes.size(); i++) {
+                    Body body = bodies.get(component.nodes.get(i));
+                    if (component.bodies.get(i) != body) { component.bodies.set(i, body); affected = true; }
+                }
+                component.referenceMode = component.lastReference = false; component.fallbacks = 0;
+                if (affected) {
+                    component.frame = integrationFrame(component.bodies, component.links);
+                    component.cache.clear();
+                    if (component.referenceCache != null) component.referenceCache.clear();
+                    component.segments.clear();
+                }
+            }
         }
         /** Legacy monotone-predicate search; production uses explicit shaft limits below.
          * Keep all probes and the committed result on one algorithm if a branch guard fires.
@@ -649,6 +687,8 @@ public final class TorsionSolver {
         return new Result(h, next.speed, next.twist, angle, travel, next.torque, next.slipping, next.broken);
     }
 
+    private record SegmentTrial(double minutes, boolean reference, double[] speed, double[] twist, Result result) {}
+
     private static final class Component {
         final List<Integer> nodes = new ArrayList<>(), edges = new ArrayList<>();
         final List<Body> bodies = new ArrayList<>();
@@ -662,6 +702,7 @@ public final class TorsionSolver {
         boolean referenceMode, lastReference;
         int fallbacks;
         double[] segmentSpeed, segmentTwist;
+        final List<SegmentTrial> segments = new ArrayList<>();
         private MatrixGraph eventMatrix() {
             if (!referenceMode || matrix.tree == null) return matrix;
             if (referenceMatrix == null) {
@@ -675,12 +716,25 @@ public final class TorsionSolver {
             for (int i = 0; i < localSpeed.length; i++) localSpeed[i] = start.speed[nodes.get(i)];
             for (int e = 0; e < localTwist.length; e++) localTwist[e] = start.twist[edges.get(e)];
             lastReference = referenceMode || matrix.tree == null;
-            try { return graphSegment(bodies, links, localSpeed, localTwist, h, frame, eventMatrix()); }
+            for (int i = segments.size() - 1; i >= 0; i--) {
+                var cached = segments.get(i);
+                if (cached.minutes == h && cached.reference == lastReference
+                    && java.util.Arrays.equals(cached.speed, localSpeed) && java.util.Arrays.equals(cached.twist, localTwist))
+                    return copyResult(cached.result);
+            }
+            Result result;
+            try { result = graphSegment(bodies, links, localSpeed, localTwist, h, frame, eventMatrix()); }
             catch (OriginalRequired | ConvergenceFailure failure) {
                 if (eventMatrix().tree == null) throw failure;
                 fallbacks++; referenceMode = true; lastReference = true;
-                return graphSegment(bodies, links, localSpeed, localTwist, h, frame, eventMatrix());
+                result = graphSegment(bodies, links, localSpeed, localTwist, h, frame, eventMatrix());
             }
+            // Retain the successive states of a short event search, not only its
+            // last segment. Another pump-load trial starts at the same initial
+            // state and must be able to reuse that unchanged component's prefix.
+            if (segments.size() == 16) segments.removeFirst();
+            segments.add(new SegmentTrial(h, lastReference, localSpeed.clone(), localTwist.clone(), copyResult(result)));
+            return result;
         }
         private Result reference(double duration, double maxStep, boolean locateBreak, boolean recoverSpeeds) {
             if (matrix.tree == null)
@@ -703,6 +757,11 @@ public final class TorsionSolver {
                 return reference(duration, maxStep, locateBreak, recoverSpeeds);
             }
         }
+    }
+
+    private static Result copyResult(Result result) {
+        return new Result(result.duration, result.speed.clone(), result.twist.clone(), result.angle.clone(),
+            result.travel.clone(), result.torque.clone(), result.slipping.clone(), result.broken);
     }
 
     private static final class ParallelSolves {
@@ -775,7 +834,11 @@ public final class TorsionSolver {
         final double[] ratio, absoluteRatio;
         final Workspace workspace;
         final TreeFactorization tree;
+        private final List<Body> bodies;
+        private TreeFactorization recoveryTree;
+        private boolean recoveryChecked;
         MatrixGraph(List<Body> bodies, List<Link> links, boolean accelerated) {
+            this.bodies = bodies;
             int n = bodies.size();
             int m = links.size();
             a = new int[m]; b = new int[m]; ratio = new double[m]; absoluteRatio = new double[m];
@@ -786,6 +849,13 @@ public final class TorsionSolver {
                 ratio[e] = link.ratio; absoluteRatio[e] = Math.abs(link.ratio);
             }
             tree = accelerated ? TreeFactorization.create(bodies, a, b, ratio) : null;
+        }
+        TreeFactorization recoveryTree() {
+            if (!recoveryChecked) {
+                recoveryTree = tree != null ? tree : TreeFactorization.create(bodies, a, b, ratio);
+                recoveryChecked = true;
+            }
+            return recoveryTree;
         }
     }
 
@@ -815,6 +885,7 @@ public final class TorsionSolver {
     private static final class IntegrationCache {
         private double maxStep = Double.NaN;
         private final List<IntegrationState> prefixes = new ArrayList<>();
+        void clear() { maxStep = Double.NaN; prefixes.clear(); }
         IntegrationState prefix(double duration, double step) {
             if (maxStep != step) { maxStep = step; prefixes.clear(); }
             return findPrefix(duration, step);
@@ -1341,6 +1412,21 @@ public final class TorsionSolver {
         checked = residual(matrix, weights, base, fixed, hasFixed, diagonal, b, bMagnitude, x, r, z, scale, ap, magnitude);
         if (checked.converged) return x;
         if (accepted != null) return accepted;
+        // At a very short fluid event, rotor and massless-port diagonals can
+        // differ by over 10^20. CG may stagnate even on a tree. Its nonnegative
+        // leaf elimination avoids that cancellation; retain the same full and
+        // per-node residual checks before accepting the recovered solution.
+        var recovery = matrix.recoveryTree();
+        if (recovery != null && recovery.factor(base, diagonal, weights, fixed)) {
+            x = guess.clone();
+            residual(matrix, weights, base, fixed, hasFixed, diagonal, b, bMagnitude, x, r, z, scale, ap, magnitude);
+            for (int refinement = 0; refinement < 4; refinement++) {
+                recovery.solve(r, p);
+                for (int i = 0; i < n; i++) x[i] += p[i];
+                checked = residual(matrix, weights, base, fixed, hasFixed, diagonal, b, bMagnitude, x, r, z, scale, ap, magnitude);
+                if (checked.converged) return x;
+            }
+        }
         throw new ConvergenceFailure("Torsion linear solve did not converge for " + n + " nodes: norm=" + checked.norm
             + ", tolerance=" + checked.tolerance);
     }

@@ -20,6 +20,22 @@ public final class IdealFluidSolver {
 
     private IdealFluidSolver() {}
 
+    /** A detached linear trial needs higher precision or a shorter horizon;
+     * no state was committed. Keep pressure and flow failures on the same
+     * recovery path, including an ill-conditioned but nonsingular CG solve. */
+    public static final class ConstraintConvergenceException extends IllegalStateException {
+        public ConstraintConvergenceException() { this("Fluid flow correction did not converge"); }
+        public ConstraintConvergenceException(String message) { super(message); }
+    }
+    /** Arithmetic failed the linear trial's work check; the trial is rejected. */
+    public static final class WorkConvergenceException extends IllegalStateException {
+        public WorkConvergenceException(String message) { super(message); }
+    }
+    /** Live macro updates may defer work; exact numerical regression paths have no deadline. */
+    public static final class WorkBudgetException extends RuntimeException {
+        public WorkBudgetException() { super("Macro fluid update budget exhausted", null, false, false); }
+    }
+
     public record Material(double density, boolean isGas) {
         public Material {
             if (!(density > 0) || !Double.isFinite(density)) throw new IllegalArgumentException("Positive fluid mass required");
@@ -70,46 +86,80 @@ public final class IdealFluidSolver {
         private final List<Edge> edges;
         private final boolean[] boundary, active;
         private final int[] variable;
-        private final double[] diagonal;
+        private final int[] pressureComponent;
+        private final int pressureComponents;
+        private final double[] diagonal, storage;
+        private final boolean stores;
         private final int variables;
         private FlowTree flowTree;
         private final PressureForest forest;
         private final PressureBand band;
+        private final long deadline;
 
         public Graph(int nodes, List<Edge> edges, boolean[] boundary, boolean[] active) {
-            if (nodes < 0 || boundary.length != nodes || active.length != edges.size())
+            this(nodes, edges, boundary, active, Long.MAX_VALUE);
+        }
+        public Graph(int nodes, List<Edge> edges, boolean[] boundary, boolean[] active, long deadline) {
+            this(nodes, edges, boundary, active, null, deadline);
+        }
+        /** Finite free-surface storage adds a positive diagonal to the same
+         * pressure system. Entries are inverse head-rise impulses, not gas
+         * compressibility. Zero entries retain the full-cell continuity rule. */
+        public Graph(int nodes, List<Edge> edges, boolean[] boundary, boolean[] active,
+                     double[] storageByNode, long deadline) {
+            if (nodes < 0 || boundary.length != nodes || active.length != edges.size()
+                || storageByNode != null && storageByNode.length != nodes)
                 throw new IllegalArgumentException("Invalid fluid graph");
+            if (storageByNode != null) for (double value : storageByNode)
+                if (!(value >= 0) || !Double.isFinite(value)) throw new IllegalArgumentException("Invalid fluid storage");
+            this.deadline = deadline;
+            budget();
             this.nodes = nodes; this.edges = List.copyOf(edges);
             this.boundary = boundary.clone(); this.active = active.clone();
             var adjacency = new ArrayList<List<Integer>>(nodes);
             for (int i = 0; i < nodes; i++) adjacency.add(new ArrayList<>());
             for (int e = 0; e < edges.size(); e++) {
+                if ((e & 255) == 0) budget();
                 Edge edge = edges.get(e);
                 if (edge.from >= nodes || edge.to >= nodes) throw new IllegalArgumentException("Pipe node outside graph");
                 if (active[e]) { adjacency.get(edge.from).add(edge.to); adjacency.get(edge.to).add(edge.from); }
             }
             boolean[] fixed = boundary.clone(), visited = new boolean[nodes];
+            pressureComponent = new int[nodes]; int components = 0;
             // Each closed component needs a pressure datum, never an invented mass or drain.
             int[] queue = new int[nodes];
             for (int root = 0; root < nodes; root++) if (!visited[root]) {
+                if ((root & 255) == 0) budget();
                 int count = 1; queue[0] = root; visited[root] = true;
-                boolean grounded = fixed[root];
+                boolean grounded = fixed[root] || storageByNode != null && storageByNode[root] > 0;
                 for (int head = 0; head < count; head++) for (int next : adjacency.get(queue[head])) if (!visited[next]) {
-                    visited[next] = true; queue[count++] = next; grounded |= fixed[next];
+                    visited[next] = true; queue[count++] = next;
+                    grounded |= fixed[next] || storageByNode != null && storageByNode[next] > 0;
                 }
                 if (!grounded) fixed[root] = true;
+                for (int i = 0; i < count; i++) pressureComponent[queue[i]] = components;
+                components++;
             }
+            pressureComponents = components;
             variable = new int[nodes]; Arrays.fill(variable, -1);
             int count = 0;
             for (int i = 0; i < nodes; i++) if (!fixed[i]) variable[i] = count++;
-            variables = count; diagonal = new double[count];
+            variables = count; storage = new double[count]; boolean hasStorage = false;
+            if (storageByNode != null) for (int i = 0; i < nodes; i++) if (variable[i] >= 0) {
+                storage[variable[i]] = storageByNode[i]; hasStorage |= storageByNode[i] > 0;
+            }
+            stores = hasStorage; diagonal = storage.clone();
             for (int e = 0; e < edges.size(); e++) if (active[e]) {
                 Edge edge = edges.get(e); double weight = 1 / edge.inertia;
                 if (variable[edge.from] >= 0) diagonal[variable[edge.from]] += weight;
                 if (variable[edge.to] >= 0) diagonal[variable[edge.to]] += weight;
             }
-            forest = PressureForest.create(variables, edges, this.active, variable);
-            band = forest == null ? PressureBand.create(variables, edges, this.active, variable, diagonal) : null;
+            forest = PressureForest.create(variables, edges, this.active, variable, storage);
+            band = forest == null ? PressureBand.create(variables, edges, this.active, variable, diagonal, deadline) : null;
+            budget();
+        }
+        private void budget() {
+            if (deadline != Long.MAX_VALUE && System.nanoTime() >= deadline) throw new WorkBudgetException();
         }
 
         public double energy(double[] flow) {
@@ -120,6 +170,7 @@ public final class IdealFluidSolver {
 
         /** A topology/blocked-port impulse removes incompatible motion with its loss recorded. */
         public double[] project(double[] flow) {
+            if (stores) throw new IllegalStateException("Finite storage requires a timed fluid update");
             double[] result = flow.clone();
             for (int e = 0; e < result.length; e++) if (!active[e]) result[e] = 0;
             correct(result, new double[nodes]);
@@ -127,17 +178,33 @@ public final class IdealFluidSolver {
         }
 
         public Trial sample(double[] initial, double[] forces, double[] boundaryPressure, double minutes) {
+            if (stores) throw new IllegalStateException("Use the finite-volume fluid update for stored liquid");
             if (initial.length != edges.size() || forces.length != edges.size() || boundaryPressure.length != nodes
                 || !(minutes > 0) || !Double.isFinite(minutes)) throw new IllegalArgumentException("Invalid fluid step");
             double[] origin = project(initial), next = origin.clone(), pressure = new double[nodes];
-            for (int i = 0; i < nodes; i++) if (boundary[i]) pressure[i] = boundaryPressure[i];
+            double[] reference = new double[pressureComponents]; Arrays.fill(reference, Double.NaN);
+            for (int i = 0; i < nodes; i++) if (boundary[i]) {
+                int component = pressureComponent[i];
+                if (Double.isNaN(reference[component]) || Math.abs(boundaryPressure[i]) < Math.abs(reference[component]))
+                    reference[component] = boundaryPressure[i];
+            }
+            for (int i = 0; i < reference.length; i++) if (Double.isNaN(reference[i])) reference[i] = 0;
+            // Momentum depends on pressure differences. Remove each connected
+            // component's common boundary offset before forming large impulses;
+            // equal pressures then give exactly zero acceleration, even across
+            // a newborn arm with a vanishing trial inertia.
+            for (int i = 0; i < nodes; i++) if (boundary[i])
+                pressure[i] = boundaryPressure[i] - reference[pressureComponent[i]];
             for (int e = 0; e < edges.size(); e++) if (active[e]) {
                 Edge edge = edges.get(e);
                 next[e] += minutes / edge.inertia * (forces[e] + pressure[edge.from] - pressure[edge.to]);
             }
             double[] impulse = new double[nodes];
             correct(next, impulse);
-            for (int i = 0; i < nodes; i++) if (!boundary[i]) pressure[i] = impulse[i] / minutes;
+            for (int i = 0; i < nodes; i++) {
+                if (boundary[i]) pressure[i] = boundaryPressure[i];
+                else pressure[i] = impulse[i] / minutes + reference[pressureComponent[i]];
+            }
             double[] midpoint = new double[edges.size()], outward = new double[nodes];
             double energyChange = 0, forceWork = 0, boundaryWork = 0;
             for (int e = 0; e < edges.size(); e++) {
@@ -150,32 +217,79 @@ public final class IdealFluidSolver {
             for (int i = 0; i < nodes; i++) if (boundary[i]) boundaryWork += minutes * boundaryPressure[i] * outward[i];
             double error = energyChange - forceWork - boundaryWork;
             if (Math.abs(error) > 1e-10 * (Math.abs(energyChange) + Math.abs(forceWork) + Math.abs(boundaryWork)) + 1e-12)
-                throw new IllegalStateException("Fluid work imbalance: " + error);
+                throw new WorkConvergenceException("Fluid work imbalance: " + error);
             return new Trial(next, midpoint, pressure, outward, energyChange, forceWork, boundaryWork,
                 Math.max(0, energy(initial) - energy(origin)), origin);
+        }
+
+        /** Backward Euler momentum with simultaneous free-surface storage.
+         * A partial cell's new head is old head plus its real inventory change.
+         * Full cells still have zero net flow; boundary heads remain prescribed.
+         * The macro caller applies conservative capacity and contact limits. */
+        public double[] storedFlow(double[] initial, double[] forces, double[] oldPressure, double minutes) {
+            return storedFlow(initial, forces, oldPressure, minutes, null);
+        }
+        /** A finite source may prescribe its actually available transfer once
+         * its head-driven demand exceeds inventory. Such an edge is excluded
+         * from the pressure matrix but contributes its real flow to continuity. */
+        public double[] storedFlow(double[] initial, double[] forces, double[] oldPressure, double minutes, double[] prescribed) {
+            return storedFlow(initial, forces, oldPressure, minutes, prescribed, null);
+        }
+        public double[] storedFlow(double[] initial, double[] forces, double[] oldPressure, double minutes,
+                                   double[] prescribed, double[] resolvedPressure) {
+            if (initial.length != edges.size() || forces.length != edges.size() || oldPressure.length != nodes
+                || prescribed != null && prescribed.length != edges.size()
+                || resolvedPressure != null && resolvedPressure.length != nodes
+                || !(minutes > 0) || !Double.isFinite(minutes)) throw new IllegalArgumentException("Invalid fluid step");
+            double[] next = initial.clone();
+            for (int e = 0; e < edges.size(); e++) {
+                if (prescribed != null && !Double.isNaN(prescribed[e])) {
+                    if (!Double.isFinite(prescribed[e]) || active[e]) throw new IllegalArgumentException("Invalid prescribed source edge");
+                    next[e] = prescribed[e]; continue;
+                }
+                if (!active[e]) { next[e] = 0; continue; }
+                Edge edge = edges.get(e);
+                next[e] += minutes / edge.inertia * (forces[e] + oldPressure[edge.from] - oldPressure[edge.to]);
+            }
+            // Solve increments about the old hydrostatic head, so a common
+            // height datum never becomes a large cancelling storage impulse.
+            double[] impulse = new double[nodes];
+            correct(next, impulse);
+            if (resolvedPressure != null) for (int i = 0; i < nodes; i++) {
+                if ((i & 255) == 0) budget();
+                resolvedPressure[i] = oldPressure[i] + impulse[i] / minutes;
+            }
+            return next;
         }
 
         private void correct(double[] flow, double[] pressure) {
             if (variables == 0) return;
             double[] rhs = new double[variables], compensation = new double[variables], scale = new double[variables];
             for (int refinement = 0; refinement < 5; refinement++) {
+                budget();
                 Arrays.fill(rhs, 0); Arrays.fill(compensation, 0); Arrays.fill(scale, 0);
-                for (int e = 0; e < edges.size(); e++) if (active[e]) {
+                for (int e = 0; e < edges.size(); e++) if (active[e] || flow[e] != 0) {
                     Edge edge = edges.get(e);
                     accumulate(rhs, compensation, scale, variable[edge.from], -flow[e]);
                     accumulate(rhs, compensation, scale, variable[edge.to], flow[e]);
                 }
+                if (stores) for (int i = 0; i < nodes; i++) if (variable[i] >= 0)
+                    accumulate(rhs, compensation, scale, variable[i], -storage[variable[i]] * pressure[i]);
                 boolean continuous = true;
                 for (int i = 0; i < variables; i++) continuous &= Math.abs(rhs[i]) <= 8 * Math.ulp(scale[i]);
                 if (continuous) return;
                 if (refinement == 4) {
+                    if (stores) {
+                        if (closeStorageRoundoff(flow, pressure)) return;
+                        throw new ConstraintConvergenceException("Fluid storage correction did not converge");
+                    }
                     if (flowTree == null) {
                         boolean[] fixed = new boolean[nodes];
                         for (int i = 0; i < nodes; i++) fixed[i] = variable[i] < 0;
                         flowTree = FlowTree.create(nodes, edges, active, fixed);
                     }
                     if (flowTree.closeRoundoff(flow, edges, active, variable)) return;
-                    throw new IllegalStateException("Fluid flow correction did not converge");
+                    throw new ConstraintConvergenceException();
                 }
                 double[] solution = solve(rhs);
                 for (int i = 0; i < nodes; i++) if (variable[i] >= 0) pressure[i] += solution[variable[i]];
@@ -190,6 +304,48 @@ public final class IdealFluidSolver {
             }
         }
 
+        /** A sealed full leaf requires exactly zero transfer. Cancellation can
+         * leave a tiny nonzero flow whose own ULP is too small for another
+         * pressure refinement to remove. Repair only accumulated flow roundoff
+         * on the full-cell forest; storage nodes absorb the same bounded
+         * correction in their pressure impulse, keeping their real storage law.
+         * This is one bounded closure after the existing refinement limit. */
+        private boolean closeStorageRoundoff(double[] flow, double[] pressure) {
+            budget();
+            boolean[] fixed = new boolean[nodes]; int[] continuous = new int[nodes];
+            Arrays.fill(continuous, -1); int count = 0;
+            for (int n = 0; n < nodes; n++) {
+                int v = variable[n]; fixed[n] = v < 0 || storage[v] > 0;
+                if (!fixed[n]) continuous[n] = count++;
+            }
+            double[] closed = flow.clone();
+            var tree = FlowTree.create(nodes, edges, active, fixed);
+            if (!tree.closeRoundoff(closed, edges, active, continuous)) return false;
+            double[] net = new double[variables], compensation = new double[variables], scale = new double[variables];
+            int[] degree = new int[variables]; double maximum = 0;
+            for (double q : flow) maximum = Math.max(maximum, Math.abs(q));
+            double bound = 32 * Math.max(1, count) * Math.ulp(maximum);
+            for (int e = 0; e < edges.size(); e++) if (active[e] || closed[e] != 0) {
+                if ((e & 255) == 0) budget();
+                var edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to];
+                accumulate(net, compensation, scale, a, -closed[e]);
+                accumulate(net, compensation, scale, b, closed[e]);
+                if (a >= 0) degree[a]++; if (b >= 0) degree[b]++;
+            }
+            double[] next = pressure.clone();
+            for (int n = 0; n < nodes; n++) {
+                int v = variable[n]; if (v < 0 || storage[v] == 0) continue;
+                double desired = net[v] / storage[v];
+                double tolerance = (degree[v] * bound + 8 * Math.ulp(scale[v] + Math.abs(storage[v] * pressure[n]))) / storage[v]
+                    + 8 * Math.ulp(Math.abs(desired) + Math.abs(pressure[n]));
+                if (!Double.isFinite(desired) || Math.abs(desired - pressure[n]) > tolerance) return false;
+                next[n] = desired;
+            }
+            System.arraycopy(closed, 0, flow, 0, flow.length);
+            System.arraycopy(next, 0, pressure, 0, pressure.length);
+            return true;
+        }
+
         private static void accumulate(double[] rhs, double[] compensation, double[] scale, int node, double value) {
             if (node < 0) return;
             double term = value - compensation[node], next = rhs[node] + term;
@@ -198,6 +354,7 @@ public final class IdealFluidSolver {
         }
 
         private double[] solve(double[] rhs) {
+            budget();
             if (forest != null) return forest.solve(rhs);
             if (band != null) return band.solve(rhs);
             double[] x = new double[variables], r = rhs.clone(), z = new double[variables], p = new double[variables], ap = new double[variables];
@@ -206,9 +363,11 @@ public final class IdealFluidSolver {
                 z[i] = r[i] / diagonal[i]; p[i] = z[i]; rz += r[i] * z[i]; scale += rhs[i] * rhs[i] / diagonal[i];
             }
             if (scale == 0) return x;
-            for (int iteration = 0; iteration < Math.max(64, variables * 4); iteration++) {
+            int limit = deadline == Long.MAX_VALUE ? Math.max(64, variables * 4) : 64;
+            for (int iteration = 0; iteration < limit; iteration++) {
+                budget();
                 double pap = multiply(p, ap);
-                if (!(pap > 0) || !Double.isFinite(pap)) throw new IllegalStateException("Singular fluid pressure constraint");
+                if (!(pap > 0) || !Double.isFinite(pap)) throw new ConstraintConvergenceException("Fluid pressure iteration broke down");
                 double alpha = rz / pap;
                 for (int i = 0; i < variables; i++) { x[i] += alpha * p[i]; r[i] -= alpha * ap[i]; }
                 double next = 0;
@@ -227,11 +386,11 @@ public final class IdealFluidSolver {
             multiply(x, ap);
             for (int i = 0; i < variables; i++) r[i] = rhs[i] - ap[i];
             if (roundoffResidual(rhs, x, r)) return x;
-            throw new IllegalStateException("Fluid pressure solve did not converge");
+            throw new ConstraintConvergenceException("Fluid pressure solve did not converge");
         }
         private boolean roundoffResidual(double[] rhs, double[] x, double[] residual) {
             double[] magnitude = new double[variables];
-            for (int i = 0; i < variables; i++) magnitude[i] = Math.abs(rhs[i]);
+            for (int i = 0; i < variables; i++) magnitude[i] = Math.abs(rhs[i]) + Math.abs(storage[i] * x[i]);
             for (int e = 0; e < edges.size(); e++) if (active[e]) {
                 Edge edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to];
                 // Bound rounding from both pressure operands before subtracting
@@ -246,8 +405,11 @@ public final class IdealFluidSolver {
             return true;
         }
         private double multiply(double[] x, double[] result) {
-            Arrays.fill(result, 0);
             double quadratic = 0;
+            for (int i = 0; i < variables; i++) {
+                result[i] = storage[i] * x[i];
+                quadratic = Math.fma(x[i], result[i], quadratic);
+            }
             for (int e = 0; e < edges.size(); e++) if (active[e]) {
                 Edge edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to];
                 double difference = (a < 0 ? 0 : x[a]) - (b < 0 ? 0 : x[b]);
@@ -286,8 +448,12 @@ public final class IdealFluidSolver {
                 for (double q : flow) maximum = Math.max(maximum, Math.abs(q));
                 double bound = 32 * Math.max(1, order.length) * Math.ulp(maximum);
                 double[] closed = flow.clone();
+                double[] prescribedNet = new double[parentEdge.length];
+                for (int e = 0; e < edges.size(); e++) if (!active[e] && closed[e] != 0) {
+                    var edge = edges.get(e); prescribedNet[edge.from] += closed[e]; prescribedNet[edge.to] -= closed[e];
+                }
                 for (int k = order.length - 1; k >= 0; k--) {
-                    int node = order[k], parent = parentEdge[node]; double sum = 0, compensation = 0;
+                    int node = order[k], parent = parentEdge[node]; double sum = prescribedNet[node], compensation = 0;
                     for (int e : incident.get(node)) if (e != parent) {
                         double value = (edges.get(e).from == node ? closed[e] : -closed[e]) - compensation;
                         double next = sum + value; compensation = (next - sum) - value; sum = next;
@@ -297,7 +463,7 @@ public final class IdealFluidSolver {
                     closed[parent] = value;
                 }
                 double[] rhs = new double[order.length], compensation = new double[order.length], scale = new double[order.length];
-                for (int e = 0; e < edges.size(); e++) if (active[e]) {
+                for (int e = 0; e < edges.size(); e++) if (active[e] || closed[e] != 0) {
                     var edge = edges.get(e);
                     accumulate(rhs, compensation, scale, variable[edge.from], -closed[e]);
                     accumulate(rhs, compensation, scale, variable[edge.to], closed[e]);
@@ -314,27 +480,34 @@ public final class IdealFluidSolver {
          * Positive shunt conductances avoid subtracting almost equal diagonals
          * when a dry channel is 1e12 lighter than its liquid-filled neighbour. */
         private record PressureForest(int[] order, int[] parent, double[] weight, double[] ground) {
-            static PressureForest create(int count, List<Edge> edges, boolean[] active, int[] variable) {
+            static PressureForest create(int count, List<Edge> edges, boolean[] active, int[] variable, double[] storage) {
                 var adjacent = new ArrayList<List<Integer>>(count);
                 for (int i = 0; i < count; i++) adjacent.add(new ArrayList<>());
-                double[] ground = new double[count], weight = new double[count];
+                double[] ground = storage.clone(), weight = new double[count];
                 for (int e = 0; e < edges.size(); e++) if (active[e]) {
                     var edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to];
                     if (a >= 0 && b >= 0) { adjacent.get(a).add(e); adjacent.get(b).add(e); }
                     else if (a >= 0) ground[a] += 1 / edge.inertia;
                     else if (b >= 0) ground[b] += 1 / edge.inertia;
                 }
-                int[] parent = new int[count], parentEdge = new int[count], order = new int[count];
-                Arrays.fill(parent, -2); Arrays.fill(parentEdge, -1);
+                int[] parent = new int[count], order = new int[count];
+                Arrays.fill(parent, -2);
                 int tail = 0;
                 for (int root = 0; root < count; root++) if (parent[root] == -2) {
                     int head = tail; parent[root] = -1; order[tail++] = root;
                     while (head < tail) {
                         int node = order[head++];
-                        for (int e : adjacent.get(node)) if (e != parentEdge[node]) {
+                        for (int e : adjacent.get(node)) {
                             var edge = edges.get(e); int a = variable[edge.from], b = variable[edge.to], next = a == node ? b : a;
+                            if (next == parent[node]) continue;
+                            // Parallel arms share the same pressure difference.
+                            // Sum their conductance in this factor only; retain
+                            // every arm's own inertia, forcing and flow outside it.
+                            // A newborn arm beside a wet one can differ by 1e32
+                            // in weight without adding an unknown-pressure loop.
+                            if (parent[next] == node) { weight[next] += 1 / edge.inertia; continue; }
                             if (parent[next] != -2) return null; // A loop uses the existing pressure solver.
-                            parent[next] = node; parentEdge[next] = e; weight[next] = 1 / edge.inertia; order[tail++] = next;
+                            parent[next] = node; weight[next] = 1 / edge.inertia; order[tail++] = next;
                         }
                     }
                 }
@@ -352,7 +525,7 @@ public final class IdealFluidSolver {
                 for (int node : order) {
                     int p = parent[node];
                     double divisor = shunt[node] + weight[node];
-                    if (!(divisor > 0)) throw new IllegalStateException("Singular fluid pressure forest");
+                    if (!(divisor > 0)) throw new ConstraintConvergenceException("Fluid pressure forest lost its positive pivot");
                     result[node] = p < 0 ? reduced[node] / divisor : Math.fma(weight[node], result[p], reduced[node]) / divisor;
                 }
                 return result;
@@ -363,7 +536,7 @@ public final class IdealFluidSolver {
          * immutable and reusable for different forces/initial velocities. Wide
          * arbitrary graphs and numerically poor pivots retain the CG path. */
         private record PressureBand(int count, int width, double[] factor, int[] permutation) {
-            static PressureBand create(int count, List<Edge> edges, boolean[] active, int[] variable, double[] diagonal) {
+            static PressureBand create(int count, List<Edge> edges, boolean[] active, int[] variable, double[] diagonal, long deadline) {
                 int[] permutation = ordering(count, edges, active, variable);
                 int width = 0;
                 double smallest = Double.POSITIVE_INFINITY, largest = 0;
@@ -387,6 +560,7 @@ public final class IdealFluidSolver {
                     }
                 }
                 for (int row = 0; row < count; row++) {
+                    if ((row & 15) == 0 && deadline != Long.MAX_VALUE && System.nanoTime() >= deadline) throw new WorkBudgetException();
                     int start = Math.max(0, row - width);
                     for (int column = start; column < row; column++) {
                         double value = factor[row * stride + row - column];

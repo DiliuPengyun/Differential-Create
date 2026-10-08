@@ -8,6 +8,7 @@ import com.diliupengyun.differential_create.client.ClutchAnimationCache;
 import com.diliupengyun.differential_create.client.RotorAnimation;
 import com.diliupengyun.differential_create.client.BearingAnimation;
 import com.diliupengyun.differential_create.client.ShaftModelOffset;
+import com.diliupengyun.differential_create.client.PipeFluidGeometry;
 import com.diliupengyun.differential_create.kinetics.ShaftPhases;
 import com.diliupengyun.differential_create.kinetics.TorsionSolver;
 import com.diliupengyun.differential_create.kinetics.BearingAngle;
@@ -30,6 +31,8 @@ public final class RenderingRegression {
 		rotorSamples();
 		bearingPoses();
 		bearingSampleBuffer();
+		fallingWaterGeometry();
+		horizontalWaterGeometry();
 		reducedDriveOscillation();
 		PortRotation wheel = new PortRotation();
 		PortRotation shaft = new PortRotation();
@@ -80,6 +83,53 @@ public final class RenderingRegression {
 		RotationFrame resumed = new RotationFrame(102, 123.6, 4.8);
 		angle(123.6, shader(resumed, 102, 0), "resume starts at the frozen phase");
 		System.out.println("Rendering regression: " + checks + " checks passed");
+	}
+
+	private static void fallingWaterGeometry() {
+		for (double fill : new double[]{0, 1e-12, .001, .14, .5, .817, .999999, 1}) {
+			for (double[] flow : new double[][]{{0, 0}, {20, 0}, {0, 20}, {20, 20}, {20, 3.5}, {3.5, 20},
+				{1e-8, 1e-8}, {-20, -20}, {Double.NaN, 20}, {20, Double.POSITIVE_INFINITY}}) {
+				var column = PipeFluidGeometry.vertical(fill, flow[0], flow[1]);
+				check(Double.isFinite(column.poolHeight()) && column.poolHeight() >= 0 && column.poolHeight() <= 1,
+					"a rendered pool remains inside the vertical pipe");
+				check(Double.isFinite(column.streamRadius()) && column.streamRadius() >= 0 && column.streamRadius() <= 1,
+					"a falling stream fits the bore even at small inventories and invalid flow samples");
+				double prismVolume = column.poolHeight() + column.streamRadius() * column.streamRadius() * (1 - column.poolHeight());
+				near(fill, prismVolume, 2e-15, "pool and stream contain the same visual volume as the original interval");
+			}
+			var staticColumn = PipeFluidGeometry.vertical(fill, 20, 0);
+			near(fill, staticColumn.poolHeight(), 0, "a blocked outlet displays the actual static water level");
+			near(0, staticColumn.streamRadius(), 0, "a blocked outlet does not fabricate a flowing column");
+		}
+		var falling = PipeFluidGeometry.vertical(.14, 20, 20);
+		near(0, falling.poolHeight(), 0, "steady falling water is not stacked at each block's bottom");
+		check(falling.streamRadius() > 0 && falling.streamRadius() < 1, "a partly filled flowing cell displays a narrow stream reaching both faces");
+		var blocked = PipeFluidGeometry.vertical(.14, 20, .001);
+		check(blocked.poolHeight() > .139, "a strongly restricted outlet restores the pool continuously");
+		check(PipeFluidGeometry.vertical(0, 20, 20).streamRadius() == 0, "dry pipes remain visually dry despite stale flow");
+	}
+
+	private static void horizontalWaterGeometry() {
+		for (double fill : new double[]{0, 1e-12, .001, .25, .5931183307694449, .999999, 1}) {
+			var layer = PipeFluidGeometry.horizontal(fill);
+			near(5 / 16d, layer.bottom(), 0, "horizontal liquid touches the bore's bottom at either end");
+			check(layer.top() >= layer.bottom() && layer.top() <= 11 / 16d, "horizontal liquid stays inside the bore");
+			// Integrate a full-length box independently of the former plug length.
+			double boxVolume = (layer.top() - layer.bottom()) * (6 / 16d);
+			near(fill * (6 / 16d) * (6 / 16d), boxVolume, 3e-17, "a bottom layer preserves the former plug's display volume");
+			double center = .5 + layer.centerOffset(), radius = layer.height() * 3 / 16d;
+			near(layer.bottom(), center - radius, 2 * Math.ulp(layer.bottom()), "world-Y instance scaling keeps its lower wall fixed");
+			near(layer.top(), center + radius, 2 * Math.ulp(layer.top()), "instanced and ordinary paths produce the same water surface");
+		}
+		for (double invalid : new double[]{Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, -1})
+			near(0, PipeFluidGeometry.horizontal(invalid).height(), 0, "invalid or negative samples do not manufacture visible water");
+		near(1, PipeFluidGeometry.horizontal(2).height(), 0, "an over-capacity display cannot extend outside the pipe");
+		double previous = 5 / 16d;
+		for (int i = 0; i <= 256; i++) {
+			double top = PipeFluidGeometry.horizontal(i / 256d).top();
+			check(top >= previous, "the horizontal water level rises monotonically as inventory increases");
+			previous = top;
+		}
 	}
 
 	private static void bearingPoses() {

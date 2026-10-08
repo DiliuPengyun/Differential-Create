@@ -6,6 +6,7 @@ import com.diliupengyun.differential_create.client.ClientNetworkSpeeds;
 import com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity;
 import com.simibubi.create.content.contraptions.bearing.WindmillBearingBlockEntity;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
+import com.simibubi.create.content.kinetics.base.IRotate;
 import com.simibubi.create.content.kinetics.gauge.SpeedGaugeBlockEntity;
 import com.simibubi.create.content.kinetics.speedController.SpeedControllerBlockEntity;
 import com.simibubi.create.content.kinetics.steamEngine.PoweredShaftBlockEntity;
@@ -115,9 +116,11 @@ public final class KineticGoggleInfo {
 		}
 
 		if (kbe instanceof IPumpDynamics pump) {
+			var axis = ((IRotate)kbe.getBlockState().getBlock()).getRotationAxis(kbe.getBlockState());
+			var positive = Component.translatable("gui.differentialcreate.goggles.pump_axis_" + axis.getSerializedName());
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.speed", fmtSigned(local, 1)));
-			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_head", fmtSigned(pump.differentialcreate$head(), 1)));
-			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_flow", fmtSigned(pump.differentialcreate$flow(), 2)));
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_head", fmtSigned(pump.differentialcreate$head(), 1), positive));
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_flow", fmtSigned(pump.differentialcreate$flow(), 2), positive));
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_reaction", fmtSigned(-pump.differentialcreate$torque(), 2)));
 			return;
 		}

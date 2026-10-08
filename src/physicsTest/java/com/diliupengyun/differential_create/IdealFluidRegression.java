@@ -18,8 +18,11 @@ public final class IdealFluidRegression {
     public static void run() {
         inertance();
         pressureConstraints();
+        commonBoundaryPressure();
         mixedPipeInertances();
         connectedDryBranches();
+        storedBlindEndHasZeroFlow();
+        parallelPressureArms();
         longBranchedPressure();
         reorderedPressureLoops();
         workIdentity();
@@ -29,6 +32,46 @@ public final class IdealFluidRegression {
     }
     private static Graph pipe(double length) {
         return new Graph(2, List.of(new Edge(0, 1, WATER.inertia(length))), new boolean[]{true, true}, new boolean[]{true});
+    }
+    private static void storedBlindEndHasZeroFlow() {
+        double duration = 1d / 1200;
+        for (double multiplier : new double[]{.001, 1, 1000}) {
+            double first = WATER.inertia(1), second = WATER.inertia(.5);
+            double storage = multiplier * 100 / (WATER.gravityForce(.01) * duration);
+            var edges = List.of(new Edge(0, 1, first), new Edge(1, 2, first), new Edge(1, 3, second));
+            var graph = new Graph(4, edges, new boolean[]{false, false, false, true}, new boolean[]{true, true, true},
+                new double[]{0, 0, storage, 0}, Long.MAX_VALUE);
+            double[] old = {WATER.gravityForce(3.5), WATER.gravityForce(4.5), WATER.gravityForce(5.0079), WATER.gravityForce(10.624)};
+            double[] pressure = new double[4];
+            var flow = graph.storedFlow(new double[3], new double[3], old, duration, null, pressure);
+            // Eliminating the two full nodes gives one resistor pair plus
+            // the independent 1/storage pressure-rise term.
+            double expected = duration * (old[3] - old[2]) / (first + second + 1 / storage);
+            near(0, flow[0], 0, "a full sealed leaf has exactly zero actual transfer");
+            near(expected, flow[1], 128 * Math.ulp(expected), "the live arm follows the independent finite-storage solution");
+            near(-expected, flow[2], 128 * Math.ulp(expected), "the real source supplies only the live arm");
+            near(old[2] + flow[1] / (storage * duration), pressure[2], 64 * Math.ulp(Math.abs(pressure[2])),
+                "the partial arm retains its pressure/inventory storage equation");
+        }
+    }
+    private static void parallelPressureArms() {
+        // Independent Kirchhoff solution: the two parallel arms have a combined
+        // inertance 4/3 and drive 8/3, while retaining different individual flows.
+        var edges = List.of(new Edge(0, 1, 3), new Edge(1, 2, 2), new Edge(2, 1, 4),
+            new Edge(2, 3, 5), new Edge(1, 2, 1e-34));
+        var graph = new Graph(4, edges, new boolean[]{true, false, false, true},
+            new boolean[]{true, true, true, true, false});
+        double[] force = {1, 3, -2, 7, 1e100}, datum = {11, 0, 0, 2};
+        for (double duration : new double[]{H, H / 1024, H * 128}) {
+            var trial = graph.sample(new double[5], force, datum, duration);
+            double[] acceleration = {59.0 / 28, 11.0 / 7, -15.0 / 28, 59.0 / 28, 0};
+            for (int e = 0; e < acceleration.length; e++) near(duration * acceleration[e], trial.flow()[e],
+                2e-14 * duration, "parallel arms retain their own inertia, orientation and force");
+            near(159.0 / 28, trial.pressure()[1], 2e-14, "parallel-arm upstream pressure matches Kirchhoff solution");
+            near(155.0 / 28, trial.pressure()[2], 2e-14, "parallel-arm downstream pressure matches Kirchhoff solution");
+            near(trial.energyChange(), trial.forceWork() + trial.boundaryWork(), 1e-12 * duration * duration,
+                "parallel pressure factor retains the physical work identity");
+        }
     }
     private static void longBranchedPressure() {
         // Independent closed-form solution of 3*p[i] - p[i-1] - p[i+1] = 0.
@@ -148,6 +191,36 @@ public final class IdealFluidRegression {
         var stop = blocked.sample(new double[]{5}, new double[]{10}, new double[2], H);
         near(0, stop.flow()[0], 0, "closed port stops flow");
         near(.125, stop.projectionLoss(), 1e-13, "boundary impulse accounts for removed motion");
+    }
+    private static void commonBoundaryPressure() {
+        // Two disconnected three-way mouths, a closed ring, an orphan node,
+        // and a disabled bridge. Uniform pressure has no physical gradient;
+        // even a newborn arm 1e24 lighter than water must stay exactly still.
+        var edges = List.of(new Edge(0, 1, 1e-6), new Edge(0, 2, 3e-5), new Edge(0, 3, 1e-30),
+            new Edge(4, 5, 1e-28), new Edge(4, 6, 2e-6), new Edge(4, 7, 7e-5),
+            new Edge(8, 9, .5), new Edge(9, 10, 2), new Edge(10, 8, 3), new Edge(3, 5, .03));
+        var graph = new Graph(12, edges,
+            new boolean[]{false, true, true, true, false, true, true, true, false, false, false, false},
+            new boolean[]{true, true, true, true, true, true, true, true, true, false});
+        for (double pressure : new double[]{IdealFluidSolver.pressureForce(101325), 32, -8})
+            for (double duration : new double[]{1e-14, H, IdealFluidSolver.MAX_STEP})
+                for (boolean moving : new boolean[]{false, true}) {
+                    double otherPressure = -2 * pressure;
+                    double[] datum = {0, pressure, pressure, pressure, 0, otherPressure, otherPressure, otherPressure,
+                        999, 999, 999, 999};
+                    double[] initial = moving ? new double[]{-17, 5, 12, -3, 7, -4, 9, 9, 9, 0} : new double[10];
+                    var trial = graph.sample(initial, new double[10], datum, duration);
+                    for (int e = 0; e < edges.size(); e++) near(initial[e], trial.flow()[e], 0,
+                        "a uniform absolute pressure preserves rest and compatible circulation exactly");
+                    for (int node = 0; node < 4; node++) near(pressure, trial.pressure()[node], 0,
+                        "first component restores its physical pressure datum");
+                    for (int node = 4; node < 8; node++) near(otherPressure, trial.pressure()[node], 0,
+                        "inactive bridges do not mix component pressure references");
+                    for (int node = 8; node < 12; node++) near(0, trial.pressure()[node], 0,
+                        "closed components and orphan nodes retain their own arbitrary zero datum");
+                    near(0, trial.energyChange(), 0, "equal pressure adds no kinetic energy");
+                    near(0, trial.boundaryWork(), 1e-12, "equal inlet and outlet pressure does no net work");
+                }
     }
     private static void mixedPipeInertances() {
         // The saved-world crash: a pressure-response probe beside two wet arms

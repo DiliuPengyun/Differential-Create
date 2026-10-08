@@ -197,18 +197,30 @@ public final class ElasticKinetics {
             return i == null ? 0 : result.angle()[i] / RotationMath.TICK_MINUTES;
         }
     }
-    /** Fixed inputs for one event search. Capture again after a commit, fracture, or machine callback. */
+    /** Captured world inputs for one event search or detached coupling solve.
+     * Capture again after a commit, fracture, or machine callback. */
     public static final class Snapshot {
         private final List<KineticBlockEntity> members;
         private final List<Connection> connections;
         private final Map<KineticBlockEntity, Integer> indices;
         private final TorsionSolver.Prepared solver;
+        private final double[] sourceDrives;
         private Snapshot(List<KineticBlockEntity> members, List<Connection> connections,
                          Map<KineticBlockEntity, Integer> indices, List<TorsionSolver.Body> bodies,
-                         List<TorsionSolver.Link> links, double[] speeds, double[] twists) {
+                         List<TorsionSolver.Link> links, double[] speeds, double[] twists, double[] sourceDrives) {
             this.members = List.copyOf(members); this.connections = List.copyOf(connections);
             this.indices = Map.copyOf(indices);
+            this.sourceDrives = sourceDrives.clone();
             solver = TorsionSolver.prepare(bodies, links, speeds, twists);
+        }
+        /** No world state changes between these pump-load trials. */
+        public void setExternalTorques(Map<KineticBlockEntity, Double> torques) {
+            double[] drives = sourceDrives.clone();
+            for (var entry : torques.entrySet()) {
+                Integer at = indices.get(entry.getKey());
+                if (at != null) drives[at] += entry.getValue();
+            }
+            solver.updateDrives(drives);
         }
         public Trial sample(double minutes) {
             return new Trial(members, connections, indices, solver.advance(minutes, PhysicsTuning.TORSION_MAX_STEP));
@@ -247,7 +259,7 @@ public final class ElasticKinetics {
         members.sort(java.util.Comparator.comparing(KineticBlockEntity::getBlockPos));
         Map<KineticBlockEntity, Integer> indices = new HashMap<>();
         List<TorsionSolver.Body> bodies = new ArrayList<>();
-        double[] speeds = new double[members.size()];
+        double[] speeds = new double[members.size()], sourceDrives = new double[members.size()];
         for (int i = 0; i < members.size(); i++) {
             var be = members.get(i);
             indices.put(be, i);
@@ -256,8 +268,9 @@ public final class ElasticKinetics {
             double load = ContraptionPhysics.manages(be) ? ContraptionPhysics.workTorque(be) : MachineActivity.impact(be);
             double drag = MachineActivity.quadraticDrag(be);
             if (be instanceof EncasedFanBlockEntity) load = 0;
+            sourceDrives[i] = be.isSource() ? curve.stallTorque() : 0;
             bodies.add(new TorsionSolver.Body(InertiaRegistry.getInertia(be),
-                (be.isSource() ? curve.stallTorque() : 0) + externalTorques.getOrDefault(be, 0d),
+                sourceDrives[i] + externalTorques.getOrDefault(be, 0d),
                 be.isSource() ? curve.damping() : 0, load, drag,
                 be.isSource() ? curve.powerLimit() : Double.POSITIVE_INFINITY,
                 be.isSource() ? curve.governorSpeed() : Double.POSITIVE_INFINITY, curve.governorRange()));
@@ -270,6 +283,6 @@ public final class ElasticKinetics {
             links.add(new TorsionSolver.Link(indices.get(edge.a), indices.get(edge.b), edge.ratio,
                 edge.stiffness(), edge.damping(), edge.strength(), edge.friction()));
         }
-        return new Snapshot(members, connections, indices, bodies, links, speeds, twists);
+        return new Snapshot(members, connections, indices, bodies, links, speeds, twists, sourceDrives);
     }
 }

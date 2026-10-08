@@ -1,939 +1,934 @@
 package com.diliupengyun.differential_create.kinetics;
 
 import java.lang.ref.WeakReference;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.WeakHashMap;
-import com.simibubi.create.content.fluids.FlowSource;
-import com.simibubi.create.content.fluids.FluidPropagator;
-import com.simibubi.create.content.fluids.FluidTransportBehaviour;
-import com.simibubi.create.content.fluids.OpenEndedPipe;
+import java.util.*;
+import com.diliupengyun.differential_create.mixin.HosePulleyFluidHandlerAccessor;
+import com.simibubi.create.content.fluids.*;
 import com.simibubi.create.content.fluids.pump.PumpBlock;
 import com.simibubi.create.content.fluids.pump.PumpBlockEntity;
 import com.simibubi.create.content.fluids.tank.FluidTankBlockEntity;
-import com.simibubi.create.content.kinetics.KineticNetwork;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
+import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.fluids.FluidStack;
+import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.fluids.capability.IFluidHandler;
 import net.neoforged.neoforge.fluids.capability.IFluidHandler.FluidAction;
 
-/** Main-thread adapter for cached connections, real inventory and a common fluid/shaft clock. */
+/** Main-thread native adapter: conserved ordered phases and one bounded update per tick. */
 public final class FluidKinetics {
-    private static final double VOLUME_EPSILON = 1e-9;
+    public static final long FLUID_BUDGET_NANOS = 4_000_000;
     private static final Map<Level, Map<BlockPos, WeakReference<FluidTransportBehaviour>>> pipes = new WeakHashMap<>();
     private static final Map<LevelAccessor, Map<BlockPos, PipeHydraulics>> replacements = new WeakHashMap<>();
     private static final Map<Level, Frame> frames = new WeakHashMap<>();
+    private static final Map<Level, WorkBudget> budgets = new WeakHashMap<>();
+    private static final class WorkBudget {
+        long tick = Long.MIN_VALUE, used; int cursor;
+        double airInitialised, airIn, airOut;
+        final Map<IFluidHandler, Double> receipts = new IdentityHashMap<>();
+        void begin(Level level) { if (tick != level.getGameTime()) { tick = level.getGameTime(); used = 0; } }
+    }
+    public record AirAudit(double initialised, double incoming, double outgoing) {}
+    public static AirAudit airAudit(Level level) {
+        var b = budgets.computeIfAbsent(level, key -> new WorkBudget()); return new AirAudit(b.airInitialised, b.airIn, b.airOut);
+    }
     private FluidKinetics() {}
     public static void register(FluidTransportBehaviour pipe) {
         Level level = pipe.getWorld();
         if (level == null || level.isClientSide || pipe.blockEntity.isVirtual()) return;
-        var registry = pipes.computeIfAbsent(level, key -> new HashMap<>());
-        var previous = registry.get(pipe.getPos());
-        if (previous != null && previous.get() == pipe) return;
+        var registry = pipes.computeIfAbsent(level, key -> new HashMap<>()); var old = registry.get(pipe.getPos());
+        if (old != null && old.get() == pipe) return;
+        // A newly placed channel owns air at construction, including before a
+        // far forced chunk reaches its first simulation tick.
+        var saved = state(pipe); var arms = EnumSet.noneOf(Direction.class);
+        if (pipe.interfaces != null) for (var d : Direction.values())
+            if (pipe.interfaces.containsKey(d) && pipe.canHaveFlowToward(pipe.blockEntity.getBlockState(), d)) arms.add(d);
+        boolean pump = pipe.blockEntity instanceof PumpBlockEntity;
+        if (pump) saved.pumpFacing = pipe.blockEntity.getBlockState().getValue(PumpBlock.FACING);
+        double air = saved.airVolume(); saved.prepareQueue(Math.max(25, (pump ? 50 : 0) + arms.size() * (pump ? 25 : 50)), pump, arms);
+        double change = saved.airVolume() - air; var audit = budgets.computeIfAbsent(level, key -> new WorkBudget());
+        if (change > 0) audit.airInitialised += change; else audit.airOut -= change;
         registry.put(pipe.getPos(), new WeakReference<>(pipe)); frames.remove(level);
     }
-    public static boolean manages(Level level, BlockPos pos) {
-        return !level.isClientSide && pipes.getOrDefault(level, Map.of()).containsKey(pos);
-    }
+    public static boolean manages(Level level, BlockPos pos) { return !level.isClientSide && pipes.getOrDefault(level, Map.of()).containsKey(pos); }
     public static boolean hasPipes(Level level) { return !pipes.getOrDefault(level, Map.of()).isEmpty(); }
     public static Set<Level> levels() { return new HashSet<>(pipes.keySet()); }
     public static void invalidate(Level level) { frames.remove(level); }
-    public static void clear() { pipes.clear(); replacements.clear(); frames.clear(); }
+    public static void clear() { pipes.clear(); replacements.clear(); frames.clear(); budgets.clear(); }
+    public static void beginTick(Level level) { var b = budgets.computeIfAbsent(level, key -> new WorkBudget()); b.tick = level.getGameTime(); b.used = 0; }
     public static PipeHydraulics state(FluidTransportBehaviour pipe) { return ((IPipeDynamics) pipe).differentialcreate$fluidState(); }
+    private static BlockEntity loadedEntity(Level level, BlockPos pos) {
+        if (!(level instanceof ServerLevel server)) return level.getBlockEntity(pos);
+        var chunk = server.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4); return chunk == null ? null : chunk.getBlockEntity(pos);
+    }
+    private static BlockState loadedState(Level level, BlockPos pos) {
+        if (!(level instanceof ServerLevel server)) return level.getBlockState(pos);
+        var chunk = server.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4); return chunk == null ? null : chunk.getBlockState(pos);
+    }
+    private static FluidTransportBehaviour loadedPipe(Level level, BlockPos pos) {
+        return loadedEntity(level, pos) instanceof SmartBlockEntity smart ? smart.getBehaviour(FluidTransportBehaviour.TYPE) : null;
+    }
+    private static boolean ticking(Level level, BlockPos pos) {
+        return level instanceof ServerLevel server ? server.getChunkSource().isPositionTicking(net.minecraft.world.level.ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4)) : level.isLoaded(pos);
+    }
     public static void cacheState(LevelAccessor level, BlockPos pos) {
         var pipe = FluidPropagator.getPipe(level, pos);
         if (pipe != null && !level.isClientSide()) replacements.computeIfAbsent(level, key -> new HashMap<>()).put(pos.immutable(), state(pipe));
     }
     public static void restoreState(LevelAccessor level, BlockPos pos) {
-        var cache = replacements.get(level);
-        if (cache == null) return;
-        var saved = cache.remove(pos);
-        var pipe = FluidPropagator.getPipe(level, pos);
+        var cache = replacements.get(level); if (cache == null) return;
+        var saved = cache.remove(pos); var pipe = FluidPropagator.getPipe(level, pos);
         if (saved != null && pipe != null) {
-            ((IPipeDynamics) pipe).differentialcreate$adoptFluidState(saved);
-            register(pipe);
+            var placeholder = state(pipe);
+            if (placeholder != saved && level instanceof Level world)
+                budgets.computeIfAbsent(world, key -> new WorkBudget()).airOut += placeholder.airVolume();
+            ((IPipeDynamics) pipe).differentialcreate$adoptFluidState(saved); register(pipe);
         }
         if (cache.isEmpty()) replacements.remove(level);
     }
     public static double ownedVolume(Level level) {
-        double volume = 0;
-        for (var reference : pipes.getOrDefault(level, Map.of()).values()) {
-            var pipe = reference.get();
-            if (pipe != null && !pipe.blockEntity.isRemoved()) {
-                volume += state(pipe).volume();
-                for (var buffer : state(pipe).buffers.values()) volume += buffer.amount;
-            }
+        double sum = 0;
+        for (var r : pipes.getOrDefault(level, Map.of()).values()) {
+            var p = r.get(); if (p == null || p.blockEntity.isRemoved()) continue;
+            sum += state(p).volume(); for (var b : state(p).buffers.values()) sum += b.amount;
         }
-        return volume;
+        return sum;
+    }
+    private static boolean allows(FluidTransportBehaviour pipe, Direction side, FluidStack phase) {
+        var block = pipe.blockEntity.getBlockState();
+        // Create's empty-stack predicate passes smart filters but checks valves.
+        return pipe.canHaveFlowToward(block, side) && pipe.canPullFluidFrom(phase, block, side);
+    }
+    private static int request(double amount) { return (int) Math.max(1, Math.min(Integer.MAX_VALUE, Math.ceil(amount))); }
+    private static boolean same(FluidStack a, FluidStack b) { return FluidMaterials.same(a, b); }
+    private static void restorePhysicalConnections(FluidTransportBehaviour pipe) {
+        if (pipe.interfaces == null) pipe.getConnection(Direction.DOWN);
+        for (var side : Direction.values()) if (pipe.canHaveFlowToward(pipe.blockEntity.getBlockState(), side)) {
+            var retired = state(pipe).retainedPorts.get(side);
+            if (retired != null && ticking(pipe.getWorld(), pipe.getPos().relative(side))
+                && FluidPropagator.isOpenEnd(pipe.getWorld(), pipe.getPos(), side)) {
+                // Reopening the same exterior face restores its original native
+                // placement counter as well as its already extracted input.
+                pipe.interfaces.put(side, retired); state(pipe).retainedPorts.remove(side);
+            }
+            pipe.interfaces.computeIfAbsent(side, PipeConnection::new);
+        }
     }
 
-    private record Port(BlockPos pos, Direction side) {}
-    private static final class Endpoint {
-        final FluidTransportBehaviour pipe;
-        final Direction side;
-        final FlowSource source;
-        IFluidHandler handler;
-        InventoryPool inventory;
-        FluidTankBlockEntity tank;
-        final PipeHydraulics.Buffer buffer;
-        double referenceHeight;
-        int node;
-        double faceHeight;
-        Endpoint(FluidTransportBehaviour pipe, Direction side, FlowSource source, IFluidHandler handler) {
-            this.pipe = pipe; this.side = side; this.source = source; this.handler = handler;
-            buffer = state(pipe).buffers.computeIfAbsent(side, key -> new PipeHydraulics.Buffer());
-            faceHeight = pipe.getPos().getY() + side.getStepY() * .5;
-            refresh();
-        }
-        void refresh() {
-            var provider = source.provideHandler(); handler = provider == null ? null : provider.getCapability();
-            BlockPos connected = pipe.getPos().relative(side);
-            var be = pipe.getWorld().getBlockEntity(connected);
-            referenceHeight = be instanceof FluidTankBlockEntity tank ? tank.getController().getY() : connected.getY();
-            tank = be instanceof FluidTankBlockEntity connectedTank && pipe.getWorld().isLoaded(connectedTank.getController())
-                ? connectedTank.getControllerBE() : null;
-            // Boiler handlers retain their native device boundary, not a free surface.
-            if (tank != null && tank.boiler.isActive()) tank = null;
-            refreshHeight(0);
-        }
-        double refreshHeight(double change) {
-            if (tank == null) return 0;
-            var stock = tank.getTankInventory();
-            double buffered = inventory == null ? buffer.amount : inventory.buffered;
-            double fraction = stock.getCapacity() == 0 ? 0 : Math.max(0, Math.min(1,
-                (stock.getFluidAmount() + buffered + change) / stock.getCapacity()));
-            // Match Create's liquid surface: 1/4-m caps and a 1/16-m puddle.
-            // Pipe heights use block centres, half a metre above the block origin.
-            double next = tank.getBlockPos().getY() - 3.0 / 16 + (tank.getHeight() - 9.0 / 16) * fraction;
-            double difference = Math.abs(next - referenceHeight);
-            referenceHeight = next;
-            return difference;
-        }
-        double tankAmount() {
-            return tank.getTankInventory().getFluidAmount() + (inventory == null ? buffer.amount : inventory.buffered);
-        }
-        double contactAmount() {
-            return tank.getTankInventory().getCapacity() * (faceHeight - tank.getBlockPos().getY() + 3.0 / 16)
-                / (tank.getHeight() - 9.0 / 16);
-        }
-        double pressureHeight() {
-            // An exposed port discharges into unmodelled air, not a suction tube
-            // reaching below the surface. Only immersed ports carry hydrostatic pressure.
-            return tank == null ? referenceHeight : Math.max(faceHeight, referenceHeight);
-        }
-        boolean draws(FluidStack fluid) {
-            return tank == null || FluidMaterials.isGas(fluid) || tankAmount() > contactAmount();
-        }
-        FluidStack identity() {
-            if (buffer.amount > 0) return buffer.fluid;
-            if (handler == null) return FluidStack.EMPTY;
-            FluidStack fluid = handler.drain(1, FluidAction.SIMULATE);
-            return fluid.isEmpty() ? FluidStack.EMPTY : fluid.copyWithAmount(1);
-        }
-        double available(FluidStack fluid, int requested) {
-            if (handler == null || !buffer.matches(fluid)) return 0;
-            if (!draws(fluid)) return buffer.amount;
-            FluidStack drained = handler.drain(fluid.copyWithAmount(requested), FluidAction.SIMULATE);
-            return buffer.amount + (same(drained, fluid) ? drained.getAmount() : 0);
-        }
-        boolean receives(FluidStack fluid) {
-            return handler != null && buffer.matches(fluid) && (inventory == null
-                ? handler.fill(fluid.copyWithAmount(1), FluidAction.SIMULATE) > 0 : inventory.receiptSpace(1) > 0);
-        }
-        void commit(FluidStack fluid, double outward) {
-            if (outward > 0) buffer.add(fluid, -outward);
-            else if (outward < 0) {
-                buffer.add(fluid, -outward);
-                buffer.delivery = true;
-            }
-            if (outward != 0) {
-                source.keepAlive(); source.whileFlowPresent(pipe.getWorld(), outward > 0);
-                pipe.blockEntity.setChanged();
-            }
-        }
-    }
-    private static int request(double volume) {
-        return (int) Math.max(1, Math.min(Integer.MAX_VALUE, Math.ceil(volume)));
-    }
-    private static boolean same(FluidStack a, FluidStack b) {
-        return !a.isEmpty() && !b.isEmpty() && FluidStack.isSameFluidSameComponents(a, b);
-    }
-    private record InventoryPort(int component, Endpoint endpoint) {}
-    private static final class InventoryPool {
-        final IFluidHandler handler;
-        final FluidStack fluid;
-        final List<InventoryPort> ports = new ArrayList<>();
-        double pending;
-        double buffered;
-        InventoryPool(IFluidHandler handler, FluidStack fluid) { this.handler = handler; this.fluid = fluid; }
-        void refresh() {
-            pending = 0; buffered = 0; double roundoff = 0, bufferRoundoff = 0;
-            for (var port : ports) {
-                var buffer = port.endpoint.buffer;
-                double owned = buffer.amount - bufferRoundoff, sum = buffered + owned;
-                bufferRoundoff = (sum - buffered) - owned; buffered = sum;
-                if (!buffer.delivery) continue;
-                double amount = buffer.amount - roundoff, next = pending + amount;
-                roundoff = (next - pending) - amount; pending = next;
-            }
-        }
-        double receiptSpace(double volume) {
-            int capacity = handler.fill(fluid.copyWithAmount(request(pending + volume)), FluidAction.SIMULATE);
-            return FluidBudget.receiptSpace(capacity, pending);
-        }
-        double[] rates(List<FluidTrial> trials) {
-            double[] rates = new double[ports.size()];
-            for (int i = 0; i < rates.length; i++) {
-                var port = ports.get(i);
-                rates[i] = trials.get(port.component).filling.waterOutward()[port.endpoint.node] / RotationMath.TICK_MINUTES;
-            }
-            return rates;
-        }
-        double allowed(List<FluidTrial> trials, double minutes) {
-            double[] rates = rates(trials), owned = new double[rates.length];
-            double incoming = 0, net = 0;
-            for (double rate : rates) net += rate;
-            double limit = minutes;
-            if (net != 0 && !FluidMaterials.isGas(fluid)) for (var port : ports) {
-                var endpoint = port.endpoint;
-                if (endpoint.tank == null) continue;
-                double contact = endpoint.contactAmount(), distance = endpoint.tankAmount() - contact;
-                if (contact > 0 && contact < endpoint.tank.getTankInventory().getCapacity()
-                    && distance * net > 0) limit = Math.min(limit, distance / net);
-            }
-            for (int i = 0; i < rates.length; i++) {
-                var buffer = ports.get(i).endpoint.buffer;
-                if (rates[i] < 0) { incoming -= rates[i]; rates[i] = 0; }
-                owned[i] = buffer.amount;
-                if (rates[i] > 0 && !ports.get(i).endpoint.draws(fluid))
-                    limit = Math.min(limit, owned[i] / rates[i]);
-            }
-            double wanted = FluidBudget.needed(rates, owned, minutes);
-            if (wanted > 1e-10) {
-                FluidStack stock = handler.drain(fluid.copyWithAmount(request(wanted)), FluidAction.SIMULATE);
-                limit = Math.min(limit, FluidBudget.limit(rates, owned, same(stock, fluid) ? stock.getAmount() : 0, minutes));
-            }
-            if (incoming > 0) limit = Math.min(limit, receiptSpace(incoming * minutes) / incoming);
-            return limit;
-        }
-        boolean reserve(List<FluidTrial> trials, double minutes) {
-            double[] rates = rates(trials), need = new double[rates.length];
-            double total = 0; int last = -1;
-            for (int i = 0; i < need.length; i++) {
-                need[i] = Math.max(0, rates[i] * minutes - ports.get(i).endpoint.buffer.amount);
-                if (need[i] > 1e-10 && !ports.get(i).endpoint.draws(fluid)) return false;
-                if (need[i] > 0) { total += need[i]; last = i; }
-            }
-            if (total <= 1e-10) return true;
-            FluidStack stock = handler.drain(fluid.copyWithAmount(request(total)), FluidAction.EXECUTE);
-            if (!stock.isEmpty()) {
-                if (!same(stock, fluid)) throw new IllegalStateException("External source returned a different fluid");
-                double left = stock.getAmount();
-                for (int i = 0; i < need.length; i++) if (need[i] > 0) {
-                    double share = i == last ? left : stock.getAmount() * need[i] / total; left -= share;
-                    var endpoint = ports.get(i).endpoint;
-                    endpoint.buffer.add(fluid, share); endpoint.buffer.delivery = false;
-                    endpoint.pipe.blockEntity.setChanged();
+    /** A retired world inlet finishes only its already extracted stock before
+     * the new physical neighbour acquires the face. It cannot take a new bucket. */
+    private static OpenEndedPipe retainedIntake(FluidTransportBehaviour pipe, Direction side) {
+        if (pipe == null) return null;
+        var saved = state(pipe); var archived = saved.retainedPorts.get(side);
+        var live = pipe.interfaces == null ? null : pipe.interfaces.get(side);
+        for (var c : new PipeConnection[]{archived, live}) if (c != null) {
+            var connection = (IPipePressure)c;
+            for (var source : new FlowSource[]{connection.differentialcreate$source(), connection.differentialcreate$retainedSource()})
+                if (source instanceof OpenEndedPipe end) {
+                    var buffer = saved.buffers.get(side);
+                    if (end.provideHandler().getCapability().getFluidInTank(0).getAmount() > 0
+                        || buffer != null && !buffer.delivery && buffer.amount > 0) return end;
                 }
-                refresh();
+        }
+        return null;
+    }
+    private static boolean bufferedInput(FluidTransportBehaviour pipe, Direction side) {
+        if (pipe == null) return false;
+        var buffer = state(pipe).buffers.get(side);
+        return buffer != null && !buffer.delivery && buffer.amount > 0;
+    }
+
+    private static final class Endpoint {
+        final FluidTransportBehaviour pipe; final Direction side; final FlowSource source;
+        final PipeHydraulics.Buffer buffer;
+        IFluidHandler handler; FluidTankBlockEntity tank;
+        FluidStack offered = FluidStack.EMPTY;
+        boolean supplies; double surface, face;
+        boolean retained;
+        IFluidHandler receiptHandler; double receipt;
+        Endpoint(FluidTransportBehaviour pipe, Direction side, FlowSource source) {
+            this.pipe = pipe; this.side = side; this.source = source;
+            buffer = state(pipe).buffers.computeIfAbsent(side, key -> new PipeHydraulics.Buffer());
+            face = pipe.getPos().getY() + .5 * side.getStepY(); refresh();
+        }
+        boolean allowsInput(FluidStack identity) {
+            return retained ? pipe.canPullFluidFrom(identity, pipe.blockEntity.getBlockState(), side) : allows(pipe, side, identity);
+        }
+        void refresh() {
+            var world = pipe.getWorld(); var pos = pipe.getPos().relative(side); var be = loadedEntity(world, pos);
+            if (!retained && (!ticking(world, pos) || be instanceof FluidTankBlockEntity t && !ticking(world, t.getController()))) {
+                handler = null; tank = null; supplies = false; return;
             }
-            for (int i = 0; i < need.length; i++) if (rates[i] * minutes > ports.get(i).endpoint.buffer.amount + 1e-10) return false;
-            return true;
+            var provider = source == null ? null : source.provideHandler(); handler = provider == null ? null : provider.getCapability();
+            tank = !retained && be instanceof FluidTankBlockEntity t ? t.getControllerBE() : null;
+            if (!retained && be instanceof FluidTankBlockEntity) {
+                // A reloaded non-controller can expose its constructor's local
+                // tank until its first native tick refreshes the capability.
+                // Use the actual multiblock controller for simulation AND commit.
+                handler = tank == null ? null : world.getCapability(Capabilities.FluidHandler.BLOCK,
+                    tank.getBlockPos(), side.getOpposite());
+            }
+            // Generic native machines have no exposed level geometry. Their
+            // finite inventory retains a half-block supply-head approximation;
+            // this starts displacement of air without filling a dry pipe with
+            // an imaginary liquid gravity column.
+            surface = retained ? face : pos.getY() + .5;
+            if (!retained && tank != null && !tank.boiler.isActive()) {
+                var stock = tank.getTankInventory(); double fraction = stock.getCapacity() == 0 ? 0 : (double) stock.getFluidAmount() / stock.getCapacity();
+                surface = tank.getBlockPos().getY() - 3.0 / 16 + (tank.getHeight() - 9.0 / 16) * fraction;
+            } else if (!retained && handler instanceof HosePulleyFluidHandlerAccessor hose) {
+                var root = hose.differentialcreate$rootPosition().get(); var fluid = world.getFluidState(root);
+                surface = fluid.isEmpty() ? root.getY() : root.getY() - .5 + fluid.getHeight(world, root);
+            } else if (!retained && source instanceof OpenEndedPipe open) {
+                var external = world.getFluidState(open.getOutputPos());
+                surface = external.isEmpty() ? face : open.getOutputPos().getY() - .5 + external.getHeight(world, open.getOutputPos());
+            }
+            offered = FluidStack.EMPTY; supplies = false;
+            if (buffer.amount > 0) { offered = buffer.first().identity(); supplies = allowsInput(offered); return; }
+            if (handler == null) return;
+            if (retained) {
+                var stock = handler instanceof OpenPipeDischarge.Placement ? handler.getFluidInTank(0) : FluidStack.EMPTY;
+                if (!stock.isEmpty() && allowsInput(stock)) { offered = stock.copyWithAmount(1); supplies = true; }
+                return;
+            }
+            var available = tank == null ? source.provideFluid(s -> !s.isEmpty() && allows(pipe, side, s))
+                : handler.drain(1, FluidAction.SIMULATE);
+            if (!available.isEmpty() && !allows(pipe, side, available)) available = FluidStack.EMPTY;
+            if (!available.isEmpty() && (tank == null || tank.boiler.isActive() || FluidMaterials.isGas(available)
+                || surface > face && tank.getTankInventory().getFluidAmount() > 0)) {
+                offered = available.copyWithAmount(1); supplies = true; return;
+            }
+            // Immersion never substitutes air for a rejected or non-source liquid.
+            if (source instanceof OpenEndedPipe open) supplies = world.getFluidState(open.getOutputPos()).isEmpty();
+            else if (handler instanceof HosePulleyFluidHandlerAccessor hose)
+                supplies = world.getFluidState(hose.differentialcreate$rootPosition().get()).isEmpty();
+            else if (tank != null && !tank.boiler.isActive()) supplies = tank.getTankInventory().getFluidAmount() == 0 || surface <= face;
+            else {
+                // A declared empty native slot is an explicit vented machine
+                // boundary. A failed filtered drain alone is not an air source.
+                for (int n = 0; n < handler.getTanks(); n++)
+                    if (handler.getTankCapacity(n) > 0 && handler.getFluidInTank(n).isEmpty()) supplies = true;
+            }
+            supplies &= allows(pipe, side, FluidStack.EMPTY);
+        }
+        boolean receives(FluidStack phase) {
+            if (retained || handler == null || !allows(pipe, side, phase)) return false;
+            if (phase.isEmpty()) return true;
+            if (buffer.amount > 0 && !same(buffer.first().identity(), phase)) {
+                if (handler instanceof OpenPipeDischarge.Placement) return false;
+                // An integer interface cannot accept a real .003 mB remainder.
+                // Retain each such identity, without making it a permanent plug
+                // against the next identity's actual representable receipts.
+                for (var part : buffer.parcels()) if (!same(part.identity(), phase)
+                    && FluidBudget.deliveryAmount(buffer.volume(part.identity())) > 0) return false;
+            }
+            if (handler instanceof OpenPipeDischarge.Placement p) {
+                double accepted = p.differentialcreate$discharge(phase, 1, FluidAction.SIMULATE);
+                if (accepted >= 0) return accepted > 0;
+            }
+            return handler.fill(phase.copyWithAmount(1), FluidAction.SIMULATE) > 0;
+        }
+        double pressure(FluidStack contact) {
+            if (contact.isEmpty() || FluidMaterials.isGas(contact)) return 0;
+            // Each pipe half's gravity is on its edge; world altitude cancels.
+            double head = source instanceof OpenEndedPipe || tank != null && !tank.boiler.isActive()
+                ? Math.max(0, surface - face) : surface - face;
+            return FluidMaterials.of(contact).gravityForce(head);
+        }
+        double inputSpace(FluidStack phase) {
+            if (!supplies || !same(offered, phase)) return 0;
+            if (phase.isEmpty()) return Double.POSITIVE_INFINITY;
+            double held = buffer.amount > 0 ? buffer.first().amount() : 0;
+            if (retained) {
+                var owned = handler instanceof OpenPipeDischarge.Placement ? handler.getFluidInTank(0) : FluidStack.EMPTY;
+                return held + (same(owned, phase) ? owned.getAmount() : 0);
+            }
+            var stock = handler.drain(phase.copyWithAmount(Integer.MAX_VALUE), FluidAction.SIMULATE);
+            return held + (same(stock, phase) ? Math.min(stock.getAmount(), accessibleTankStock(phase)) : 0);
+        }
+        double accessibleTankStock(FluidStack phase) {
+            if (tank == null || tank.boiler.isActive() || FluidMaterials.isGas(phase)) return Integer.MAX_VALUE;
+            var inventory = tank.getTankInventory();
+            double span = tank.getHeight() - 9.0 / 16;
+            double contact = Math.max(0, (face - tank.getBlockPos().getY() + 3.0 / 16) * inventory.getCapacity() / span);
+            // A coarse tick must not withdraw stock below a side port merely
+            // because the surface was above it at the start of the tick.
+            return Math.max(0, inventory.getFluidAmount() - Math.ceil(contact - 32 * Math.ulp(Math.max(1, contact))));
+        }
+        double outputSpace(FluidStack phase) {
+            if (!receives(phase)) return 0;
+            if (phase.isEmpty()) return Double.POSITIVE_INFINITY;
+            double pending = buffer.amount;
+            if (handler instanceof OpenPipeDischarge.Placement p) {
+                double accepted = p.differentialcreate$discharge(phase, 1000 + pending, FluidAction.SIMULATE);
+                if (accepted >= 0) return Math.max(0, accepted - pending);
+            }
+            double others = Math.max(0, budgets.get(pipe.getWorld()).receipts.getOrDefault(handler, 0d) - receipt);
+            // A bounded probe avoids overflow in native whole-bucket machines.
+            return FluidBudget.receiptSpace(handler.fill(phase.copyWithAmount(1000), FluidAction.SIMULATE), others + pending);
+        }
+        void updateReceipt() {
+            var claims = budgets.computeIfAbsent(pipe.getWorld(), key -> new WorkBudget()).receipts;
+            if (receiptHandler != null && receipt != 0) claims.merge(receiptHandler, -receipt, Double::sum);
+            // Integer extraction also leaves genuinely owned source stock.
+            // It must retain its shared native room until consumed or returned,
+            // even when another pipe is receiving at this same capability.
+            double pending = buffer.amount;
+            // Ports to one native inventory share its fractional receipt pool.
+            // Rounding each port up would reserve two mB for .4 + .6 mB and
+            // permanently prevent the last real mB from being delivered.
+            receipt = pending;
+            receiptHandler = handler;
+            if (handler != null && receipt != 0) claims.merge(handler, receipt, Double::sum);
         }
         void deliver() {
-            refresh();
-            double total = pending; int last = -1;
-            for (int i = 0; i < ports.size(); i++) {
-                var buffer = ports.get(i).endpoint.buffer;
-                if (buffer.delivery && buffer.amount > 0) last = i;
+            if (!buffer.delivery || handler == null || buffer.amount == 0) return;
+            if (!(handler instanceof OpenPipeDischarge.Placement)) {
+                var handled = new ArrayList<FluidStack>();
+                for (var part : buffer.parcels()) {
+                    var identity = part.identity(); if (handled.stream().anyMatch(s -> same(s, identity))) continue;
+                    handled.add(identity); int integer = Math.min(1000, FluidBudget.deliveryAmount(buffer.volume(identity)));
+                    if (integer == 0) continue;
+                    int accepted = handler.fill(identity.copyWithAmount(integer), FluidAction.EXECUTE);
+                    if (accepted < 0 || accepted > integer) throw new IllegalStateException("Invalid external receipt");
+                    if (accepted > 0) { buffer.settle(identity, accepted); pipe.blockEntity.setChanged(); updateReceipt(); }
+                }
+                return;
             }
-            int amount = FluidBudget.deliveryAmount(total);
-            if (amount == 0) return;
-            int accepted = handler.fill(fluid.copyWithAmount(amount), FluidAction.EXECUTE);
-            if (accepted < 0 || accepted > amount) throw new IllegalStateException("Invalid external fluid acceptance");
-            double left = accepted;
-            for (int i = 0; i < ports.size(); i++) {
-                var endpoint = ports.get(i).endpoint; var buffer = endpoint.buffer;
-                if (!buffer.delivery || buffer.amount == 0) continue;
-                double share = Math.max(0, Math.min(buffer.amount, i == last ? left : accepted * (buffer.amount / total)));
-                left -= share;
-                buffer.add(fluid, -share); endpoint.pipe.blockEntity.setChanged();
+            var part = buffer.first(); double sent = part.amount(), accepted = -1;
+            if (handler instanceof OpenPipeDischarge.Placement p) accepted = p.differentialcreate$discharge(part.identity(), sent, FluidAction.EXECUTE);
+            if (accepted == -1) {
+                int integer = FluidBudget.deliveryAmount(sent); if (integer == 0) return;
+                sent = integer; accepted = handler.fill(part.identity().copyWithAmount(integer), FluidAction.EXECUTE);
             }
-            refresh();
+            if (!Double.isFinite(accepted) || accepted < 0 || accepted > sent) throw new IllegalStateException("Invalid external receipt");
+            if (accepted > 0) { buffer.add(part.identity(), -accepted); pipe.blockEntity.setChanged(); updateReceipt(); }
+        }
+        boolean reserve(FluidStack identity, double amount, double room) {
+            if (identity.isEmpty()) return supplies;
+            double held = buffer.amount > 0 && same(buffer.first().identity(), identity) ? buffer.first().amount() : 0;
+            if (held + 8 * Math.ulp(Math.max(1, Math.max(held, amount))) >= amount) return true;
+            if (buffer.amount > held + 8 * Math.ulp(Math.max(1, buffer.amount))) return false;
+            FluidStack drained;
+            if (retained) {
+                int cached = handler instanceof OpenPipeDischarge.Placement ? handler.getFluidInTank(0).getAmount() : 0;
+                drained = cached == 0 ? FluidStack.EMPTY : handler.drain(identity.copyWithAmount(Math.min(request(amount - held), cached)), FluidAction.EXECUTE);
+            } else if (handler instanceof OpenPipeDischarge.Placement p && handler.getFluidInTank(0).isEmpty())
+                drained = p.differentialcreate$takeWorld(identity, request(amount - held), room);
+            else {
+                int requested = Math.min(request(amount - held), (int) accessibleTankStock(identity));
+                drained = requested == 0 ? FluidStack.EMPTY : handler.drain(identity.copyWithAmount(requested), FluidAction.EXECUTE);
+            }
+            if (!drained.isEmpty()) { buffer.add(drained, drained.getAmount()); buffer.delivery = false; pipe.blockEntity.setChanged(); }
+            return same(drained, identity) && buffer.amount + 64 * Math.ulp(Math.max(1, amount)) >= amount;
         }
     }
-    private record Connection(int from, int to, FluidTransportBehaviour pipe, Direction side,
-                              FluidTransportBehaviour other, Endpoint endpoint, PumpBlockEntity pump, double length, boolean sealed) {
-        double firstLength() { return pipe.blockEntity instanceof PumpBlockEntity ? .25 : .5; }
-        PipeContents contents() {
-            var saved = state(pipe);
-            if (pump != null) return saved.pumpFacing != null && saved.pumpFacing != pump.getBlockState().getValue(PumpBlock.FACING)
-                ? saved.core.reverse() : saved.core;
-            if (other == null) return saved.content(side);
-            return PipeContents.join(saved.content(side), state(other).content(side.getOpposite()).reverse(), firstLength() / length);
+    private record Channel(int from, int to, Direction side, Endpoint endpoint, double length) {}
+    private static final class Component {
+        final List<FluidTransportBehaviour> members; final List<Endpoint> endpoints;
+        final List<Channel> channels = new ArrayList<>(); final List<Set<Direction>> sides = new ArrayList<>();
+        final List<List<Channel>> adjacent = new ArrayList<>();
+        final Map<FluidTransportBehaviour, Integer> index = new IdentityHashMap<>();
+        final Map<IFluidHandler, Double> worldClaims = new IdentityHashMap<>();
+        final double[] capacity, geometryCapacity;
+        boolean active; List<QueuedFluidSolver.Cell> cells; List<QueuedFluidSolver.Link> links;
+        TransferPlan candidatePlan;
+        Component(List<FluidTransportBehaviour> members, List<Endpoint> endpoints, Map<BlockPos, FluidTransportBehaviour> live, WorkBudget audit) {
+            this.members = members; this.endpoints = endpoints; capacity = new double[members.size()]; geometryCapacity = new double[members.size()];
+            for (int n = 0; n < members.size(); n++) { index.put(members.get(n), n); adjacent.add(new ArrayList<>()); }
+            for (int n = 0; n < members.size(); n++) {
+                var pipe = members.get(n); var arms = EnumSet.noneOf(Direction.class);
+                if (pipe.interfaces != null) for (var d : Direction.values()) if (pipe.interfaces.containsKey(d)
+                    && pipe.canHaveFlowToward(pipe.blockEntity.getBlockState(), d)) arms.add(d);
+                sides.add(arms); boolean pump = pipe.blockEntity instanceof PumpBlockEntity;
+                var saved = state(pipe); double before = saved.airVolume();
+                if (pump) saved.pumpFacing = pipe.blockEntity.getBlockState().getValue(PumpBlock.FACING);
+                geometryCapacity[n] = Math.max(25, (pump ? 50 : 0) + arms.size() * (pump ? 25 : 50));
+                saved.prepareQueue(geometryCapacity[n], pump, arms);
+                capacity[n] = saved.queueCapacity;
+                double change = saved.airVolume() - before;
+                if (change > 0) audit.airInitialised += change; else audit.airOut -= change;
+            }
+            for (int n = 0; n < members.size(); n++) for (var d : sides.get(n)) {
+                var next = live.get(members.get(n).getPos().relative(d)); var to = next == null ? null : index.get(next);
+                if (to != null && n < to && sides.get(to).contains(d.getOpposite())) {
+                    if (retainedIntake(members.get(n), d) != null || retainedIntake(next, d.getOpposite()) != null
+                        || bufferedInput(members.get(n), d) || bufferedInput(next, d.getOpposite())) continue;
+                    var c = new Channel(n, to, d, null, 1 - (members.get(n).blockEntity instanceof PumpBlockEntity ? .25 : 0)
+                        - (next.blockEntity instanceof PumpBlockEntity ? .25 : 0));
+                    channels.add(c); adjacent.get(n).add(c); adjacent.get(to).add(c);
+                }
+            }
+            for (int b = 0; b < endpoints.size(); b++) {
+                var p = endpoints.get(b); channels.add(new Channel(index.get(p.pipe), members.size() + b, p.side, p,
+                    p.pipe.blockEntity instanceof PumpBlockEntity ? .25 : .5));
+            }
         }
-        void contents(PipeContents contents) {
-            if (pump != null) { state(pipe).core = contents; return; }
-            if (other == null) { state(pipe).contents.put(side, contents); return; }
-            double cut = firstLength() / length;
-            state(pipe).contents.put(side, contents.slice(0, cut));
-            state(other).contents.put(side.getOpposite(), contents.slice(cut, 1).reverse());
+        int sign(int cell, Direction side) {
+            return members.get(cell).blockEntity instanceof PumpBlockEntity pump
+                && side.getAxis() == pump.getBlockState().getValue(PumpBlock.FACING).getAxis()
+                ? side.getAxisDirection() == Direction.AxisDirection.POSITIVE ? 1 : -1 : 0;
         }
-        double fromHeight() {
-            if (!(pipe.blockEntity instanceof PumpBlockEntity p)) return pipe.getPos().getY();
-            Direction front = p.getBlockState().getValue(PumpBlock.FACING);
-            return pipe.getPos().getY() + (pump != null ? -front.getStepY() : side.getStepY()) * .25;
+        void begin() {
+            worldClaims.clear();
+            active = false;
+            for (int n = 0; n < members.size(); n++) {
+                var p = members.get(n); var saved = state(p);
+                active |= saved.volume() > 0 || saved.outward.values().stream().anyMatch(q -> q != 0);
+                if (p.blockEntity instanceof PumpBlockEntity pump) {
+                    // Both Create render paths rotate about the positive world
+                    // axis. Keep this rotation datum while the block arrow
+                    // independently selects pressure and reaction polarity.
+                    active |= NetworkDynamics.preciseSpeed(pump) != 0;
+                }
+            }
+            for (var e : endpoints) { e.refresh(); e.deliver(); e.refresh(); active |= e.buffer.amount > 0 || e.supplies && !e.offered.isEmpty(); }
+            if (!active) resetLoads();
         }
-        double toHeight() {
-            if (pump != null) return pipe.getPos().getY() + pump.getBlockState().getValue(PumpBlock.FACING).getStepY() * .25;
-            if (other == null) return pipe.getPos().getY() + side.getStepY() * .5;
-            return other.getPos().getY() - (other.blockEntity instanceof PumpBlockEntity ? side.getStepY() * .25 : 0);
+        FluidStack mouth(int cell, Direction side) {
+            var saved = state(members.get(cell)); var p = saved.phases.peek(saved.front(side)); return p == null ? FluidStack.EMPTY : p.identity();
         }
+        boolean contact(int edge, boolean forward, long deadline) {
+            var c = channels.get(edge); var phase = forward ? mouth(c.from, c.side)
+                : c.endpoint == null ? mouth(c.to, c.side.getOpposite()) : c.endpoint.offered;
+            if (!(c.endpoint != null && c.endpoint.retained ? c.endpoint.allowsInput(phase) : allows(members.get(c.from), c.side, phase))) return false;
+            if (c.endpoint == null) return allows(members.get(c.to), c.side.getOpposite(), phase);
+            if (forward) return c.endpoint.outputSpace(phase) > 0;
+            if (c.endpoint.inputSpace(phase) <= 0) return false;
+            if (!c.endpoint.retained && !phase.isEmpty() && c.endpoint.buffer.amount == 0
+                && c.endpoint.handler instanceof OpenPipeDischarge.Placement p && c.endpoint.handler.getFluidInTank(0).isEmpty()) {
+                var whole = p.differentialcreate$worldFluid();
+                return !whole.isEmpty() && intakeSpace(c.endpoint, phase, deadline) >= whole.getAmount();
+            }
+            return true;
+        }
+        QueuedFluidSolver.Result sample(double minutes, long deadline) {
+            if (!active || System.nanoTime() >= deadline) return QueuedFluidSolver.stationary(members.size(), channels.size());
+            cells = new ArrayList<>(members.size()); links = new ArrayList<>(channels.size());
+            for (int n = 0; n < members.size(); n++) {
+                var p = members.get(n); var saved = state(p); double density = 0, gravity = 0;
+                for (var parcel : saved.parcels()) {
+                    var material = FluidMaterials.of(parcel.identity()); double part = parcel.amount() / capacity[n];
+                    density += part * material.density(); if (!material.isGas()) gravity += part * material.density();
+                }
+                double rpm = p.blockEntity instanceof PumpBlockEntity pump ? NetworkDynamics.preciseSpeed(pump) : 0;
+                int polarity = p.blockEntity instanceof PumpBlockEntity pump
+                    && pump.getBlockState().getValue(PumpBlock.FACING).getAxisDirection() == Direction.AxisDirection.NEGATIVE ? -1 : 1;
+                cells.add(new QueuedFluidSolver.Cell(capacity[n], p.getPos().getY(), density, gravity, rpm, saved.pumpFlow, polarity));
+            }
+            var boundary = new QueuedFluidSolver.Boundary[endpoints.size()];
+            for (int b = 0; b < endpoints.size(); b++) {
+                var p = endpoints.get(b); var phase = p.supplies ? p.offered : mouth(index.get(p.pipe), p.side);
+                boundary[b] = new QueuedFluidSolver.Boundary(p.pressure(phase), p.supplies, p.handler != null, FluidMaterials.of(phase).density());
+            }
+            double[] origin = new double[channels.size()];
+            for (int e = 0; e < channels.size(); e++) {
+                var c = channels.get(e); var p = members.get(c.from);
+                boolean open = (c.endpoint != null && c.endpoint.retained ? c.endpoint.allowsInput(FluidStack.EMPTY) : allows(p, c.side, FluidStack.EMPTY))
+                    && (c.endpoint != null ? c.endpoint.handler != null || c.endpoint.retained && bufferedInput(p, c.side)
+                    : allows(members.get(c.to), c.side.getOpposite(), FluidStack.EMPTY));
+                links.add(new QueuedFluidSolver.Link(c.from, c.to, c.length, p.getPos().getY() + .5 * c.side.getStepY(), sign(c.from, c.side),
+                    c.endpoint == null ? sign(c.to, c.side.getOpposite()) : 0, open));
+                origin[e] = state(p).outward.getOrDefault(c.side, 0d);
+                if (c.endpoint == null) origin[e] = .5 * (origin[e] - state(members.get(c.to)).outward.getOrDefault(c.side.getOpposite(), 0d));
+            }
+            return QueuedFluidSolver.sample(cells, links, boundary, origin, minutes, deadline, (edge, forward) -> contact(edge, forward, deadline));
+        }
+        /** Count genuine displaceable capacity, never the open end's nominal cache. */
+        double intakeSpace(Endpoint inlet, FluidStack identity, long deadline) {
+            boolean[] seen = new boolean[members.size()]; var visit = new ArrayList<Integer>();
+            int start = index.get(inlet.pipe); visit.add(start); seen[start] = true;
+            for (int head = 0; head < visit.size(); head++) {
+                if (System.nanoTime() >= deadline) return 0;
+                int from = visit.get(head);
+                for (var c : adjacent.get(from)) if (allows(members.get(c.from), c.side, identity)
+                    && allows(members.get(c.to), c.side.getOpposite(), identity)) {
+                    int other = c.from == from ? c.to : c.from;
+                    if (!seen[other]) { seen[other] = true; visit.add(other); }
+                }
+            }
+            double free = 0; boolean vent = false; int lowest = inlet.pipe.getPos().getY(); boolean driven = false;
+            var counted = Collections.newSetFromMap(new IdentityHashMap<IFluidHandler, Boolean>());
+            var localPending = new IdentityHashMap<IFluidHandler, Double>();
+            for (var e : endpoints) if (seen[index.get(e.pipe)] && e.handler != null)
+                localPending.merge(e.handler, e.buffer.amount, Double::sum);
+            for (int n : visit) {
+                var pipe = members.get(n); var saved = state(pipe); free += saved.airVolume();
+                for (var b : saved.buffers.values()) free -= b.amount;
+                lowest = Math.min(lowest, pipe.getPos().getY());
+                if (pipe.blockEntity instanceof PumpBlockEntity pump && NetworkDynamics.preciseSpeed(pump) != 0) driven = true;
+            }
+            // Retained world stock is already owned, irrespective of endpoint
+            // iteration order. It cannot occupy a second bucket's receiving room.
+            for (var e : endpoints) if (seen[index.get(e.pipe)] && e.handler instanceof OpenPipeDischarge.Placement
+                && counted.add(e.handler)) free -= e.handler.getFluidInTank(0).getAmount();
+            for (var e : endpoints) if (seen[index.get(e.pipe)] && e.handler != null) {
+                if (!(e.handler instanceof OpenPipeDischarge.Placement) && e.receives(identity)
+                    && (mouth(index.get(e.pipe), e.side).isEmpty() || same(mouth(index.get(e.pipe), e.side), identity))
+                    && counted.add(e.handler)) {
+                    double reserved = Math.max(0, budgets.get(inlet.pipe.getWorld()).receipts.getOrDefault(e.handler, 0d)
+                        - localPending.getOrDefault(e.handler, 0d));
+                    reserved += frames.get(inlet.pipe.getWorld()).borrowedWorldRoom(e.handler, this, deadline);
+                    if (!Double.isFinite(reserved)) return 0;
+                    // Probe room for the new whole bucket AND previously owned
+                    // stock. A 1000 mB probe minus a sub-mB remainder otherwise
+                    // deadlocks a full wet pipe even beside a nearly empty tank.
+                    int probe = request(1000 + Math.max(0, -free) + reserved);
+                    free += FluidBudget.receiptSpace(e.handler.fill(identity.copyWithAmount(probe), FluidAction.SIMULATE), reserved);
+                }
+                if (e != inlet && e.receives(FluidStack.EMPTY)) { vent = true; lowest = Math.min(lowest, e.pipe.getPos().relative(e.side).getY()); }
+            }
+            return vent && (driven || inlet.pipe.getPos().relative(inlet.side).getY() > lowest) ? Math.max(0, free) : 0;
+        }
+        /** Only other components need this claim: the owner's intake query
+         * already subtracts its cached world stock. Cache the bounded walk until
+         * that component next commits, without reserving imaginary tank space. */
+        double borrowedWorldRoom(IFluidHandler receiver, long deadline) {
+            var cached = worldClaims.get(receiver); if (cached != null) return cached;
+            var identities = new ArrayList<FluidStack>(); double owned = 0;
+            for (var e : endpoints) if (e.handler instanceof OpenPipeDischarge.Placement) {
+                var stock = e.handler.getFluidInTank(0);
+                if (!stock.isEmpty()) { owned += stock.getAmount(); if (identities.stream().noneMatch(s -> same(s, stock))) identities.add(stock.copyWithAmount(1)); }
+                if (!e.buffer.delivery) for (var part : e.buffer.parcels()) {
+                    owned += part.amount(); if (identities.stream().noneMatch(s -> same(s, part.identity()))) identities.add(part.identity());
+                }
+            }
+            if (owned == 0) { worldClaims.put(receiver, 0d); return 0; }
+            double claim = 0;
+            for (var identity : identities) {
+                var seen = new boolean[members.size()]; var visit = new ArrayList<Integer>();
+                for (var e : endpoints) if (e.handler == receiver && e.receives(identity)) {
+                    int start = index.get(e.pipe); if (!seen[start]) { seen[start] = true; visit.add(start); }
+                }
+                if (visit.isEmpty()) continue;
+                for (int head = 0; head < visit.size(); head++) {
+                    if (System.nanoTime() >= deadline) return Double.POSITIVE_INFINITY;
+                    for (var c : adjacent.get(visit.get(head))) if (allows(members.get(c.from), c.side, identity)
+                        && allows(members.get(c.to), c.side.getOpposite(), identity)) {
+                        int other = c.from == visit.get(head) ? c.to : c.from;
+                        if (!seen[other]) { seen[other] = true; visit.add(other); }
+                    }
+                }
+                double free = 0, alreadyReserved = 0, worldStock = 0;
+                for (int n : visit) {
+                    var saved = state(members.get(n)); free += saved.airVolume();
+                    for (var b : saved.buffers.values()) free -= b.amount;
+                }
+                var counted = Collections.newSetFromMap(new IdentityHashMap<IFluidHandler, Boolean>());
+                for (var e : endpoints) if (seen[index.get(e.pipe)] && e.handler != null) {
+                    if (e.handler == receiver) alreadyReserved += e.buffer.amount;
+                    if (e.handler instanceof OpenPipeDischarge.Placement) {
+                        double stock = counted.add(e.handler) ? e.handler.getFluidInTank(0).getAmount() : 0;
+                        free -= stock; worldStock += stock + (e.buffer.delivery ? 0 : e.buffer.amount);
+                    }
+                }
+                // Mixed cached identities must not each count the same air as
+                // free room. Keep their whole outstanding world stock reserved
+                // until it enters physical cells; ordinary pipe FIFO is intact.
+                if (worldStock > 0) claim += identities.size() == 1 ? Math.max(0, -free - alreadyReserved) : worldStock;
+            }
+            worldClaims.put(receiver, claim); return claim;
+        }
+        QueuedFluidSolver.Result limit(QueuedFluidSolver.Result r, double minutes, long deadline) {
+            candidatePlan = null;
+            double scale = 1;
+            var withdrawals = new IdentityHashMap<IFluidHandler, Map<FluidStack, Double>>();
+            for (int e = 0; e < channels.size(); e++) {
+                var c = channels.get(e); double amount = r.flow()[e] * minutes / RotationMath.TICK_MINUTES;
+                if (c.endpoint == null || amount >= 0) continue;
+                var phase = c.endpoint.offered;
+                if (phase.isEmpty()) continue;
+                double needed = -amount, allowed = c.endpoint.inputSpace(phase);
+                if (!c.endpoint.retained && c.endpoint.handler instanceof OpenPipeDischarge.Placement p
+                    && c.endpoint.handler.getFluidInTank(0).isEmpty()) {
+                    var whole = p.differentialcreate$worldFluid();
+                    if (whole.isEmpty() || !same(whole, phase) || intakeSpace(c.endpoint, phase, deadline) < whole.getAmount())
+                        // A rejected new bucket does not block stock already
+                        // owned at this mouth. Finish that real fractional tail
+                        // rather than trying an impossible whole-world receipt.
+                        allowed = Math.min(allowed, c.endpoint.buffer.amount);
+                }
+                scale = Math.min(scale, allowed / needed);
+                if (c.endpoint.buffer.amount == 0) {
+                    var kinds = withdrawals.computeIfAbsent(c.endpoint.handler, key -> new LinkedHashMap<>());
+                    var key = kinds.keySet().stream().filter(s -> same(s, phase)).findFirst().orElse(phase.copyWithAmount(1));
+                    double total = kinds.merge(key, needed, Double::sum); scale = Math.min(scale, allowed / total);
+                }
+            }
+            scale = Math.max(0, Math.min(1, scale));
+            // Move an ordered packet across an internal port in one coarse
+            // update. A phase boundary alone must not throttle every pipe.
+            // Preview the same branch allocation as commit; shrinking a shared
+            // flow can change which parcel the next branch sees, so recheck at
+            // most three times without another pressure solve or time substep.
+            for (int pass = 0; pass < QueuedFluidSolver.CONTACT_PASSES && scale > 0; pass++) {
+                if (System.nanoTime() >= deadline) return QueuedFluidSolver.stationary(members.size(), channels.size());
+                var plan = withdraw(r, minutes, scale);
+                var receipts = new IdentityHashMap<IFluidHandler, Double>();
+                double restricted = scale;
+                for (int e = 0; e < channels.size(); e++) {
+                    var c = channels.get(e); double amount = r.flow()[e] * minutes / RotationMath.TICK_MINUTES * scale;
+                    if (amount == 0 || amount < 0 && c.endpoint != null) continue;
+                    double wanted = Math.abs(amount), allowed = 0;
+                    // Air does not occupy a native liquid slot. A whole packet
+                    // may vent air and deliver one real identity in this update,
+                    // without turning every small air gap into a world-wide
+                    // time boundary. Distinct real identities still queue.
+                    var boundaryPhase = FluidStack.EMPTY; double delivered = 0;
+                    for (var part : plan.packets.get(e)) {
+                        var phase = part.identity();
+                        if (c.endpoint != null && !phase.isEmpty()) {
+                            if (boundaryPhase.isEmpty()) boundaryPhase = phase;
+                            else if (!same(boundaryPhase, phase)) break;
+                        }
+                        if (!(allows(members.get(c.from), c.side, phase) && (c.endpoint == null
+                            ? allows(members.get(c.to), c.side.getOpposite(), phase)
+                            : c.endpoint.receives(phase)))) break;
+                        double taken = part.amount();
+                        if (c.endpoint != null && !phase.isEmpty()) {
+                            double room = c.endpoint.outputSpace(phase) - receipts.getOrDefault(c.endpoint.handler, 0d) - delivered;
+                            taken = Math.min(taken, Math.max(0, room)); delivered += taken;
+                        }
+                        allowed += taken;
+                        if (taken < part.amount()) break;
+                    }
+                    if (c.endpoint != null && delivered > 0) receipts.merge(c.endpoint.handler, delivered, Double::sum);
+                    if (allowed + 8 * Math.ulp(Math.max(1, wanted)) < wanted) {
+                        restricted = Math.min(restricted, scale * allowed / wanted); break;
+                    }
+                }
+                if (restricted == scale) { candidatePlan = plan; return r.scale(scale, cells, links); }
+                scale = restricted;
+            }
+            return r.scale(0, cells, links);
+        }
+        private record TransferPlan(List<FluidQueue<FluidStack>> next, List<List<FluidQueue.Part<FluidStack>>> packets) {}
+        TransferPlan withdraw(QueuedFluidSolver.Result r, double minutes, double scale) {
+            var next = new ArrayList<FluidQueue<FluidStack>>(members.size());
+            for (var p : members) next.add(state(p).phases.copy());
+            var packets = new ArrayList<List<FluidQueue.Part<FluidStack>>>(Collections.nCopies(channels.size(), null));
+            var outlets = new ArrayList<List<Integer>>(members.size());
+            for (int n = 0; n < members.size(); n++) outlets.add(null);
+            double[] amounts = new double[channels.size()];
+            for (int e = 0; e < channels.size(); e++) {
+                var c = channels.get(e); double amount = amounts[e] = r.flow()[e] * minutes / RotationMath.TICK_MINUTES * scale;
+                if (amount == 0) continue;
+                if (amount < 0 && c.endpoint != null) { packets.set(e, List.of(new FluidQueue.Part<>(c.endpoint.offered, -amount))); continue; }
+                int from = amount > 0 ? c.from : c.to; var saved = state(members.get(from));
+                if (saved.queueFront != null) packets.set(e, next.get(from).take(Math.abs(amount), saved.front(amount > 0 ? c.side : c.side.getOpposite())));
+                else {
+                    if (outlets.get(from) == null) outlets.set(from, new ArrayList<>());
+                    outlets.get(from).add(e);
+                }
+            }
+            for (int n = 0; n < outlets.size(); n++) if (outlets.get(n) != null) {
+                var edges = outlets.get(n); double[] rates = new double[edges.size()]; double total = 0;
+                for (int k = 0; k < rates.length; k++) total += rates[k] = Math.abs(amounts[edges.get(k)]);
+                var parts = next.get(n).distributeBounded(next.get(n).take(total, true), rates, state(members.get(n)).splitCursor);
+                for (int k = 0; k < rates.length; k++) packets.set(edges.get(k), parts.get(k));
+            }
+            return new TransferPlan(next, packets);
+        }
+        boolean commit(QueuedFluidSolver.Result r, double minutes, long deadline, WorkBudget audit, Map<KineticBlockEntity, Double> torques) {
+            worldClaims.clear();
+            if (r.solves() == 0) { resetLoads(); return false; }
+            var plan = candidatePlan == null ? withdraw(r, minutes, 1) : candidatePlan; candidatePlan = null;
+            var next = plan.next; var packets = plan.packets;
+            var arriving = new ArrayList<List<List<FluidQueue.Part<FluidStack>>>>(Collections.nCopies(members.size(), null));
+            // Every outgoing packet is from tick-start stock. No multi-cell jump.
+            for (int e = 0; e < channels.size(); e++) if (packets.get(e) != null) {
+                var c = channels.get(e); boolean forward = r.flow()[e] > 0;
+                if (forward && c.endpoint != null) continue;
+                int receiver = forward ? c.to : c.from; Direction face = forward ? c.side.getOpposite() : c.side;
+                var saved = state(members.get(receiver));
+                if (saved.queueFront != null) next.get(receiver).receive(packets.get(e), saved.front(face));
+                else {
+                    if (arriving.get(receiver) == null) arriving.set(receiver, new ArrayList<>());
+                    arriving.get(receiver).add(packets.get(e));
+                }
+            }
+            for (int n = 0; n < next.size(); n++) if (arriving.get(n) != null) next.get(n).receiveJoined(arriving.get(n));
+            for (int n = 0; n < next.size(); n++)
+                if (Math.abs(next.get(n).volume() - capacity[n]) > 1024 * Math.ulp(Math.max(1, capacity[n]))) { resetLoads(); return false; }
+            if (System.nanoTime() >= deadline) { resetLoads(); return false; }
+            // Native execution may decline a promise; keep anything actually
+            // extracted in the saved mouth buffer and defer the whole component.
+            for (int e = 0; e < channels.size(); e++) {
+                var c = channels.get(e); double amount = r.flow()[e] * minutes / RotationMath.TICK_MINUTES;
+                if (c.endpoint == null || amount >= 0) continue;
+                double room = !c.endpoint.retained && c.endpoint.handler instanceof OpenPipeDischarge.Placement
+                    ? intakeSpace(c.endpoint, c.endpoint.offered, deadline) : Double.POSITIVE_INFINITY;
+                if (!c.endpoint.reserve(c.endpoint.offered, -amount, room)) { resetLoads(); return false; }
+            }
+            for (int e = 0; e < channels.size(); e++) {
+                var c = channels.get(e); double amount = r.flow()[e] * minutes / RotationMath.TICK_MINUTES;
+                if (c.endpoint == null || amount == 0) continue;
+                if (amount < 0) {
+                    if (c.endpoint.offered.isEmpty()) audit.airIn -= amount;
+                    else { c.endpoint.buffer.take(-amount); c.endpoint.buffer.delivery = false; }
+                } else for (var part : packets.get(e)) {
+                    if (part.identity().isEmpty()) audit.airOut += part.amount();
+                    else { c.endpoint.buffer.add(part.identity(), part.amount()); c.endpoint.buffer.delivery = true; }
+                }
+                if (c.endpoint.source != null) c.endpoint.source.keepAlive();
+                c.endpoint.pipe.blockEntity.setChanged();
+                c.endpoint.updateReceipt();
+            }
+            for (var p : members) state(p).outward.clear();
+            for (int e = 0; e < channels.size(); e++) {
+                var c = channels.get(e); double q = r.flow()[e]; state(members.get(c.from)).outward.put(c.side, q);
+                if (c.endpoint == null) state(members.get(c.to)).outward.put(c.side.getOpposite(), -q);
+            }
+            for (int n = 0; n < members.size(); n++) {
+                var p = members.get(n); var saved = state(p); saved.phases = next.get(n); boolean pump = p.blockEntity instanceof PumpBlockEntity;
+                if (saved.queueFront == null && saved.outward.values().stream().filter(q -> q > 0).count() > 1) saved.splitCursor++;
+                if (pump) {
+                    var rotor = (PumpBlockEntity)p.blockEntity; double flow = 0;
+                    for (var d : sides.get(n)) flow += .5 * sign(n, d) * saved.outward.getOrDefault(d, 0d);
+                    saved.pumpFlow = flow;
+                    ((IPumpDynamics)rotor).differentialcreate$hydraulicState(r.head()[n], flow, -r.torque()[n]);
+                    torques.merge(rotor, r.torque()[n], Double::sum);
+                }
+                saved.adoptQueue(pump, sides.get(n));
+                double beforeAir = saved.airVolume(); saved.prepareQueue(geometryCapacity[n], pump, sides.get(n));
+                audit.airOut += beforeAir - saved.airVolume(); capacity[n] = saved.queueCapacity;
+                p.blockEntity.setChanged();
+                if (p.interfaces != null) for (var entry : p.interfaces.entrySet())
+                    ((IPipePressure)entry.getValue()).differentialcreate$showFlow(mouth(n, entry.getKey()), saved.outward.getOrDefault(entry.getKey(), 0d));
+            }
+            for (var p : endpoints) p.deliver();
+            return true;
+        }
+        void resetLoads() { for (var p : members) if (p.blockEntity instanceof IPumpDynamics pump) pump.differentialcreate$hydraulicState(0, 0, 0); }
     }
-
     public static final class Frame {
-        final List<Component> components = new ArrayList<>();
-        final List<InventoryPool> inventories = new ArrayList<>();
-        final Map<FluidTransportBehaviour, BlockState> captured = new HashMap<>();
-        final Map<FluidTransportBehaviour, Object> interfaces = new HashMap<>();
-        final Map<BlockPos, BlockState> adjacentStates = new HashMap<>();
-        final Map<BlockPos, Object> adjacentEntities = new HashMap<>();
-        final Level level;
-        private long acceptedSteps, jointIterations, retries;
-        private double shortestStep = Double.POSITIVE_INFINITY;
+        final Level level; final List<Component> components = new ArrayList<>();
+        final Map<FluidTransportBehaviour, BlockState> captured = new LinkedHashMap<>();
+        final Map<FluidTransportBehaviour, Object> interfaces = new IdentityHashMap<>();
+        final Map<BlockPos, BlockState> adjacentStates = new HashMap<>(); final Map<BlockPos, Object> adjacentEntities = new HashMap<>();
+        final Set<BlockPos> inactive = new HashSet<>();
+        final List<Endpoint> retainedInlets = new ArrayList<>();
+        final Map<IFluidHandler, List<Component>> sharedReceivers = new IdentityHashMap<>();
+        private long acceptedSteps, jointIterations, retries; private double shortestStep = Double.POSITIVE_INFINITY;
         Frame(Level level) { this.level = level; }
-        /** Number of live pipes included in this complete level snapshot. */
         public int pipeCount() { return captured.size(); }
         public record Metrics(long acceptedSteps, long jointIterations, long retries, double shortestMinutes) {}
         public void resetMetrics() { acceptedSteps = jointIterations = retries = 0; shortestStep = Double.POSITIVE_INFINITY; }
         public Metrics metrics() { return new Metrics(acceptedSteps, jointIterations, retries, shortestStep); }
         boolean valid() {
+            for (var inlet : retainedInlets) if (retainedIntake(inlet.pipe, inlet.side) == null && !bufferedInput(inlet.pipe, inlet.side)) return false;
+            for (var pos : inactive) if (ticking(level, pos)) return false;
             for (var entry : captured.entrySet()) {
-                var pipe = entry.getKey();
-                if (pipe.blockEntity.isRemoved() || !pipe.getWorld().isLoaded(pipe.getPos())
-                    || pipe.getWorld().getBlockEntity(pipe.getPos()) != pipe.blockEntity || pipe.blockEntity.getBlockState() != entry.getValue()
-                    || pipe.interfaces != interfaces.get(pipe)) return false;
+                var p = entry.getKey();
+                if (p.blockEntity.isRemoved() || !ticking(level, p.getPos()) || loadedEntity(level, p.getPos()) != p.blockEntity
+                    || p.blockEntity.getBlockState() != entry.getValue() || p.interfaces != interfaces.get(p)) return false;
             }
-            for (var entry : adjacentStates.entrySet())
-                if (!level.isLoaded(entry.getKey()) || level.getBlockState(entry.getKey()) != entry.getValue()
-                    || level.getBlockEntity(entry.getKey()) != adjacentEntities.get(entry.getKey())) return false;
-            for (var component : components) for (var endpoint : component.endpoints)
-                if (((IPipePressure) endpoint.pipe.getConnection(endpoint.side)).differentialcreate$source() != endpoint.source) return false;
+            for (var e : adjacentStates.entrySet()) if (!ticking(level, e.getKey()) || loadedState(level, e.getKey()) != e.getValue()
+                || loadedEntity(level, e.getKey()) != adjacentEntities.get(e.getKey())) return false;
+            for (var c : components) for (var e : c.endpoints)
+                if (!e.retained && ((IPipePressure)e.pipe.getConnection(e.side)).differentialcreate$source() != e.source) return false;
             return true;
         }
         void beginTick() {
-            for (var component : components) component.beginTick();
-            for (var component : components) for (var endpoint : component.endpoints) endpoint.inventory = null;
-            inventories.clear();
-            var shared = new IdentityHashMap<IFluidHandler, List<InventoryPool>>();
-            for (int c = 0; c < components.size(); c++) {
-                var component = components.get(c); if (!component.active) continue;
-                for (var endpoint : component.endpoints) if (endpoint.handler != null && endpoint.buffer.matches(component.fluid)) {
-                    var candidates = shared.computeIfAbsent(endpoint.handler, key -> new ArrayList<>());
-                    var pool = candidates.stream().filter(p -> same(p.fluid, component.fluid)).findFirst().orElse(null);
-                    if (pool == null) { pool = new InventoryPool(endpoint.handler, component.fluid); candidates.add(pool); inventories.add(pool); }
-                    pool.ports.add(new InventoryPort(c, endpoint));
-                    endpoint.inventory = pool;
+            budgets.computeIfAbsent(level, key -> new WorkBudget()).receipts.clear();
+            for (var c : components) for (var e : c.endpoints) { e.receipt = 0; e.receiptHandler = null; }
+            for (var c : components) c.begin();
+            deliverShared();
+            for (var c : components) for (var e : c.endpoints) e.updateReceipt();
+            sharedReceivers.clear();
+            for (var c : components) for (var e : c.endpoints) if (e.handler != null && !(e.handler instanceof OpenPipeDischarge.Placement)) {
+                var users = sharedReceivers.computeIfAbsent(e.handler, key -> new ArrayList<>());
+                if (!users.contains(c)) users.add(c);
+            }
+        }
+        double borrowedWorldRoom(IFluidHandler receiver, Component requester, long deadline) {
+            var users = sharedReceivers.get(receiver); if (users == null || users.size() < 2) return 0;
+            double claimed = 0;
+            for (var c : users) if (c != requester) claimed += c.borrowedWorldRoom(receiver, deadline);
+            return claimed;
+        }
+        void deliverShared() {
+            var groups = new IdentityHashMap<IFluidHandler, List<Endpoint>>();
+            for (var c : components) for (var e : c.endpoints)
+                if (e.handler != null && !(e.handler instanceof OpenPipeDischarge.Placement))
+                    groups.computeIfAbsent(e.handler, key -> new ArrayList<>()).add(e);
+            for (var entries : groups.entrySet()) {
+                var ports = entries.getValue();
+                if (ports.size() < 2 || ports.stream().noneMatch(e -> e.buffer.delivery)) continue;
+                var handled = new ArrayList<FluidStack>();
+                for (var lead : ports) for (var part : lead.buffer.parcels()) {
+                    var identity = part.identity();
+                    if (handled.stream().anyMatch(s -> same(s, identity))) continue;
+                    handled.add(identity);
+                    // A real receipt may settle together with unused stock
+                    // extracted from this SAME native inventory. Source-only
+                    // caches never trigger a return or a speculative transfer.
+                    if (ports.stream().noneMatch(e -> e.buffer.delivery && e.buffer.volume(identity) > 0)) continue;
+                    double total = 0, compensation = 0;
+                    for (var e : ports) if (e.buffer.volume(identity) > 0) {
+                        double increment = e.buffer.volume(identity) - compensation;
+                        double sum = total + increment; compensation = (sum - total) - increment; total = sum;
+                    }
+                    int integer = Math.min(1000, FluidBudget.deliveryAmount(total));
+                    if (integer == 0) {
+                        returnTankFraction(ports, identity);
+                        continue;
+                    }
+                    int accepted = entries.getKey().fill(identity.copyWithAmount(integer), FluidAction.EXECUTE);
+                    if (accepted < 0 || accepted > integer) throw new IllegalStateException("Invalid shared external receipt");
+                    double remaining = accepted;
+                    for (var e : ports) if (remaining > 0 && e.buffer.volume(identity) > 0) {
+                        double taken = Math.min(remaining, e.buffer.volume(identity));
+                        e.buffer.settle(identity, taken); remaining -= taken;
+                        e.pipe.blockEntity.setChanged(); e.updateReceipt(); e.refresh();
+                    }
+                    // The native integer adapter already permits a few ULPs
+                    // of rounding at an integer boundary; no real tail is erased.
+                    if (remaining > 0 && FluidBudget.receiptSpace(accepted, total) > 0)
+                        throw new IllegalStateException("Shared receipt exceeded its owned parcels");
                 }
             }
-            // Complete saved integer-boundary receipts before projecting motion.
-            // Native open ends may consume that integer and immediately reopen.
-            for (var pool : inventories) pool.deliver();
-            refreshHeights(null, 0);
-            for (var component : components) if (component.rest != null && component.restInputs != component.inputs(null)) component.rest = null;
         }
-        double refreshHeights(List<FluidTrial> trials, double minutes) {
-            double difference = 0;
-            for (var pool : inventories) {
-                double change = 0;
-                if (trials != null) for (var port : pool.ports)
-                    change -= trials.get(port.component).filling.waterOutward()[port.endpoint.node] * minutes / (2 * RotationMath.TICK_MINUTES);
-                // Every port of a shared original inventory sees the same midpoint
-                // surface. Owned fractions avoid pressure jumps at integer receipts.
-                for (var port : pool.ports) difference = Math.max(difference, port.endpoint.refreshHeight(change));
+        /** Native tanks can have real sub-mB receipt stock in their adapter.
+         * An immersed port already drawing from that same tank must be able to
+         * draw this stock too. Move only owned FIFO heads, with no capability
+         * debit/credit, new inventory, or reclamation of an outside discharge.
+         * Generic machines retain their own integer-interface rules. */
+        private void returnTankFraction(List<Endpoint> ports, FluidStack identity) {
+            Endpoint consumer = null;
+            for (var e : ports) if (!e.retained && e.tank != null && !e.tank.boiler.isActive()
+                && e.buffer.amount == 0 && state(e.pipe).outward.getOrDefault(e.side, 0d) < 0
+                && e.allowsInput(identity) && e.handler.fill(identity.copyWithAmount(1), FluidAction.SIMULATE) > 0
+                && (FluidMaterials.isGas(identity) || e.surface > e.face)) {
+                consumer = e; break;
             }
-            return difference;
+            if (consumer == null) return;
+            for (var donor : ports) if (donor != consumer && donor.tank == consumer.tank && donor.buffer.delivery
+                && donor.buffer.amount > 0 && same(donor.buffer.first().identity(), identity)) {
+                double amount = donor.buffer.first().amount();
+                donor.buffer.add(identity, -amount); consumer.buffer.add(identity, amount); consumer.buffer.delivery = false;
+                donor.pipe.blockEntity.setChanged(); consumer.pipe.blockEntity.setChanged(); donor.refresh(); consumer.refresh();
+            }
         }
         public boolean active() { return components.stream().anyMatch(c -> c.active); }
-    }
-    private record FluidTrial(IdealFluidSolver.Trial motion, PipeFilling.Move filling, double[] origin, double allowed,
-                              boolean equilibrium, DirectionalFluidJunctions.Layout layout) {}
-    private static final class Component {
-        FluidStack fluid;
-        IdealFluidSolver.Material material;
-        boolean active;
-        final List<Connection> connections;
-        final List<Endpoint> endpoints;
-        final List<FluidTransportBehaviour> members;
-        final DirectionalFluidJunctions junctions;
-        final boolean[] boundary;
-        final double[] pressure;
-        final Map<PumpBlockEntity, Double> axisSigns = new HashMap<>();
-        ReducedFluidGraph reduced;
-        FluidTrial rest;
-        long restInputs;
-        boolean restIndependentSpeed;
-        Component(FluidStack fluid, List<Connection> connections, List<Endpoint> endpoints,
-                  List<FluidTransportBehaviour> members) {
-            this.fluid = fluid; material = fluid.isEmpty() ? new IdealFluidSolver.Material(1000, false) : FluidMaterials.of(fluid); this.connections = connections;
-            this.endpoints = endpoints; this.members = members;
-            int count = 0; for (var c : connections) count = Math.max(count, 1 + Math.max(c.from, c.to));
-            var edges = connections.stream().map(c -> new IdealFluidSolver.Edge(c.from, c.to, material.inertia(c.length))).toList();
-            var tubes = connections.stream().map(c -> new PipeFilling.Tube(c.from, c.to, c.length, c.fromHeight(), c.toHeight())).toList();
-            int[] fromDirections = new int[connections.size()], toDirections = new int[connections.size()];
-            Arrays.fill(fromDirections, -1); Arrays.fill(toDirections, -1);
-            for (int e = 0; e < connections.size(); e++) {
-                var c = connections.get(e);
-                if (c.side != null) fromDirections[e] = c.side.get3DDataValue();
-                if (c.other != null) toDirections[e] = c.side.getOpposite().get3DDataValue();
-            }
-            junctions = new DirectionalFluidJunctions(count, edges, tubes, fromDirections, toDirections);
-            boundary = new boolean[junctions.nodes()]; pressure = new double[boundary.length];
-            for (var endpoint : endpoints) boundary[endpoint.node] = true;
-        }
-        void beginTick() {
-            // Create's nominal connection datum need not have the drive's direction.
-            // Refresh the source command through actual ratios even with cached pipes;
-            // retain that orientation when the drive disconnects.
-            for (var c : connections) if (c.pump != null) {
-                double nominal = 0;
-                if (c.pump.hasNetwork()) {
-                    var network = c.pump.getOrCreateNetwork();
-                    var ratios = ((INetworkDynamics) network).differentialcreate$getRatios();
-                    double drive = 0;
-                    for (var source : network.sources.keySet()) drive += ratios.getOrDefault(source, 0f) * SourcePhysics.curve(source).stallTorque();
-                    nominal = Math.signum(ratios.getOrDefault(c.pump, 1f) * drive);
-                }
-                axisSigns.put(c.pump, nominal == 0 ? state(c.pipe).pumpAxisSign : nominal);
-            }
-            FluidStack owned = FluidStack.EMPTY;
-            for (var pipe : members) {
-                var saved = state(pipe);
-                if (saved.volume() > VOLUME_EPSILON && !saved.fluid.isEmpty()) { owned = saved.fluid; break; }
-                for (var buffer : saved.buffers.values()) if (buffer.amount > VOLUME_EPSILON) { owned = buffer.fluid; break; }
-                if (!owned.isEmpty()) break;
-            }
-            for (var endpoint : endpoints) endpoint.refresh();
-            if (owned.isEmpty()) for (var endpoint : endpoints) { owned = endpoint.identity(); if (!owned.isEmpty()) break; }
-            active = !owned.isEmpty();
-            if (active && !same(owned, fluid)) {
-                rest = null;
-                fluid = owned.copyWithAmount(1); material = FluidMaterials.of(fluid);
-                for (var pipe : members) { state(pipe).outward.clear(); state(pipe).pumpFlow = 0; }
-            }
-            if (!active) for (var c : connections) if (c.pump != null) {
-                double rpm = axisSigns.get(c.pump) * NetworkDynamics.preciseSpeed(c.pump);
-                ((IPumpDynamics) c.pump).differentialcreate$hydraulicState(
-                    IdealFluidSolver.pressurePa(IdealFluidSolver.coupling(material, rpm, 0) * rpm) / (material.density() * IdealFluidSolver.GRAVITY), 0, 0);
-            }
-        }
-        long inputs(Map<KineticBlockEntity, Double> speed) {
-            long key = 1;
-            for (var endpoint : endpoints) {
-                key = key * 31 + Double.doubleToLongBits(endpoint.available(fluid, 1));
-                key = key * 31 + (endpoint.receives(fluid) ? 1 : 0);
-                key = key * 31 + Double.doubleToLongBits(endpoint.referenceHeight);
-                key = key * 31 + (endpoint.identity().isEmpty() || same(endpoint.identity(), fluid) ? 1 : 0);
-            }
-            if (!restIndependentSpeed) for (var c : connections) if (c.pump != null) {
-                double rpm = axisSigns.get(c.pump) * (speed == null ? NetworkDynamics.preciseSpeed(c.pump)
-                    : speed.getOrDefault(c.pump, NetworkDynamics.preciseSpeed(c.pump)));
-                key = key * 31 + Double.doubleToLongBits(rpm);
-            }
-            return key;
-        }
-        PipeContents[] contents() {
-            return rest != null ? rest.filling.contents() : connections.stream().map(Connection::contents).toArray(PipeContents[]::new);
-        }
-        double[] seed(double[] initial, Map<KineticBlockEntity, Double> speed, double minutes) {
-            if (!active || rest != null || Arrays.stream(initial).anyMatch(q -> q != 0)) return initial.clone();
-            boolean[] enabled = new boolean[connections.size()]; Arrays.fill(enabled, true);
-            boolean[] borders = boundary.clone();
-            double[] force = new double[connections.size()], mass = new double[force.length], datum = new double[boundary.length];
-            for (int e = 0; e < force.length; e++) {
-                var c = connections.get(e); mass[e] = material.inertia(c.length);
-                force[e] = -material.gravityForce(c.toHeight() - c.fromHeight()) * c.contents().fraction();
-                if (c.pump != null) {
-                    double rpm = axisSigns.get(c.pump) * speed.getOrDefault(c.pump, NetworkDynamics.preciseSpeed(c.pump));
-                    force[e] += IdealFluidSolver.coupling(material, rpm, 0) * rpm;
-                }
-                if (c.sealed) borders[c.to] = !c.contents().atEnd();
-                if (c.endpoint != null && c.endpoint.available(fluid, 1) > VOLUME_EPSILON)
-                    datum[c.to] = Math.max(0, material.gravityForce(c.endpoint.pressureHeight() - c.endpoint.faceHeight));
-            }
-            var layout = junctions.select(contents());
-            double[] result = layout.graph(borders, enabled).sample(initial, mass, force, datum, minutes).midpoint();
-            double maximum = Arrays.stream(result).map(Math::abs).max().orElse(0), scale = 16;
-            for (var c : connections) if (c.pump != null) scale = Math.max(scale, IdealFluidSolver.REFERENCE_FLOW
-                * Math.abs(speed.getOrDefault(c.pump, NetworkDynamics.preciseSpeed(c.pump))) / IdealFluidSolver.REFERENCE_RPM);
-            if (maximum > 0 && members.stream().allMatch(pipe -> state(pipe).volume() == 0))
-                for (int e = 0; e < result.length; e++) result[e] *= scale / maximum;
-            return result;
-        }
-        double[] initial() {
-            double[] flow = new double[connections.size()];
-            if (!active) return flow;
-            for (int e = 0; e < flow.length; e++) {
-                Connection c = connections.get(e); PipeHydraulics saved = state(c.pipe);
-                if (!same(saved.fluid, fluid)) continue;
-                if (c.pump != null) {
-                    Direction front = c.pump.getBlockState().getValue(PumpBlock.FACING);
-                    flow[e] = saved.pumpFlow * (saved.pumpFacing == null || saved.pumpFacing == front ? 1 : -1);
-                } else if (c.other != null) {
-                    double right = same(state(c.other).fluid, fluid) ? state(c.other).outward.getOrDefault(c.side.getOpposite(), 0d) : 0;
-                    flow[e] = .5 * (saved.outward.getOrDefault(c.side, 0d) - right);
-                } else flow[e] = saved.outward.getOrDefault(c.side, 0d);
-            }
-            return flow;
-        }
-        FluidTrial sample(double[] initial, PipeContents[] contents, double[] guess, Map<KineticBlockEntity, Double> speed,
-                          double minutes, Map<KineticBlockEntity, Double> torques, DirectionalFluidJunctions.Layout layout) {
-            if (!active) return new FluidTrial(new IdealFluidSolver.Trial(new double[connections.size()], new double[connections.size()],
-                new double[boundary.length], new double[boundary.length], 0, 0, 0, 0), null, initial, minutes, true, layout);
-            if (rest != null) {
-                if (restInputs == inputs(speed)) return new FluidTrial(rest.motion, rest.filling, rest.origin, minutes, true, layout);
-                rest = null;
-            }
-            boolean[] enabled = new boolean[connections.size()]; Arrays.fill(enabled, true);
-            boolean[] borders = boundary.clone();
-            double[] force = new double[enabled.length], couplings = new double[enabled.length], supplied = new double[boundary.length];
-            var contacts = new ArrayList<FluidPressureBounds.Contact>();
-            Arrays.fill(pressure, 0);
-            for (var endpoint : endpoints) supplied[endpoint.node] = endpoint.available(fluid, 1) > VOLUME_EPSILON ? 1 : 0;
-            for (int e = 0; e < enabled.length; e++) {
-                Connection c = connections.get(e);
-                if (!c.pipe.canPullFluidFrom(fluid, c.pipe.blockEntity.getBlockState(), c.side == null ? Direction.UP : c.side)
-                    || c.other != null && !c.other.canPullFluidFrom(fluid, c.other.blockEntity.getBlockState(), c.side.getOpposite())
-                    || !same(state(c.pipe).fluid, fluid) && state(c.pipe).volume() > VOLUME_EPSILON
-                    || c.other != null && !same(state(c.other).fluid, fluid) && state(c.other).volume() > VOLUME_EPSILON) enabled[e] = false;
-                if (c.pump != null) {
-                    double rpm = axisSigns.get(c.pump) * speed.getOrDefault(c.pump, NetworkDynamics.preciseSpeed(c.pump));
-                    couplings[e] = IdealFluidSolver.coupling(material, rpm, guess[e]); force[e] = couplings[e] * rpm;
-                }
-                if (c.sealed) borders[c.to] = !contents[e].atEnd(); // Empty space vents; the wall never emits liquid.
-                if (c.endpoint != null) {
-                    if (guess[e] > 0 && contents[e].atEnd() && !c.endpoint.receives(fluid)) enabled[e] = false;
-                    if (guess[e] < 0 && !c.endpoint.identity().isEmpty() && !same(c.endpoint.identity(), fluid)) enabled[e] = false;
-                    double liquid = guess[e] < 0 ? supplied[c.to] : contents[e].atEnd() ? 1 : 0;
-                    if (guess[e] == 0 && c.endpoint.referenceHeight > c.endpoint.faceHeight) liquid = supplied[c.to];
-                    pressure[c.to] = liquid * material.gravityForce(c.endpoint.pressureHeight() - c.endpoint.faceHeight);
-                    double liquidPressure = material.gravityForce(c.endpoint.pressureHeight() - c.endpoint.faceHeight);
-                    if (!contents[e].atEnd() && supplied[c.to] != 0 && liquidPressure < 0)
-                        contacts.add(new FluidPressureBounds.Contact(c.to, liquidPressure));
-                }
-            }
-            IdealFluidSolver.Trial trial = null; PipeFilling.Move move = null;
-            double predictedLimit = minutes;
-            boolean equilibrium = true;
-            double[] origin = initial, mass = new double[connections.size()];
-            for (int e = 0; e < mass.length; e++) mass[e] = material.inertia(connections.get(e).length) * Math.max(1e-12, contents[e].fraction());
-            for (int pass = 0; pass <= enabled.length + junctions.junctions(); pass++) {
-                var graph = layout.graph(borders, enabled);
-                var inventoryBoundary = layout.boundary(boundary);
-                // Only a real connection/closed-mouth impulse projects old motion.
-                origin = graph.sample(initial, mass, new double[mass.length], new double[boundary.length], minutes).flow();
-                // A shortened prefix's mass-flux force must not act over the full
-                // horizon. Predict full-horizon coefficients; only a feasible final
-                // trajectory is transported and committed below.
-                var prediction = PipeFilling.predict(layout.tubes(), boundary.length, contents, origin, guess, inventoryBoundary, supplied, material, minutes);
-                predictedLimit = prediction.allowedMinutes();
-                if (Arrays.stream(prediction.inertia()).allMatch(value -> value == 0)) {
-                    // A reversed or rounded-away provisional inlet must not
-                    // collapse real source pressure into a dry zero-flow root.
-                    double[] drive = seed(new double[initial.length], speed, RotationMath.TICK_MINUTES);
-                    boolean priming = false;
-                    for (int e = 0; e < drive.length; e++) {
-                        var endpoint = connections.get(e).endpoint;
-                        if (endpoint != null && drive[e] < 0 && supplied[endpoint.node] != 0) {
-                            priming = true;
-                            pressure[endpoint.node] = material.gravityForce(endpoint.pressureHeight() - endpoint.faceHeight);
-                        }
-                    }
-                    if (!priming) {
-                        double[] zero = new double[connections.size()];
-                        return new FluidTrial(new IdealFluidSolver.Trial(zero, zero.clone(), new double[boundary.length], new double[boundary.length], 0, 0, 0, 0),
-                            new PipeFilling.Move(contents, new double[boundary.length], zero.clone(), zero.clone(), minutes), zero.clone(), minutes, true, layout);
-                    }
-                    equilibrium = false;
-                }
-                double[] averageMass = prediction.inertia().clone(), applied = force.clone();
-                for (int e = 0; e < mass.length; e++) {
-                    // Positive matrix weights approach the zero-mass empty-space limit.
-                    averageMass[e] = Math.max(averageMass[e], material.inertia(connections.get(e).length) * 1e-12);
-                    applied[e] += prediction.correction()[e];
-                    var endpoint = connections.get(e).endpoint;
-                    if (endpoint != null && guess[e] > 0) {
-                        double liquid = Math.max(0, Math.min(1, -prediction.waterOutward()[endpoint.node] / guess[e]));
-                        pressure[endpoint.node] = liquid * material.gravityForce(endpoint.pressureHeight() - endpoint.faceHeight);
-                        applied[e] -= liquid * material.outletForce(guess[e]);
-                    }
-                    if (connections.get(e).pump != null) {
-                        var pump = connections.get(e).pump;
-                        double rpm = axisSigns.get(pump) * speed.getOrDefault(pump, NetworkDynamics.preciseSpeed(pump));
-                        double slope = Math.min(0, IdealFluidSolver.pumpSlope(material, rpm, guess[e]));
-                        // Solve the pump's stiff, linear flow dependence implicitly.
-                        // These tangent terms cancel at convergence; they add no mass,
-                        // friction or stored energy to the accepted physical state.
-                        averageMass[e] -= .5 * minutes * slope;
-                        applied[e] += slope * (origin[e] - guess[e]);
-                    }
-                }
-                var motionGraph = graph;
-                if (!contacts.isEmpty()) {
-                    boolean[] pinned = FluidPressureBounds.solve(graph, origin, averageMass, applied, pressure, contacts, minutes);
-                    boolean[] contactBorders = borders.clone(); boolean holds = false;
-                    for (var contact : contacts) if (pinned[contact.node()]) {
-                        // A held dry front constrains a stationary or wholly empty
-                        // channel. Numerical empty-space weights cannot retain a
-                        // sign-alternating momentum; any actual water keeps inertia.
-                        boolean stationary = true;
-                        for (int e = 0; e < origin.length; e++) if (connections.get(e).to == contact.node() && origin[e] != 0) stationary = false;
-                        if (stationary || graph.emptyBoundaryChannel(contact.node(), contents)) {
-                            contactBorders[contact.node()] = false; holds = true;
-                        }
-                    }
-                    if (holds) motionGraph = layout.graph(contactBorders, enabled);
-                }
-                trial = motionGraph.sample(origin, averageMass, applied, pressure, minutes);
-                reduced = motionGraph;
-                var pressured = junctions.releaseDryInlets(layout, contents, trial.midpoint());
-                if (pressured == layout) pressured = junctions.pressurise(layout, contents, trial.pressure(), trial.midpoint(), material);
-                if (pressured != layout) { layout = pressured; continue; }
-                boolean changed = false;
-                for (int e = 0; e < enabled.length; e++) if (enabled[e] && connections.get(e).endpoint != null) {
-                    Endpoint endpoint = connections.get(e).endpoint; double q = trial.midpoint()[e];
-                    if (q > 0 && contents[e].atEnd() && !endpoint.receives(fluid)) {
-                        enabled[e] = false; changed = true;
-                    }
-                }
-                if (!changed) break;
-            }
-            if (trial == null) throw new IllegalStateException("No fluid trial");
-            double allowed = predictedLimit;
-            move = PipeFilling.sample(layout.tubes(), boundary.length, contents, origin, trial.midpoint(), layout.boundary(boundary), supplied, material, minutes);
-            allowed = Math.min(allowed, move.allowedMinutes());
-            for (int e = 0; e < enabled.length; e++) if (connections.get(e).pump != null)
-                torques.merge(connections.get(e).pump, -axisSigns.get(connections.get(e).pump) * couplings[e] * trial.midpoint()[e], Double::sum);
-            return new FluidTrial(trial, move, origin, allowed, equilibrium, layout);
-        }
-        void commit(FluidTrial trial, double minutes) {
-            if (!active) return;
-            boolean stationary = Arrays.stream(trial.motion.flow()).allMatch(q -> q == 0)
-                && Arrays.stream(trial.motion.midpoint()).allMatch(q -> q == 0);
-            if (stationary && rest != null) {
-                for (var c : connections) if (c.pump != null) {
-                    double rpm = axisSigns.get(c.pump) * NetworkDynamics.preciseSpeed(c.pump);
-                    double gain = IdealFluidSolver.coupling(material, rpm, 0);
-                    ((IPumpDynamics) c.pump).differentialcreate$hydraulicState(
-                        IdealFluidSolver.pressurePa(gain * rpm) / (material.density() * IdealFluidSolver.GRAVITY), 0, 0);
-                }
-                return;
-            }
-            for (var endpoint : endpoints) endpoint.commit(fluid, trial.filling.waterOutward()[endpoint.node] * minutes / RotationMath.TICK_MINUTES);
-            for (var pipe : members) {
-                var saved = state(pipe);
-                if (same(saved.fluid, fluid) || saved.volume() <= VOLUME_EPSILON) saved.fluid = fluid.copyWithAmount(1);
-                saved.outward.clear();
-            }
-            for (int e = 0; e < connections.size(); e++) {
-                Connection c = connections.get(e); double q = trial.motion.flow()[e];
-                if (trial.motion.midpoint()[e] != 0 || c.pump != null && state(c.pipe).pumpFacing != c.pump.getBlockState().getValue(PumpBlock.FACING))
-                    c.contents(trial.filling.contents()[e]);
-                if (c.pump != null) {
-                    var saved = state(c.pipe); saved.pumpFlow = q; saved.pumpFacing = c.pump.getBlockState().getValue(PumpBlock.FACING);
-                    saved.pumpAxisSign = axisSigns.get(c.pump);
-                    double rpm = axisSigns.get(c.pump) * NetworkDynamics.preciseSpeed(c.pump);
-                    double gain = IdealFluidSolver.coupling(material, rpm, q);
-                    double head = IdealFluidSolver.pressurePa(gain * rpm) / (material.density() * IdealFluidSolver.GRAVITY);
-                    ((IPumpDynamics) c.pump).differentialcreate$hydraulicState(head,
-                        q * state(c.pipe).core.fraction(), axisSigns.get(c.pump) * gain * q);
-                } else {
-                    state(c.pipe).outward.merge(c.side, q, Double::sum);
-                    if (c.other != null) state(c.other).outward.merge(c.side.getOpposite(), -q, Double::sum);
-                }
-            }
-            for (var pipe : members) {
-                var saved = state(pipe);
-                if (pipe.interfaces != null) for (var entry : pipe.interfaces.entrySet())
-                    ((IPipePressure) entry.getValue()).differentialcreate$showFlow(saved.content(entry.getKey()).fraction() == 0 ? FluidStack.EMPTY : saved.fluid,
-                        saved.outward.getOrDefault(entry.getKey(), 0d));
-                pipe.blockEntity.setChanged();
-            }
-            if (stationary && trial.equilibrium) {
-                restIndependentSpeed = reduced != null && reduced.stationary();
-                // A suction front reopens when pump pressure overcomes its datum.
-                if (restIndependentSpeed) for (var endpoint : endpoints) if (endpoint.referenceHeight < endpoint.faceHeight
-                    && !state(endpoint.pipe).content(endpoint.side).atEnd() && endpoint.available(fluid, 1) > VOLUME_EPSILON)
-                    restIndependentSpeed = false;
-                restInputs = inputs(null); rest = trial;
-            }
+        public boolean active(BlockPos pos) {
+            return components.stream().anyMatch(c -> c.active && c.members.stream().anyMatch(p -> p.getPos().equals(pos)));
         }
     }
-
     public static Frame capture(Level level) {
-        var cached = frames.get(level);
-        if (cached != null && cached.valid()) { cached.beginTick(); return cached; }
-        Frame frame = new Frame(level);
-        var registry = pipes.get(level);
-        if (registry == null) return frame;
+        var cached = frames.get(level); if (cached != null && cached.valid()) { cached.beginTick(); return cached; }
+        var frame = new Frame(level); var registry = pipes.get(level); if (registry == null) return frame;
+        for (var pos : new ArrayList<>(registry.keySet())) if (ticking(level, pos)) {
+            var actual = loadedPipe(level, pos); var old = registry.get(pos).get();
+            if (actual != null && actual != old) { if (actual.interfaces == null) actual.blockEntity.initialize(); registry.put(pos, new WeakReference<>(actual)); }
+        }
+        registry.entrySet().removeIf(e -> { var p = e.getValue().get(); return p == null || p.blockEntity.isRemoved()
+            || ticking(level, e.getKey()) && loadedEntity(level, e.getKey()) != p.blockEntity; });
         var live = new LinkedHashMap<BlockPos, FluidTransportBehaviour>();
-        registry.entrySet().removeIf(entry -> {
-            var pipe = entry.getValue().get();
-            return pipe == null || pipe.blockEntity.isRemoved() || !level.isLoaded(entry.getKey())
-                || level.getBlockEntity(entry.getKey()) != pipe.blockEntity;
+        registry.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(e -> {
+            if (ticking(level, e.getKey())) live.put(e.getKey(), e.getValue().get()); else frame.inactive.add(e.getKey());
         });
-        registry.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> live.put(entry.getKey(), entry.getValue().get()));
-        Set<BlockPos> visited = new HashSet<>();
+        var visited = new HashSet<BlockPos>(); var budget = budgets.computeIfAbsent(level, key -> new WorkBudget());
         for (var seed : live.values()) if (visited.add(seed.getPos())) {
-            var members = new ArrayList<FluidTransportBehaviour>(); members.add(seed);
-            var endpoints = new ArrayList<Endpoint>();
+            var members = new ArrayList<FluidTransportBehaviour>(); members.add(seed); var endpoints = new ArrayList<Endpoint>();
             for (int i = 0; i < members.size(); i++) {
-                var pipe = members.get(i); frame.captured.put(pipe, pipe.blockEntity.getBlockState()); frame.interfaces.put(pipe, pipe.interfaces);
-                if (pipe.interfaces == null) continue;
-                for (var entry : pipe.interfaces.entrySet()) {
-                    Direction side = entry.getKey();
-                    if (!pipe.canHaveFlowToward(pipe.blockEntity.getBlockState(), side) || !level.isLoaded(pipe.getPos().relative(side))) continue;
-                    BlockPos adjacent = pipe.getPos().relative(side);
-                    frame.adjacentStates.put(adjacent, level.getBlockState(adjacent));
-                    frame.adjacentEntities.put(adjacent, level.getBlockEntity(adjacent));
-                    var next = live.get(pipe.getPos().relative(side));
-                    if (next != null && next.canHaveFlowToward(next.blockEntity.getBlockState(), side.getOpposite())) {
-                        if (visited.add(next.getPos())) members.add(next);
+                var p = members.get(i); restorePhysicalConnections(p);
+                frame.captured.put(p, p.blockEntity.getBlockState()); frame.interfaces.put(p, p.interfaces);
+                if (p.interfaces == null) continue;
+                for (var side : Direction.values()) {
+                    var connection = p.interfaces.get(side);
+                    if (connection == null || !p.canHaveFlowToward(p.blockEntity.getBlockState(), side)) continue;
+                    var adjacent = p.getPos().relative(side);
+                    // An outlet can border a tank-only chunk: no neighbouring
+                    // pipe will register when it resumes. Track the unavailable
+                    // position too, so its transition invalidates this frame.
+                    if (!ticking(level, adjacent)) {
+                        frame.inactive.add(adjacent);
+                        var owned = retainedIntake(p, side);
+                        if (owned != null || bufferedInput(p, side)) {
+                            if (owned != null && owned.getWorld() == null) owned.manageSource(level, p.blockEntity);
+                            var inlet = new Endpoint(p, side, owned); inlet.retained = true; inlet.refresh();
+                            endpoints.add(inlet); frame.retainedInlets.add(inlet);
+                        }
                         continue;
                     }
-                    if (next != null) continue; // A closed valve is a wall, not an external source.
-                    var connection = entry.getValue();
-                    FlowSource previous = ((IPipePressure) connection).differentialcreate$source();
-                    boolean open = FluidPropagator.isOpenEnd(level, pipe.getPos(), side);
-                    boolean inventory = !open && FluidPropagator.hasFluidCapability(level, pipe.getPos().relative(side), side.getOpposite());
-                    // Open ends have an original 1000-mB handler of their own. Keep it
-                    // between captures; recreating it every tick would discard its fluid.
-                    if (previous == null || open && !(previous instanceof OpenEndedPipe)
-                        || inventory && !(previous instanceof FlowSource.FluidHandler)
-                        || !open && !inventory && previous.isEndpoint()) connection.determineSource(level, pipe.getPos());
-                    connection.manageSource(level, pipe.getPos(), pipe.blockEntity);
-                    FlowSource source = ((IPipePressure) connection).differentialcreate$source();
-                    if (source == null || !source.isEndpoint()) continue;
-                    var provider = source.provideHandler(); IFluidHandler handler = provider == null ? null : provider.getCapability();
-                    if (handler != null) endpoints.add(new Endpoint(pipe, side, source, handler));
+                    frame.adjacentStates.put(adjacent, loadedState(level, adjacent));
+                    frame.adjacentEntities.put(adjacent, loadedEntity(level, adjacent));
+                    var next = live.get(adjacent);
+                    var retained = retainedIntake(p, side);
+                    boolean stillOpen = next == null && FluidPropagator.isOpenEnd(level, p.getPos(), side);
+                    if (retained != null && (!stillOpen || ((IPipePressure)connection).differentialcreate$source() != retained)) {
+                        var inlet = new Endpoint(p, side, retained); inlet.retained = true; inlet.refresh();
+                        endpoints.add(inlet); frame.retainedInlets.add(inlet); continue;
+                    }
+                    // A native integer withdrawal also owns a real fraction.
+                    // When its container/face is gone, only that saved fraction
+                    // feeds the pipe; no capability or new withdrawal is needed.
+                    if (bufferedInput(p, side) && (next != null || !stillOpen && !FluidPropagator.hasFluidCapability(level, adjacent, side.getOpposite()))) {
+                        var inlet = new Endpoint(p, side, null); inlet.retained = true; inlet.refresh();
+                        endpoints.add(inlet); frame.retainedInlets.add(inlet); continue;
+                    }
+                    if (next != null && (retainedIntake(next, side.getOpposite()) != null || bufferedInput(next, side.getOpposite()))) continue;
+                    if (next != null && next.canHaveFlowToward(next.blockEntity.getBlockState(), side.getOpposite())) {
+                        if (visited.add(adjacent)) members.add(next); continue;
+                    }
+                    if (next != null) continue;
+                    var old = ((IPipePressure)connection).differentialcreate$source(); boolean open = FluidPropagator.isOpenEnd(level, p.getPos(), side);
+                    boolean inventory = !open && FluidPropagator.hasFluidCapability(level, adjacent, side.getOpposite());
+                    if (old == null || open && !(old instanceof OpenEndedPipe) || inventory && !(old instanceof FlowSource.FluidHandler)
+                        || !open && !inventory && old.isEndpoint()) connection.determineSource(level, p.getPos());
+                    connection.manageSource(level, p.getPos(), p.blockEntity);
+                    var source = ((IPipePressure)connection).differentialcreate$source();
+                    if (source != null && source.isEndpoint() && source.provideHandler() != null && source.provideHandler().getCapability() != null)
+                        endpoints.add(new Endpoint(p, side, source));
                 }
+            }
+            // Closing a physical face may remove its native connection object.
+            // Reserved input remains owned by the surviving pipe and finishes
+            // before a newly attached neighbour can use that same face.
+            for (var p : members) for (var side : state(p).retainedPorts.keySet()) {
+                if (p.interfaces != null && p.interfaces.containsKey(side) && p.canHaveFlowToward(p.blockEntity.getBlockState(), side)) continue;
+                var retained = retainedIntake(p, side); if (retained == null && !bufferedInput(p, side)) continue;
+                if (retained != null) retained.manageSource(level, p.blockEntity);
+                var inlet = new Endpoint(p, side, retained); inlet.retained = true; inlet.refresh();
+                endpoints.add(inlet); frame.retainedInlets.add(inlet);
             }
             members.sort(Comparator.comparing(FluidTransportBehaviour::getPos));
-            FluidStack identity = FluidStack.EMPTY;
-            for (var pipe : members) if (!state(pipe).fluid.isEmpty()) { identity = state(pipe).fluid.copyWithAmount(1); break; }
-            if (identity.isEmpty()) for (var endpoint : endpoints) {
-                identity = endpoint.identity(); if (!identity.isEmpty()) break;
-            }
-            var nodes = new LinkedHashMap<Port, Integer>();
-            var memberSet = new HashSet<>(members);
-            for (var pipe : members) {
-                if (pipe.blockEntity instanceof PumpBlockEntity pump) {
-                    Direction front = pump.getBlockState().getValue(PumpBlock.FACING);
-                    nodes.put(new Port(pipe.getPos(), front.getOpposite()), nodes.size()); nodes.put(new Port(pipe.getPos(), front), nodes.size());
-                } else nodes.put(new Port(pipe.getPos(), null), nodes.size());
-            }
-            var connections = new ArrayList<Connection>();
-            for (var pipe : members) {
-                if (pipe.blockEntity instanceof PumpBlockEntity pump) {
-                    Direction front = pump.getBlockState().getValue(PumpBlock.FACING);
-                    connections.add(new Connection(node(nodes, pipe, front.getOpposite()), node(nodes, pipe, front), pipe, null, null, null, pump, .5, false));
-                }
-                if (pipe.interfaces == null) continue;
-                for (Direction side : pipe.interfaces.keySet()) {
-                    var next = live.get(pipe.getPos().relative(side));
-                    if (next == null || pipe.getPos().compareTo(next.getPos()) >= 0 || !memberSet.contains(next)
-                        || !pipe.canHaveFlowToward(pipe.blockEntity.getBlockState(), side) || !next.canHaveFlowToward(next.blockEntity.getBlockState(), side.getOpposite())) continue;
-                    double length = 1 - (pipe.blockEntity instanceof PumpBlockEntity ? .25 : 0) - (next.blockEntity instanceof PumpBlockEntity ? .25 : 0);
-                    connections.add(new Connection(node(nodes, pipe, side), node(nodes, next, side.getOpposite()), pipe, side, next, null, null, length, false));
-                }
-            }
-            for (int i = 0; i < endpoints.size(); i++) {
-                var endpoint = endpoints.get(i); endpoint.node = nodes.size() + i;
-                connections.add(new Connection(node(nodes, endpoint.pipe, endpoint.side), endpoint.node,
-                    endpoint.pipe, endpoint.side, null, endpoint, null, endpoint.pipe.blockEntity instanceof PumpBlockEntity ? .25 : .5, false));
-            }
-            var inventoryPorts = new HashSet<Port>();
-            for (var endpoint : endpoints) inventoryPorts.add(new Port(endpoint.pipe.getPos(), endpoint.side));
-            int nextNode = nodes.size() + endpoints.size();
-            for (var pipe : members) if (pipe.interfaces != null) for (var side : pipe.interfaces.keySet()) {
-                if (!pipe.canHaveFlowToward(pipe.blockEntity.getBlockState(), side) || inventoryPorts.contains(new Port(pipe.getPos(), side))) continue;
-                var other = live.get(pipe.getPos().relative(side));
-                if (other != null && memberSet.contains(other) && other.canHaveFlowToward(other.blockEntity.getBlockState(), side.getOpposite())) continue;
-                connections.add(new Connection(node(nodes, pipe, side), nextNode++, pipe, side, null, null, null,
-                    pipe.blockEntity instanceof PumpBlockEntity ? .25 : .5, true));
-            }
-            if (!connections.isEmpty()) frame.components.add(new Component(identity, connections, endpoints, members));
+            frame.components.add(new Component(members, endpoints, live, budget));
         }
-        frames.put(level, frame); frame.beginTick();
-        return frame;
+        frames.put(level, frame); frame.beginTick(); return frame;
     }
-    private static int node(Map<Port, Integer> nodes, FluidTransportBehaviour pipe, Direction side) {
-        return nodes.get(new Port(pipe.getPos(), pipe.blockEntity instanceof PumpBlockEntity ? side : null));
-    }
-
-    public static final class JointTrial {
-        public final ElasticKinetics.Trial mechanical;
-        private final Frame frame;
-        private final List<FluidTrial> fluids;
-        JointTrial(Frame frame, ElasticKinetics.Trial mechanical, List<FluidTrial> fluids) {
-            this.frame = frame; this.mechanical = mechanical; this.fluids = fluids;
+    public static Map<KineticBlockEntity, Double> advance(Frame frame, double minutes) {
+        var budget = budgets.computeIfAbsent(frame.level, key -> new WorkBudget()); budget.begin(frame.level); frame.jointIterations++;
+        var torques = new HashMap<KineticBlockEntity, Double>();
+        int count = frame.components.size(), first = Math.floorMod(budget.cursor, Math.max(1, count));
+        boolean budgetReached = false;
+        for (int step = 0; step < count; step++) {
+            int c = (first + step) % count; var component = frame.components.get(c); long started = System.nanoTime(), before = budget.used;
+            long deadline = started + Math.max(0, FLUID_BUDGET_NANOS - before);
+            if (component.active) {
+                var result = component.sample(minutes, deadline);
+                if (result.solves() != 0) result = component.limit(result, minutes, deadline);
+                component.commit(result, minutes, deadline, budget, torques);
+            } else component.resetLoads();
+            budget.used += System.nanoTime() - started;
+            if (before < FLUID_BUDGET_NANOS && budget.used >= FLUID_BUDGET_NANOS) { budget.cursor = c + 1; budgetReached = true; }
         }
-        public void commit() {
-            frame.acceptedSteps++;
-            frame.shortestStep = Math.min(frame.shortestStep, mechanical.result.duration());
-            mechanical.commit();
-            for (int i = 0; i < fluids.size(); i++) frame.components.get(i).commit(fluids.get(i), mechanical.result.duration());
-            for (var pool : frame.inventories) pool.deliver();
-            frame.refreshHeights(null, 0);
-        }
-    }
-
-    /** Fixed-point midpoint coupling keeps the same pump coefficient on both energy sides.
-     * Shortened machine/fracture/empty-source events recompute the entire detached step. */
-    public static JointTrial sample(Frame frame, List<KineticNetwork> networks, double horizon, List<ElasticKinetics.WorkEvent> events) {
-        double minutes = horizon;
-        String stalled = "iteration";
-        int eventShortens = 0;
-        for (int retry = 0; retry < 64; retry++) {
-            if (retry > 0) frame.retries++;
-            frame.refreshHeights(null, 0);
-            var speeds = new HashMap<KineticBlockEntity, Double>();
-            for (var network : networks) for (var be : network.members.keySet()) speeds.put(be, NetworkDynamics.preciseSpeed(be));
-            var initial = frame.components.stream().map(Component::initial).toList();
-            var contents = frame.components.stream().map(Component::contents).toList();
-            var layouts = new ArrayList<DirectionalFluidJunctions.Layout>();
-            for (int c = 0; c < frame.components.size(); c++) layouts.add(frame.components.get(c).junctions.select(contents.get(c)));
-            var guesses = new ArrayList<double[]>();
-            for (int c = 0; c < frame.components.size(); c++) guesses.add(frame.components.get(c).seed(initial.get(c), speeds, minutes));
-            var lastTorques = new HashMap<KineticBlockEntity, Double>();
-            var previousResidual = guesses.stream().map(q -> new double[q.length]).toList();
-            var previousStep = guesses.stream().map(q -> new double[q.length]).toList();
-            boolean shorter = false;
-            for (int iteration = 0; iteration < 80; iteration++) {
-                frame.jointIterations++;
-                var torques = new HashMap<KineticBlockEntity, Double>();
-                var fluids = new ArrayList<FluidTrial>();
-                double allowed = minutes;
-                Object limiting = null;
-                for (int c = 0; c < frame.components.size(); c++) {
-                    var component = frame.components.get(c);
-                    var trial = component.sample(initial.get(c), contents.get(c), guesses.get(c), speeds, minutes, torques, layouts.get(c));
-                    // Pressure creates contact during this detached interval. Keep
-                    // that constraint through its joint Newton/fixed-point solve;
-                    // resetting it for each guess makes a dry branch chatter.
-                    // A shortened retry or the next accepted interval re-evaluates
-                    // contact from the actual, unchanged liquid fronts.
-                    layouts.set(c, trial.layout);
-                    fluids.add(trial);
-                    if (trial.allowed < allowed) { allowed = trial.allowed; limiting = component; }
-                }
-                for (var pool : frame.inventories) {
-                    double limit = pool.allowed(fluids, minutes);
-                    if (limit < allowed) { allowed = limit; limiting = pool; }
-                }
-                double fluidDifference = frame.refreshHeights(fluids, minutes);
-                for (int c = 0; c < fluids.size(); c++) for (int e = 0; e < guesses.get(c).length; e++)
-                    fluidDifference = Math.max(fluidDifference, Math.abs(fluids.get(c).motion.midpoint()[e] - guesses.get(c)[e])
-                        / (1 + Math.abs(fluids.get(c).motion.midpoint()[e])));
-                if (allowed < minutes * (1 - 1e-12)) {
-                    // Intermediate velocities can reverse an almost empty branch.
-                    // Converge that fluid prediction before searching its event or
-                    // sampling the shaft with an inadmissible transport interval.
-                    if (fluidDifference >= 1e-10 || iteration == 0) {
-                        stalled = "fluid iteration residual " + fluidDifference;
-                        relax(fluids, guesses, previousResidual, previousStep, iteration);
-                        continue;
-                    }
-                    stalled = (limiting instanceof Component component ? "pipe mouth at " + component.members.getFirst().getPos()
-                        : limiting instanceof InventoryPool pool ? "inventory at " + pool.ports.getFirst().endpoint.pipe.getPos()
-                            + (allowed > 1e-18 ? "" : " pending=" + pool.pending + " rates=" + Arrays.toString(pool.rates(fluids))
-                                + " owned=" + pool.ports.stream().map(p -> p.endpoint.buffer.amount).toList()) : "fluid volume")
-                        + " " + allowed + " / " + minutes;
-                    // Use a sharp event estimate first. If re-solving keeps moving
-                    // it, backtrack to a feasible prefix instead of approaching
-                    // the revised face time forever from above.
-                    minutes = ++eventShortens <= 2 ? allowed : Math.min(allowed, .5 * minutes);
-                    shorter = true; break;
-                }
-                var capture = ElasticKinetics.snapshot(networks, torques);
-                ElasticKinetics.Trial mechanical = events.isEmpty() ? capture.sample(minutes) : capture.advanceToEvent(minutes, events);
-                if (mechanical.result.duration() < minutes * (1 - 1e-9)) { stalled = "mechanical event"; minutes = mechanical.result.duration(); shorter = true; break; }
-                double difference = fluidDifference;
-                var nextSpeeds = new HashMap<KineticBlockEntity, Double>();
-                for (var be : mechanical.members) nextSpeeds.put(be, mechanical.signedTravel(be) * RotationMath.TICK_MINUTES / minutes);
-                for (var entry : torques.entrySet()) difference = Math.max(difference,
-                    Math.abs(entry.getValue() - lastTorques.getOrDefault(entry.getKey(), 0d)) / (1 + Math.abs(entry.getValue())));
-                if (difference < 1e-10 && iteration > 0) {
-                    double exchanged = 0, shaftWork = 0;
-                    for (int c = 0; c < fluids.size(); c++) {
-                        var component = frame.components.get(c);
-                        for (int e = 0; e < component.connections.size(); e++) {
-                            var pump = component.connections.get(e).pump;
-                            if (pump == null) continue;
-                            double rpm = component.axisSigns.get(pump) * speeds.getOrDefault(pump, NetworkDynamics.preciseSpeed(pump));
-                            double gain = IdealFluidSolver.coupling(component.material, rpm, guesses.get(c)[e]);
-                            exchanged += minutes * gain * rpm * fluids.get(c).motion.midpoint()[e];
-                        }
-                    }
-                    for (var entry : torques.entrySet()) shaftWork -= entry.getValue() * mechanical.signedTravel(entry.getKey()) * RotationMath.TICK_MINUTES;
-                    if (Math.abs(exchanged - shaftWork) > 1e-9 * (Math.abs(exchanged) + Math.abs(shaftWork)) + 1e-12) {
-                        stalled = "work " + exchanged + " / " + shaftWork;
-                        minutes /= 2; shorter = true; break;
-                    }
-                    boolean ready = true;
-                    for (var pool : frame.inventories) ready &= pool.reserve(fluids, minutes);
-                    if (!ready) {
-                        stalled = "reservation";
-                        shorter = true; break;
-                    }
-                    return new JointTrial(frame, mechanical, fluids);
-                }
-                lastTorques = torques;
-                stalled = "iteration residual " + difference;
-                relax(fluids, guesses, previousResidual, previousStep, iteration);
-                speeds = nextSpeeds;
-            }
-            if (!shorter) minutes /= 2;
-            if (!(minutes > 1e-18)) throw new IllegalStateException("Fluid event failed to advance: " + stalled + "; step=" + minutes);
-        }
-        throw new IllegalStateException("Ideal fluid / shaft coupling did not converge: " + stalled + "; step " + minutes);
-    }
-    private static void relax(List<FluidTrial> fluids, List<double[]> guesses, List<double[]> previousResidual,
-                              List<double[]> previousStep, int iteration) {
-        double numerator = 0, denominator = 0;
-        for (int c = 0; c < fluids.size(); c++) for (int e = 0; e < guesses.get(c).length; e++) {
-            double residual = fluids.get(c).motion.midpoint()[e] - guesses.get(c)[e];
-            double change = residual - previousResidual.get(c)[e];
-            numerator -= previousStep.get(c)[e] * change; denominator += change * change;
-        }
-        double relaxation = iteration == 0 ? .1 : denominator == 0 ? 1 : Math.max(.03, Math.min(1, numerator / denominator));
-        for (int c = 0; c < fluids.size(); c++) for (int e = 0; e < guesses.get(c).length; e++) {
-            double residual = fluids.get(c).motion.midpoint()[e] - guesses.get(c)[e];
-            previousResidual.get(c)[e] = residual; previousStep.get(c)[e] = relaxation * residual;
-            guesses.get(c)[e] += previousStep.get(c)[e];
-        }
+        if (!budgetReached) budget.cursor = first + 1;
+        frame.deliverShared();
+        frame.acceptedSteps++; frame.shortestStep = Math.min(frame.shortestStep, minutes); return torques;
     }
     public static void publish(Frame frame) {
-        for (var pipe : frame.captured.keySet()) if (!pipe.blockEntity.isRemoved()) {
-            var saved = state(pipe); long hash = saved.visualHash();
-            if (pipe.blockEntity instanceof IPumpDynamics pump) {
-                hash = hash * 31 + Math.round(pump.differentialcreate$head() * 100);
-                hash = hash * 31 + Math.round(pump.differentialcreate$flow() * 100);
-            }
-            if (hash != saved.lastVisualHash) { pipe.blockEntity.sendData(); saved.lastVisualHash = hash; }
+        for (var p : frame.captured.keySet()) if (!p.blockEntity.isRemoved()) {
+            var saved = state(p); long hash = saved.visualHash();
+            if (p.blockEntity instanceof IPumpDynamics pump) { hash = hash * 31 + Math.round(pump.differentialcreate$head() * 100); hash = hash * 31 + Math.round(pump.differentialcreate$flow() * 100); }
+            if (hash != saved.lastVisualHash) { p.blockEntity.sendData(); saved.lastVisualHash = hash; }
         }
     }
 }

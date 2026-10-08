@@ -2,8 +2,10 @@ package com.diliupengyun.differential_create.kinetics;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import com.diliupengyun.differential_create.mixin.TorquePropagatorAccessor;
 import com.simibubi.create.content.kinetics.KineticNetwork;
+import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import net.minecraft.world.level.Level;
 
 /** All rotors advance on one clock, stopping at recipe boundaries and actual fracture events. */
@@ -21,9 +23,14 @@ public final class MachiningClock {
         finally { ContraptionMotion.end(level); }
     }
     private static void advanceRotors(Level level) {
+        FluidKinetics.beginTick(level);
         double remaining = RotationMath.TICK_MINUTES;
         int transitions = 0;
+        NetworkTopology.flush();
+        for (var network : networks(level)) ElasticKinetics.refresh(network);
         FluidKinetics.Frame fluids = FluidKinetics.hasPipes(level) ? FluidKinetics.capture(level) : null;
+        Map<KineticBlockEntity, Double> hydraulicTorques = fluids == null ? Map.of()
+            : FluidKinetics.advance(fluids, RotationMath.TICK_MINUTES);
         while (remaining > 1e-14) {
             NetworkTopology.flush();
             var networks = networks(level);
@@ -47,7 +54,6 @@ public final class MachiningClock {
             // A change of direction must be observed before a tool can leave its contact.
             double horizon = motionBounded ? Math.min(remaining, RotationMath.TICK_MINUTES / 8) : remaining;
             if (fluids != null && !fluids.valid()) fluids = FluidKinetics.capture(level);
-            if (fluids != null && fluids.active()) horizon = Math.min(horizon, IdealFluidSolver.MAX_STEP);
             // Loads and limits stay fixed while accepted steps locate the next physical event.
             // The solver restarts from this capture if a shortened event step needs
             // its conservative path. Callbacks still run once, at the common event time.
@@ -58,13 +64,9 @@ public final class MachiningClock {
             for (var phase : phases)
                 limits.add(new ElasticKinetics.WorkEvent(phase.binding.shaft(),
                     phase.binding.work().differentialcreate$boundary(phase.remaining), phase.wakeDirection));
-            FluidKinetics.JointTrial joint = fluids != null && fluids.active()
-                ? FluidKinetics.sample(fluids, networks, horizon, limits) : null;
-            if (joint != null) trial = joint.mechanical;
-            else {
-                var snapshot = ElasticKinetics.snapshot(networks);
-                trial = phases.isEmpty() ? snapshot.sample(horizon) : snapshot.advanceToEvent(horizon, limits);
-            }
+            var snapshot = ElasticKinetics.snapshot(networks);
+            snapshot.setExternalTorques(hydraulicTorques);
+            trial = phases.isEmpty() ? snapshot.sample(horizon) : snapshot.advanceToEvent(horizon, limits);
             double[] advances = new double[phases.size()];
             double[] trialSignedTravel = new double[phases.size()];
             for (int i = 0; i < phases.size(); i++) {
@@ -75,8 +77,7 @@ public final class MachiningClock {
                         trial.signedTravel(phase.binding.shaft()), phase.remaining));
                 trialSignedTravel[i] = trial.signedTravel(phases.get(i).binding.shaft());
             }
-            if (joint == null) trial.commit();
-            else joint.commit();
+            trial.commit();
             ContraptionMotion.advance(trial);
             for (var network : networks) ElasticKinetics.publishReference(network);
             trial.fracture();

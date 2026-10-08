@@ -29,8 +29,62 @@ final class SnapshotRegression {
         trials(List.of(new Body(.15, 1024, 0, 0, 0, 8192, 256, 16), pair.get(1)),
             List.of(new Link(0, 1, 1, 1e7, 0, INF, INF)), new double[]{512, 128}, new double[1]);
         retainedResults(pair);
+        coupledDrives();
         disconnectedLargeSystems();
         System.out.println("Boundary snapshot regression: " + checks + " checks passed");
+    }
+    private static void coupledDrives() {
+        var original = List.of(new Body(.15, 1024, 0, 0, 0, 8192, 256, 16),
+            new Body(0, 0, 0, 0, 0), new Body(.1, 0, 0, 8, .001),
+            new Body(.15, 64, 4, 0, 0), new Body(0, 0, 0, 0, 0), new Body(.1, 0, 0, 8, 0),
+            new Body(.01, -128, 0, 8, 0));
+        var links = List.of(new Link(0, 1, 1, 1e7, 0, INF, INF), new Link(1, 2, -2, 4e6, 0, INF, 32),
+            new Link(3, 4, 2, 1e7, 0, INF, INF), new Link(4, 5, 1, 2e6, 0, INF, INF));
+        double[] speed = {128, 128, -256, 128, 256, 256, 1}, twist = {8e-7, 2e-6, 1e-6, 8e-7};
+        var limits = List.of(new TorsionSolver.EventLimit(2, .01, INF, INF), new TorsionSolver.EventLimit(5, INF, .015, INF));
+        // Cover both a single connected graph and disconnected components with
+        // nonlinear drive, sliding friction, passive massless ports and reversal.
+        for (int count : new int[]{3, 7}) {
+            var bodies = original.subList(0, count); var edges = count == 3 ? links.subList(0, 2) : links;
+            var selectedLimits = count == 3 ? limits.subList(0, 1) : limits;
+            double[] speeds = Arrays.copyOf(speed, count), twists = Arrays.copyOf(twist, edges.size());
+            var captured = TorsionSolver.prepare(bodies, edges, speeds, twists);
+            Result retained = captured.advance(DT / 8, H);
+            Result retainedExpected = TorsionSolver.advance(bodies, edges, speeds, twists, DT / 8, H);
+            for (double force : new double[]{0, 32, -32, 0, 1e-12, 128, -128, 0}) {
+                var changed = new ArrayList<>(bodies); double[] drives = bodies.stream().mapToDouble(Body::drive).toArray();
+                // Changing a passive massless port's drive also changes its
+                // numerical anchor. Its old frame and integration must expire.
+                drives[1] = force;
+                Body body = bodies.get(1);
+                changed.set(1, new Body(body.inertia(), force, body.damping(), body.load(), body.drag(),
+                    body.powerLimit(), body.governorSpeed(), body.governorRange()));
+                captured.updateDrives(drives);
+                Arrays.fill(drives, 999); // The capture owns the new forces.
+                for (double duration : new double[]{DT / 8, DT / 2, H, Math.nextUp(H), 1e-12, 0, DT / 8}) {
+                    var fresh = TorsionSolver.prepare(changed, edges, speeds, twists);
+                    same(fresh.advance(duration, H), captured.advance(duration, H));
+                    Result expected = fresh.advanceToEvent(duration, H, selectedLimits);
+                    Result actual = captured.advanceToEvent(duration, H, selectedLimits);
+                    same(expected, actual);
+                    Arrays.fill(actual.speed(), 999); Arrays.fill(actual.twist(), 999);
+                    Arrays.fill(actual.angle(), 999); Arrays.fill(actual.travel(), 999);
+                    Arrays.fill(actual.torque(), 999); Arrays.fill(actual.slipping(), true);
+                    same(expected, captured.advanceToEvent(duration, H, selectedLimits));
+                    same(retainedExpected, retained);
+                }
+            }
+            boolean rejected = false;
+            try { captured.updateDrives(new double[count - 1]); }
+            catch (IllegalArgumentException expected) { rejected = true; }
+            check(rejected, "a mismatched drive vector cannot alter the capture");
+            double[] invalid = bodies.stream().mapToDouble(Body::drive).toArray(); invalid[count - 1] = Double.NaN;
+            rejected = false;
+            try { captured.updateDrives(invalid); }
+            catch (IllegalArgumentException expected) { rejected = true; }
+            check(rejected, "invalid drive updates are atomic");
+            same(retainedExpected, captured.advance(DT / 8, H));
+        }
     }
     private static void disconnectedLargeSystems() {
         var bodies = new ArrayList<Body>(); var links = new ArrayList<Link>();
@@ -67,6 +121,19 @@ final class SnapshotRegression {
         catch (RuntimeException expected) { failed = true; }
         check(failed, "an unrepresentable step retains the original convergence failure");
         same(TorsionSolver.advance(bodies, links, speeds, twists, DT / 8, H), captured.advance(DT / 8, H));
+        var limits = List.of(new TorsionSolver.EventLimit(n - 1, .003, INF, INF),
+            new TorsionSolver.EventLimit(2 * n - 1, INF, .009, INF));
+        for (double drive : new double[]{512, -512, 1024}) {
+            var changed = new ArrayList<>(bodies);
+            Body firstBody = bodies.getFirst();
+            changed.set(0, new Body(firstBody.inertia(), drive, firstBody.damping(), firstBody.load(), firstBody.drag(),
+                firstBody.powerLimit(), firstBody.governorSpeed(), firstBody.governorRange()));
+            captured.updateDrives(changed.stream().mapToDouble(Body::drive).toArray());
+            var fresh = TorsionSolver.prepare(changed, links, speeds, twists);
+            same(fresh.advance(DT / 8, H), captured.advance(DT / 8, H));
+            same(fresh.advanceToEvent(DT / 8, H, limits), captured.advanceToEvent(DT / 8, H, limits));
+            same(fresh.advanceToEvent(DT / 8, H, limits), captured.advanceToEvent(DT / 8, H, limits));
+        }
         var weakLinks = new ArrayList<>(links);
         Link first = links.get(n - 1);
         weakLinks.set(n - 1, new Link(first.a(), first.b(), first.ratio(), first.stiffness(), first.damping(), .01, first.friction()));
