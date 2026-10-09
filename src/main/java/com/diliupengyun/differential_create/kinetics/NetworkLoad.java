@@ -24,8 +24,13 @@ public final class NetworkLoad {
         double loss = 0;
         for (var edge : dynamics.differentialcreate$data().connections) {
             if (edge.a.isRemoved() || edge.b.isRemoved()) continue;
-            double relative = edge.ratio * NetworkDynamics.preciseSpeed(edge.a) - NetworkDynamics.preciseSpeed(edge.b);
+            double relative = edge.ratio * SequencerKinetics.portSpeed(edge.a, edge.b) - SequencerKinetics.portSpeed(edge.b, edge.a);
             loss += LoadFactor.contactLoss(edge.stiffness(), edge.damping(), edge.friction(), edge.twist, relative);
+        }
+        for (var be : network.members.keySet()) if (be instanceof ISequencerDynamics servo) {
+            var m = servo.differentialcreate$motion(); var c = m.command;
+            loss += LoadFactor.contactLoss(0, SequencerMotion.COUPLING_DAMPING, c.coupling(), 0,
+                c.gear() * NetworkDynamics.preciseSpeed(be) - m.speed) + c.brake() * Math.abs(m.speed);
         }
         return LoadFactor.calculate(members, loss);
     }

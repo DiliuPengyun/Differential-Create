@@ -28,6 +28,7 @@ public final class NetworkPhysics {
 				if (be.isRemoved()) continue;
 				double r = entry.getValue(), impact = MachineActivity.impact(be);
 				j += r * r * InertiaRegistry.getInertia(be);
+				if (be instanceof ISequencerDynamics) j += r * r * SequencerMotion.OUTPUT_INERTIA;
 				c += Math.pow(Math.abs(r), 3) * MachineActivity.quadraticDrag(be);
 				if (!(be instanceof EncasedFanBlockEntity)) l += Math.abs(r) * impact;
 			}

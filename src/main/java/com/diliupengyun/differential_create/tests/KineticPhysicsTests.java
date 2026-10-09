@@ -155,6 +155,10 @@ public final class KineticPhysicsTests {
 	public static void continuousSequencer(GameTestHelper helper) {
 		forceImpactChunks(helper); ContinuousMachineTests.sequence(helper);
 	}
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_sequence_massless", timeoutTicks = 100)
+	public static void continuousMasslessSequence(GameTestHelper helper) {
+		forceImpactChunks(helper); ContinuousMachineTests.masslessSequence(helper);
+	}
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "load_factor", timeoutTicks = 100)
 	public static void networkLoadFactor(GameTestHelper helper) {

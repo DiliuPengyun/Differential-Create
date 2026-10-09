@@ -18,10 +18,14 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
     LoadFactor.Reading loadFactor, List<Rotor> rotors)
     implements CustomPacketPayload {
     public record BearingPose(int entityId, double angle) {}
+    public record OutputPose(double angle) {}
     public record Rotor(BlockPos pos, float speed, double angle, float torque, float steamVent, double elasticEnergy,
-        BearingPose bearing) {
+        BearingPose bearing, OutputPose output) {
         public Rotor(BlockPos pos, float speed, double angle, float torque, float steamVent, double elasticEnergy) {
-            this(pos, speed, angle, torque, steamVent, elasticEnergy, null);
+            this(pos, speed, angle, torque, steamVent, elasticEnergy, null, null);
+        }
+        public Rotor(BlockPos pos, float speed, double angle, float torque, float steamVent, double elasticEnergy, BearingPose bearing) {
+            this(pos, speed, angle, torque, steamVent, elasticEnergy, bearing, null);
         }
     }
     public static final Type<RotorStatePayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(DifferentialCreate.MODID, "rotor_state"));
@@ -36,6 +40,8 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
             buf.writeDouble(r.elasticEnergy);
             buf.writeVarInt(r.bearing == null ? 0 : r.bearing.entityId + 1);
             if (r.bearing != null) buf.writeDouble(r.bearing.angle);
+            buf.writeBoolean(r.output != null);
+            if (r.output != null) buf.writeDouble(r.output.angle);
         }
     }, buf -> {
         var dimension = buf.readResourceLocation(); long id = buf.readVarLong(); double energy = buf.readDouble();
@@ -50,7 +56,8 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
             int entity = buf.readVarInt();
             if (entity < 0) throw new IllegalArgumentException("Invalid bearing entity id");
             BearingPose bearing = entity == 0 ? null : new BearingPose(entity - 1, buf.readDouble());
-            rotors.add(new Rotor(pos, speed, angle, torque, steamVent, localEnergy, bearing));
+            OutputPose output = buf.readBoolean() ? new OutputPose(buf.readDouble()) : null;
+            rotors.add(new Rotor(pos, speed, angle, torque, steamVent, localEnergy, bearing, output));
         }
         return new RotorStatePayload(dimension, id, energy, elasticEnergy, load, rotors);
     });

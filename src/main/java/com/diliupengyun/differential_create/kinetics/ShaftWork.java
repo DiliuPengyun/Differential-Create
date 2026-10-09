@@ -4,7 +4,7 @@ package com.diliupengyun.differential_create.kinetics;
 public interface ShaftWork {
 	/** Absolute work and the two directional motion boundaries, in local RPM-ticks. */
 	record Boundary(double travel, double positive, double negative) {}
-	/** Most machines use their own shaft; a sequencer measures its physical output. */
+	/** Most machines use their own shaft; adapters may bind a separate working shaft. */
 	default com.simibubi.create.content.kinetics.base.KineticBlockEntity differentialcreate$workShaft(
 		com.simibubi.create.content.kinetics.base.KineticBlockEntity controller) { return controller; }
 	/** Infinity means idle or blocked. Zero is an immediate state transition. */

@@ -17,6 +17,7 @@ public final class MachiningClock {
         return registry == null ? List.of() : new ArrayList<>(registry.values());
     }
     public static void advance(Level level) {
+        if (level.tickRateManager().isFrozen()) return;
         for (var network : networks(level)) ClutchPhysics.prepare(network);
         ContraptionMotion.begin(level);
         try { advanceRotors(level); }
@@ -34,6 +35,7 @@ public final class MachiningClock {
         while (remaining > 1e-14) {
             NetworkTopology.flush();
             var networks = networks(level);
+            if (SequencerKinetics.finishReady(networks)) continue;
             var phases = new ArrayList<Phase>();
             boolean immediate = false, motionBounded = false;
             for (var binding : MachineWork.collect(networks)) {
@@ -53,6 +55,7 @@ public final class MachiningClock {
             for (var network : networks) ElasticKinetics.refresh(network);
             // A change of direction must be observed before a tool can leave its contact.
             double horizon = motionBounded ? Math.min(remaining, RotationMath.TICK_MINUTES / 8) : remaining;
+            if (SequencerKinetics.needsControl(networks)) horizon = Math.min(horizon, SequencerMotion.CONTROL_INTERVAL);
             if (fluids != null && !fluids.valid()) fluids = FluidKinetics.capture(level);
             // Loads and limits stay fixed while accepted steps locate the next physical event.
             // The solver restarts from this capture if a shortened event step needs
@@ -64,9 +67,10 @@ public final class MachiningClock {
             for (var phase : phases)
                 limits.add(new ElasticKinetics.WorkEvent(phase.binding.shaft(),
                     phase.binding.work().differentialcreate$boundary(phase.remaining), phase.wakeDirection));
-            var snapshot = ElasticKinetics.snapshot(networks);
+            var snapshot = ElasticKinetics.snapshot(networks, hydraulicTorques);
             snapshot.setExternalTorques(hydraulicTorques);
-            trial = phases.isEmpty() ? snapshot.sample(horizon) : snapshot.advanceToEvent(horizon, limits);
+            SequencerKinetics.boundaries(networks, limits);
+            trial = limits.isEmpty() ? snapshot.sample(horizon) : snapshot.advanceToEvent(horizon, limits);
             double[] advances = new double[phases.size()];
             double[] trialSignedTravel = new double[phases.size()];
             for (int i = 0; i < phases.size(); i++) {
@@ -78,6 +82,7 @@ public final class MachiningClock {
                 trialSignedTravel[i] = trial.signedTravel(phases.get(i).binding.shaft());
             }
             trial.commit();
+            SequencerKinetics.observe(networks, trial.result.duration(), hydraulicTorques);
             ContraptionMotion.advance(trial);
             for (var network : networks) ElasticKinetics.publishReference(network);
             trial.fracture();
@@ -85,10 +90,12 @@ public final class MachiningClock {
                 for (int i = 0; i < phases.size(); i++)
                     if (advances[i] > 0 && !phases.get(i).binding.shaft().isRemoved())
                         phases.get(i).binding.work().differentialcreate$advanceMotion(advances[i], trialSignedTravel[i]);
+                SequencerKinetics.finishReady(networks);
             });
             remaining = Math.max(0, remaining - trial.result.duration());
         }
         NetworkTopology.flush();
+        SequencerKinetics.sync(networks(level));
         if (fluids != null) FluidKinetics.publish(fluids);
         for (var network : networks(level)) {
             ElasticKinetics.refresh(network);

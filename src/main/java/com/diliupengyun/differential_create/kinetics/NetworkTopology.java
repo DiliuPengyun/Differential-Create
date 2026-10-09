@@ -202,8 +202,10 @@ public final class NetworkTopology {
             var data = ((INetworkDynamics) edge.a.getOrCreateNetwork()).differentialcreate$data();
             data.connections.add(new ElasticKinetics.Connection(edge.a, edge.b, edge.ratio, edge.clutch));
         }
-        for (Group group : new LinkedHashSet<>(groups.values()))
+        for (Group group : new LinkedHashSet<>(groups.values())) {
+            SequencerKinetics.orientUnstarted(group.anchor.getOrCreateNetwork());
             ElasticKinetics.alignAngles(group.anchor.getOrCreateNetwork());
+        }
 	}
 
 	private static void install(Level level, Set<KineticBlockEntity> nodes, Set<KineticNetwork> oldNetworks,

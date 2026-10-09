@@ -110,15 +110,18 @@ public final class ContraptionMotion {
 		advancing = true; sampling = true;
 		try {
 			outputs.keySet().removeIf(AbstractContraptionEntity::isRemoved);
+			var captured = new java.util.HashSet<AbstractContraptionEntity>();
 			for (var network : MachiningClock.networks(level)) for (var shaft : network.members.keySet()) {
 				var drives = ContraptionPhysics.drives(shaft);
 				for (var drive : drives) {
-					if (drive.stabilized() || drives.stream().noneMatch(d -> d.root() == drive.root()
+					if (drive.stabilized() || !SequencerKinetics.controlled(shaft) && drives.stream().noneMatch(d -> d.root() == drive.root()
 						&& d.entity().getContraption().getActors().stream().anyMatch(a -> a.getRight() != null
 							&& ContraptionActorWork.of(a.getRight()).motionManaged()))) continue;
 					outputs.put(drive.root(), new Output(drive));
+					captured.add(drive.root());
 				}
 			}
+			outputs.entrySet().removeIf(e -> e.getKey().level() == level && e.getValue().drive != null && !captured.contains(e.getKey()));
 		} finally { sampling = false; }
 	}
 	public static void advance(ElasticKinetics.Trial trial) {

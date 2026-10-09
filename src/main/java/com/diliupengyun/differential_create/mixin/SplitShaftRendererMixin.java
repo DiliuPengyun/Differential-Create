@@ -6,6 +6,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import com.diliupengyun.differential_create.client.ClientClutchAngles;
+import com.diliupengyun.differential_create.client.ClientSequencerAngles;
+import com.simibubi.create.content.kinetics.transmission.sequencer.SequencedGearshiftBlockEntity;
 import com.diliupengyun.differential_create.client.ClientKineticAngles;
 import com.diliupengyun.differential_create.kinetics.ClutchPhysics;
 import com.mojang.blaze3d.vertex.PoseStack;
@@ -29,16 +31,19 @@ public abstract class SplitShaftRendererMixin {
 		at = @At("HEAD"), cancellable = true)
 	private void differentialcreate$animateClutch(SplitShaftBlockEntity be, float partialTicks, PoseStack pose,
 		MultiBufferSource buffers, int light, int overlay, CallbackInfo ci) {
-		if (!(be instanceof ClutchBlockEntity clutch)) return;
+		if (!(be instanceof ClutchBlockEntity) && !(be instanceof SequencedGearshiftBlockEntity)) return;
+		if (be instanceof SequencedGearshiftBlockEntity seq && seq.isVirtual()) return;
 		ci.cancel();
 		if (VisualizationManager.supportsVisualization(be.getLevel())) return;
 		var axis = KineticBlockEntityRenderer.getRotationAxisOf(be);
 		for (var face : Iterate.directionsInAxis(axis)) {
-			boolean outputFace = clutch.hasSource() && face != clutch.getSourceFacing();
-			KineticBlockEntity member = outputFace ? ClutchPhysics.output(clutch) : clutch;
-			if (member == null) member = clutch;
+			boolean outputFace = be.hasSource() ? face != be.getSourceFacing()
+				: be instanceof SequencedGearshiftBlockEntity && face.getAxisDirection() == net.minecraft.core.Direction.AxisDirection.POSITIVE;
+			KineticBlockEntity member = outputFace && be instanceof ClutchBlockEntity clutch ? ClutchPhysics.output(clutch) : be;
+			if (member == null) member = be;
 			float angle = outputFace
-				? (float) Math.toRadians((ClientClutchAngles.outputRotation(clutch).angleAt(ClientKineticAngles.renderTick())
+				? (float) Math.toRadians(((be instanceof ClutchBlockEntity clutch ? ClientClutchAngles.outputRotation(clutch)
+					: ClientSequencerAngles.outputRotation((SequencedGearshiftBlockEntity) be)).angleAt(ClientKineticAngles.renderTick())
 					+ ClientKineticAngles.shaftOffsetOf(member, axis)) % 360)
 				: KineticBlockEntityRenderer.getAngleForBe(member, member.getBlockPos(), axis);
 			var shaft = CachedBuffers.partialFacing(AllPartialModels.SHAFT_HALF, be.getBlockState(), face);

@@ -41,10 +41,24 @@ public final class KineticGoggleInfo {
 	}
 
 	private static void appendDynamics(KineticBlockEntity kbe, List<Component> tooltip) {
-		tooltip.add(Component.translatable("gui.differentialcreate.goggles.inertia", fmt(InertiaRegistry.getInertia(kbe))));
+		tooltip.add(Component.translatable("gui.differentialcreate.goggles.inertia", fmt(InertiaRegistry.getInertia(kbe)
+			+ (kbe instanceof ISequencerDynamics ? SequencerMotion.OUTPUT_INERTIA : 0))));
 		double strength = ElasticKinetics.strengthOf(kbe);
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.strength",
 			Double.isInfinite(strength) ? "∞" : fmt(strength)));
+		if (kbe instanceof ISequencerDynamics servo) {
+			var m = servo.differentialcreate$motion();
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.servo_io", fmtSigned(kbe.getSpeed(), 1), fmtSigned(m.speed, 1)));
+			var program = servo.differentialcreate$program();
+			boolean distance = m.index >= 0 && m.index < program.size() && program.get(m.index).kind() == SequencerMotion.Kind.DISTANCE;
+			double remaining = Math.max(0, m.direction * (m.target - m.angle));
+            if (m.inputDirection == 0 && m.index >= 0 && m.index < program.size()) remaining = program.get(m.index).turns();
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.servo_remaining_" + (distance ? "distance" : "angle"),
+				fmt(remaining * (distance ? 1200d / 512 : 360))));
+            String state = m.index >= 0 && m.inputDirection == 0 ? "waiting" : m.command.holding() ? "holding" : m.command.brake() > 0 ? "braking" : m.command.coupling() > 0 ? "moving" : "waiting";
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.servo_" + state).withStyle(ChatFormatting.GRAY));
+			return;
+		}
 		if (kbe instanceof PoweredShaftBlockEntity) {
 			double local = NetworkDynamics.preciseSpeed(kbe);
 			SourcePhysics.Curve curve = SourcePhysics.curve(kbe);
@@ -157,7 +171,10 @@ public final class KineticGoggleInfo {
 	private static void appendEnergy(KineticBlockEntity kbe, List<Component> tooltip) {
 		double local = NetworkDynamics.preciseSpeed(kbe);
 		double energy = 0.5 * InertiaRegistry.getInertia(kbe) * local * local;
+		if (kbe instanceof ISequencerDynamics servo) energy += .5 * SequencerMotion.OUTPUT_INERTIA * Math.pow(servo.differentialcreate$motion().speed, 2);
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.local_energy", fmt(energy)));
+		if (kbe instanceof ISequencerDynamics servo)
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.servo_brake_heat", fmt(servo.differentialcreate$motion().brakeHeat)));
 		Double networkEnergy = null;
 		Double localElasticEnergy = null, networkElasticEnergy = null;
 		if (kbe.getLevel() != null) {

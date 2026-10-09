@@ -6,10 +6,12 @@ import com.diliupengyun.differential_create.client.InstanceRotation;
 import com.diliupengyun.differential_create.client.FreeShaftRotation;
 import com.diliupengyun.differential_create.client.ClutchAnimationCache;
 import com.diliupengyun.differential_create.client.RotorAnimation;
+import com.diliupengyun.differential_create.client.RotorPoseAnimation;
 import com.diliupengyun.differential_create.client.BearingAnimation;
 import com.diliupengyun.differential_create.client.ShaftModelOffset;
 import com.diliupengyun.differential_create.client.PipeFluidGeometry;
 import com.diliupengyun.differential_create.kinetics.ShaftPhases;
+import com.diliupengyun.differential_create.kinetics.SequencerMotion;
 import com.diliupengyun.differential_create.kinetics.TorsionSolver;
 import com.diliupengyun.differential_create.kinetics.BearingAngle;
 import java.util.ArrayList;
@@ -24,6 +26,8 @@ public final class RenderingRegression {
 
 	public static void run() {
 		assemblyPhases();
+		sequencerShaftAlignment();
+		sequencerSnapshotTiming();
 		largeCogOffsets();
 		clutchCogShaftAlignment();
 		freeClutchOutput();
@@ -437,6 +441,95 @@ public final class RenderingRegression {
 			angle(wheel.angleAt(tick) + 22.5, shader(shaft, tick, 22.5f),
 				"ordinary wheel rendering and instanced shaft rendering agree after hot placement");
 		}
+	}
+
+	private static void sequencerShaftAlignment() {
+		for (int direction : new int[]{-1, 1}) for (float offset : new float[]{0, 22.5f}) {
+			var motion = new SequencerMotion();
+			motion.angle = 1.00842464243087;
+			motion.phaseOffset = .125;
+			motion.begin(List.of(new SequencerMotion.Segment(SequencerMotion.Kind.ANGLE, 90, direction)), 0, 32, false);
+			double target = motion.target, start = motion.start;
+			// Exact origins from the stopped seam: equal RPM alone cannot align it.
+			double[] saved = {motion.shaftAngle(), 1176.4585832324276};
+			check(Math.abs(Math.IEEEremainder((saved[1] - saved[0]) * 360, 90)) > 1,
+				"saved fixture reproduces a visible square-shaft seam while both speeds are zero");
+			double[] aligned = ShaftPhases.align(saved, List.of(new ShaftPhases.Contact(0, 1, 1, 0)));
+			near(motion.shaftAngle(), aligned[1], 0, "output spindle anchors its adjoining shaft's assembly zero");
+			var output = new RotorAnimation();
+			var shaft = new RotorAnimation();
+			double shaftAngle = aligned[1];
+			int tick = 5000;
+			for (double step : new double[]{0, .00001, .008, -.005, 0, 0}) {
+				motion.angle += direction * step; shaftAngle += direction * step;
+				output.receive(motion.shaftAngle() * 360); shaft.receive(shaftAngle * 360);
+				var a = output.advance(tick, tick, false);
+				var b = shaft.advance(tick, tick, false);
+				for (float partial : new float[]{0, .25f, .5f, .75f, 1}) {
+					float at = tick + partial;
+					angle(b.angleAt(at) + offset, a.angleAt(at) + offset, "ordinary output half and shaft have no seam through stop and reversal");
+					angle(shader(b, at, offset), shader(a, at, offset), "instanced output half and shaft retain the same final shader coefficients");
+					angle(b.angleAt(at) + offset, shader(a, at, offset), "both render paths use the same output assembly pose");
+				}
+				tick++;
+			}
+			var a = output.advance(tick, tick, true);
+			var b = shaft.advance(tick, tick, true);
+			angle(b.angleAt(tick + .5) + offset, shader(a, tick + .5f, offset), "freeze retains aligned parked output models");
+			near(target, motion.target, 0, "assembly fitting does not move a prescribed target");
+			near(start, motion.start, 0, "assembly fitting does not rewind instruction progress");
+		}
+	}
+
+	private static void sequencerSnapshotTiming() {
+		// Server chunk updates can arrive a tick behind the custom physics packet.
+		// The old independent playback shows its largest seam during the stroke.
+		double[] positions = {0, .2, 2, 8, 20, 39, 58, 75, 84, 88, 90, 90};
+		var delayedOutput = new RotorAnimation();
+		var currentShaft = new RotorAnimation();
+		double largestOldSeam = 0;
+		for (int i = 0; i < positions.length; i++) {
+			delayedOutput.receive(positions[Math.max(0, i - 1)]); currentShaft.receive(positions[i]);
+			var a = delayedOutput.advance(i, i, false); var b = currentShaft.advance(i, i, false);
+			largestOldSeam = Math.max(largestOldSeam, Math.abs(a.angleAt(i + .5) - b.angleAt(i + .5)));
+		}
+		check(largestOldSeam > 15, "one-tick block-packet lag reproduces a conspicuous moving seam");
+		angle(delayedOutput.frame().angleAt(positions.length), currentShaft.frame().angleAt(positions.length),
+			"the old delayed stream rejoins at rest, so parked-only tests miss it");
+		for (int direction : new int[]{-1, 1}) for (float offset : new float[]{0, 22.5f})
+			for (int delivery : new int[]{0, 1, 2}) {
+				var servo = new RotorPoseAnimation(); var shaft = new RotorPoseAnimation();
+				check(servo.outputFrame() == null, "unsynced output waits for a confirmed physical snapshot");
+				int tick = 8000;
+				for (int i = 0; i < positions.length; i++, tick++) {
+					// Lost or coalesced physics packets affect the complete pose together.
+					if (delivery != 1 || i % 3 != 1) {
+						if (delivery == 2 && i > 0) {
+							servo.receive(300 + i * 4.8, direction * positions[i - 1]);
+							shaft.receive(direction * positions[i - 1], null);
+						}
+						servo.receive(300 + i * 4.8, direction * positions[i]);
+						shaft.receive(direction * positions[i], null);
+					}
+					servo.advance(tick, tick, false); shaft.advance(tick, tick, false);
+					var a = servo.outputFrame(); var b = shaft.memberFrame();
+					for (float partial : new float[]{0, .125f, .5f, .875f, 1}) {
+						float at = tick + partial;
+						angle(b.angleAt(at) + offset, a.angleAt(at) + offset, "output and shaft share the same interpolation interval throughout the stroke");
+						angle(shader(b, at, offset), shader(a, at, offset), "instanced output and shaft use coherent snapshot coefficients");
+						check(servo.outputFrame() == a && shaft.memberFrame() == b,
+							"renderer queries and visual reconstruction cannot advance one spindle ahead of the others");
+					}
+				}
+				servo.receive(900, direction * 105d); shaft.receive(direction * 105d, null);
+				servo.advance(tick, tick + .4, true); shaft.advance(tick, tick + .4, true);
+				angle(servo.outputFrame().angleAt(tick + 10), shaft.memberFrame().angleAt(tick + 10), "freeze keeps pending output and shaft samples on one clock");
+				servo.advance(tick + 1, tick + 1, false); shaft.advance(tick + 1, tick + 1, false);
+				angle(servo.outputFrame().angleAt(tick + 1.5), shader(shaft.memberFrame(), tick + 1.5f, 0), "resuming plays the same confirmed output and shaft segment");
+				check(shaft.outputFrame() == null, "plain shafts retain their original single-rotor playback");
+				servo.receive(1080, null); servo.advance(tick + 2, tick + 2, false);
+				check(servo.outputFrame() == null, "replacing a sequencer with a plain member removes stale output animation");
+			}
 	}
 
 	private static void freeClutchOutput() {

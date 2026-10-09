@@ -92,7 +92,7 @@ public final class ClientNetworkSpeeds {
 	private static final class Rotor {
 		float speed, torque, steamVent;
 		double elasticEnergy = Double.NaN;
-		final RotorAnimation animation = new RotorAnimation();
+		final RotorPoseAnimation animation = new RotorPoseAnimation();
 		BearingAnimation bearing;
 	}
 
@@ -107,7 +107,7 @@ public final class ClientNetworkSpeeds {
 			rotor.speed = update.speed(); rotor.torque = update.torque();
 			rotor.steamVent = update.steamVent();
 			rotor.elasticEnergy = update.elasticEnergy();
-			rotor.animation.receive(update.angle());
+			rotor.animation.receive(update.angle(), update.output() == null ? null : update.output().angle());
 			if (update.bearing() == null) rotor.bearing = null;
 			else {
 				if (rotor.bearing == null) rotor.bearing = new BearingAnimation();
@@ -268,12 +268,19 @@ public final class ClientNetworkSpeeds {
 		Entry entry = entryOf(kbe);
 		if (entry != null) {
 			Rotor rotor = entry.rotors.get(kbe.getBlockPos());
-			if (rotor != null && rotor.animation.frame() != null) return rotor.animation.frame();
+			if (rotor != null && rotor.animation.memberFrame() != null) return rotor.animation.memberFrame();
 		}
 		if (entry == null || entry.renderFrame == null)
 			return null;
 		Float ratio = entry.ratios.get(kbe.getBlockPos());
 		return ratio == null ? null : entry.renderFrame.scaled(ratio);
+	}
+
+	/** Output and adjoining shaft frames originate in the same rotor snapshot. */
+	public static RotationFrame outputRotationOf(KineticBlockEntity be) {
+		Entry entry = entryOf(be);
+		Rotor rotor = entry == null ? null : entry.rotors.get(be.getBlockPos());
+		return rotor == null ? null : rotor.animation.outputFrame();
 	}
 
 	/** Only a snapshot for this entity may override its assembly-relative pose. */

@@ -9,6 +9,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
 import com.diliupengyun.differential_create.client.ClientClutchAngles;
+import com.diliupengyun.differential_create.client.ClientSequencerAngles;
+import com.simibubi.create.content.kinetics.transmission.sequencer.SequencedGearshiftBlockEntity;
 import com.diliupengyun.differential_create.client.ClientKineticAngles;
 import com.diliupengyun.differential_create.kinetics.ClutchPhysics;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
@@ -28,6 +30,20 @@ public abstract class SplitShaftVisualMixin {
 	@Redirect(method = {"<init>", "update"}, at = @At(value = "INVOKE",
 		target = "Lcom/simibubi/create/content/kinetics/base/RotatingInstance;setup(Lcom/simibubi/create/content/kinetics/base/KineticBlockEntity;F)Lcom/simibubi/create/content/kinetics/base/RotatingInstance;"))
 	private RotatingInstance differentialcreate$animateOutput(RotatingInstance instance, KineticBlockEntity be, float speed) {
+		if (be instanceof SequencedGearshiftBlockEntity seq && !seq.isVirtual()) {
+			var axis = KineticBlockEntityVisual.rotationAxis(seq.getBlockState());
+			int index = keys.indexOf(instance);
+			if (index < 0) index = keys.size();
+			var face = Iterate.directionsInAxis(axis)[index];
+			if (seq.hasSource() ? face != seq.getSourceFacing()
+				: face.getAxisDirection() == net.minecraft.core.Direction.AxisDirection.POSITIVE) {
+				float offset = ClientKineticAngles.shaftOffsetOf(seq, axis);
+				var frame = ClientSequencerAngles.outputRotation(seq);
+				instance.setup(seq, axis, 0).setRotationOffset(offset).setRotationalSpeed(frame.shaderSpeed());
+				instance.rotationOffset = frame.shaderOffset(offset);
+				return instance;
+			}
+		}
 		if (be instanceof ClutchBlockEntity clutch && clutch.hasSource()) {
 			var axis = KineticBlockEntityVisual.rotationAxis(clutch.getBlockState());
 			int index = keys.indexOf(instance);
