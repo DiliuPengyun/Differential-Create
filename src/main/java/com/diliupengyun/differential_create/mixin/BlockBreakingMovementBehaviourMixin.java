@@ -20,6 +20,9 @@ public abstract class BlockBreakingMovementBehaviourMixin implements IContraptio
 	@Shadow protected abstract boolean shouldDestroyStartBlock(BlockState state);
 	@Inject(method = "tick", at = @At("HEAD"), cancellable = true)
 	private void differentialcreate$holdQueuedOperation(MovementContext context, CallbackInfo ci) {
+		if (ContraptionActorWork.supported(context) && ContraptionActorWork.of(context).motionManaged()) {
+			context.stall = false; context.data.remove("WaitingTicks"); context.data.remove("LastPos");
+		}
 		if (ContraptionActorWork.supported(context) && ContraptionActorWork.of(context).pending()) {
 			context.stall = false; ci.cancel();
 		}

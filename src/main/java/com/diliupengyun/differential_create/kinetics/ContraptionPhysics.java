@@ -40,7 +40,16 @@ public final class ContraptionPhysics {
 	private static final Map<Contraption, Owner> owners = java.util.Collections.synchronizedMap(new WeakHashMap<>());
 
 	public record Drive(KineticBlockEntity shaft, AbstractContraptionEntity entity, Direction.Axis axis,
-		boolean rotation, double ratio, AbstractContraptionEntity root, BlockPos mount) {
+		boolean rotation, double ratio, AbstractContraptionEntity root, BlockPos mount) implements ActorDrive {
+		@Override public double speed() { return NetworkDynamics.preciseSpeed(shaft); }
+		@Override public double preferredSpeed() { return shaft.getTheoreticalSpeed(); }
+		@Override public ActorContactPath path(MovementContext context) { return ContraptionMotion.path(this, context); }
+		@Override public double travel() { return ContraptionMotion.travel(this); }
+		@Override public double angle() { return ContraptionMotion.angle(this); }
+		@Override public double angularRate() { return ContraptionMotion.angularRate(this); }
+		@Override public double allowance(double direction) { return ContraptionMotion.allowance(this, direction); }
+		@Override public int wakeDirection() { return ContraptionMotion.wakeDirection(this); }
+		@Override public boolean motionActive() { return ContraptionMotion.active(); }
 		public boolean stabilized() { return entity != root; }
 		private Vec3 translationInRoot() {
 			Vec3 direction = new Vec3(axis == Direction.Axis.X ? 1 : 0, axis == Direction.Axis.Y ? 1 : 0, axis == Direction.Axis.Z ? 1 : 0);

@@ -2,6 +2,7 @@ package com.diliupengyun.differential_create.mixin;
 
 import com.diliupengyun.differential_create.kinetics.ContraptionPhysics;
 import com.diliupengyun.differential_create.kinetics.ContraptionActorWork;
+import com.diliupengyun.differential_create.kinetics.ActorTargets;
 import com.simibubi.create.content.contraptions.AbstractContraptionEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity.RemovalReason;
@@ -56,6 +57,9 @@ public abstract class AbstractContraptionEntityMixin {
 	@Inject(method = "remove", at = @At("HEAD"))
 	private void differentialcreate$releaseOwner(RemovalReason reason, CallbackInfo ci) {
 		var self = (AbstractContraptionEntity) (Object) this;
+		if (!self.level().isClientSide && self.getContraption() != null)
+			for (var actor : self.getContraption().getActors())
+				if (actor.getRight() != null) ActorTargets.forget(ContraptionActorWork.of(actor.getRight()));
 		if (!self.level().isClientSide && (reason == RemovalReason.UNLOADED_TO_CHUNK || reason == RemovalReason.UNLOADED_WITH_PLAYER))
 			ContraptionPhysics.unloading(self);
 		ContraptionPhysics.detach(self);

@@ -5,6 +5,13 @@
   "minVersion": "0.8",
   "refmap": "differentialcreate.refmap.json",
   "mixins": [
+    "ActorTargetLevelMixin",
+    "MinecartEntityMixin",
+    "MinecartSpecialDragMixin",
+    "MinecartControllerRailMixin",
+    "MinecartAssemblerMixin",
+    "MinecartContraptionMixin",
+    "MinecartCouplingMixin",
     "AbstractContraptionEntityMixin",
     "ControlledContraptionAccessor",
     "ContraptionAccessor",

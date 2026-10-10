@@ -18,6 +18,7 @@ public final class PhysicsRegression {
 		BoundarySearchRegression.run();
 		SequencerRegression.run();
 		KineticPartitionRegression.run();
+		MinecartRegression.run();
 		com.diliupengyun.differential_create.kinetics.TreeSolverRegression.run();
 		ShaftReplacementRegression.run();
 		SteamDriveRegression.run();

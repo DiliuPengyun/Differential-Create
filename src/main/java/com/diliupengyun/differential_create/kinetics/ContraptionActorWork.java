@@ -12,27 +12,30 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
-/** Work counters live in actor NBT, and advance only through the driving shaft's integrated travel. */
+/** Work counters live in actor NBT and advance through paid physical feed. */
 public final class ContraptionActorWork implements ShaftWork {
 	private static final String JOB = "DCActorJob", TRAVEL = "DCActorTravel", TARGET = "DCActorTarget";
-	private static final String FEED = "DCActorFeed", CELL = "DCActorCell";
+	private static final String FEED = "DCActorFeed", FEED_SCALE = "DCActorFeedScale", CELL = "DCActorCell";
 	public static final double CYCLE_TRAVEL = 1000;
 	/** A quarter-block cutting stroke keeps the work within the tool's active voxel. */
 	public static final double FEED_DISTANCE = .25;
 	private final MovementContext context;
+	BlockPos watchedTarget;
 	private boolean firing;
 	private boolean motionManaged;
 	private ActorContactPath path;
 	// Observations are transient: a loaded actor must inspect its current contact again.
-	private BlockPos inspectedCell;
-	private BlockState inspectedState;
+	private record Contact(BlockPos cell, BlockState state, BlockState ground, int surroundings, int material) {}
+	private Contact inspected;
 	private double direction = 1;
 	private double sampledJob = Double.POSITIVE_INFINITY;
+	private double sampledRatio;
 	private double positiveLimit = Double.POSITIVE_INFINITY, negativeLimit = Double.POSITIVE_INFINITY;
 	public ContraptionActorWork(MovementContext context) { this.context = context; }
 	public static ContraptionActorWork of(MovementContext context) { return ((IMovementWork) context).differentialcreate$actorWork(); }
+	MovementContext context() { return context; }
 	public static boolean supported(MovementContext context) {
-		return !context.world.isClientSide && ContraptionPhysics.drive(context) != null;
+		return !context.world.isClientSide && ActorDrive.of(context) != null;
 	}
 	public boolean pending() { return context.data.contains(JOB); }
 	public boolean firing() { return firing; }
@@ -54,16 +57,16 @@ public final class ContraptionActorWork implements ShaftWork {
 	}
 	private BlockPos contactCell() {
 		return path == null ? (context.position == null ? null : BlockPos.containing(context.position))
-			: BlockPos.containing(ContraptionMotion.vector(path.inside(ContraptionMotion.travel(ContraptionPhysics.drive(context)), direction)));
+			: BlockPos.containing(ContraptionMotion.vector(path.inside(ActorDrive.of(context).travel(), direction)));
 	}
 	private double pointRatio() {
-		var drive = ContraptionPhysics.drive(context);
+		var drive = ActorDrive.of(context);
 		if (path == null) return drive == null ? 0 : drive.workRatio(context);
-		double distance = ContraptionMotion.vector(path.derivative(ContraptionMotion.travel(drive))).length();
+		double distance = ContraptionMotion.vector(path.derivative(drive.travel())).length();
 		// A blade on the rotation axis still sweeps its own finite area. Stabilized
 		// children retain their orientation and therefore have no such self rotation.
 		if (drive.rotation() && !drive.stabilized()) {
-			double blade = ContraptionMotion.angularRate(drive) * Math.PI / 180 / Math.sqrt(6);
+			double blade = drive.angularRate() * Math.PI / 180 / Math.sqrt(6);
 			distance = Math.hypot(distance, blade);
 		}
 		return distance * 512;
@@ -72,26 +75,26 @@ public final class ContraptionActorWork implements ShaftWork {
 		if (!continuous()) return cost;
 		double ratio = pointRatio();
 		double feed = ratio > 0 ? FEED_DISTANCE * 512 / ratio : Double.POSITIVE_INFINITY;
-		if (path != null) feed = Math.min(feed, .9 * path.exit(ContraptionMotion.travel(ContraptionPhysics.drive(context)), direction));
+		if (path != null) feed = Math.min(feed, .9 * path.exit(ActorDrive.of(context).travel(), direction));
 		return Math.max(1e-6, feed);
 	}
-	private void prepareMotion(ContraptionPhysics.Drive drive) {
-		path = motionManaged ? ContraptionMotion.path(drive, context) : null;
+	private void prepareMotion(ActorDrive drive) {
+		path = motionManaged ? drive.path(context) : null;
 		if (path == null) return;
 		if ((pending() || breakingPos() != null) && !context.data.contains("DCActorContact") && context.position != null)
 			context.data.putLong("DCActorContact", BlockPos.containing(context.position).asLong());
-		double speed = NetworkDynamics.preciseSpeed(drive.shaft());
-		direction = Math.signum(speed == 0 ? drive.shaft().getTheoreticalSpeed() : speed);
+		double speed = drive.speed();
+		direction = Math.signum(speed == 0 ? drive.preferredSpeed() : speed);
 		if (direction == 0) direction = 1;
-		double t = ContraptionMotion.travel(drive);
+		double t = drive.travel();
 		context.position = ContraptionMotion.vector(path.at(t));
 		context.motion = ContraptionMotion.vector(path.derivative(t)).scale(speed);
 		context.rotation = v -> drive.stabilized() || !drive.rotation() ? drive.entity().applyRotation(v, 1)
-			: ContraptionMotion.rotate(drive.entity().applyRotation(v, 1), ContraptionMotion.angle(drive), drive.axis());
+			: ContraptionMotion.rotate(drive.entity().applyRotation(v, 1), drive.angle(), drive.axis());
 		context.relativeMotion = drive.entity().reverseRotation(context.motion, 1);
-		if (!drive.stabilized() && drive.rotation()) context.relativeMotion = ContraptionMotion.rotate(context.relativeMotion, -ContraptionMotion.angle(drive), drive.axis());
+		if (!drive.stabilized() && drive.rotation()) context.relativeMotion = ContraptionMotion.rotate(context.relativeMotion, -drive.angle(), drive.axis());
 		BlockPos cell = contactCell();
-		if (context.disabled || !behaviour().isActive(context)) { behaviour().cancelStall(context); cancel(); return; }
+		if (context.disabled || !active(drive)) { behaviour().cancelStall(context); cancel(); return; }
 		if (context.data.contains("DCActorContact") && context.data.getLong("DCActorContact") != cell.asLong()) {
 			behaviour().cancelStall(context); cancel();
 		}
@@ -99,22 +102,49 @@ public final class ContraptionActorWork implements ShaftWork {
 		if (entered) {
 			context.data.putLong(CELL, cell.asLong());
 		}
+		// Resolve stale queued targets before sampling this event's boundary and
+		// torque. Otherwise a same-cell replacement can be queued only by the
+		// later torque query, after the scheduler captured the old voxel boundary.
+		if (pending() || context.data.getBoolean("DCActorInvalidated")) required();
 		refreshContact(cell, entered);
 		if (entered) context.firstMovement = false;
 		context.stall = false;
 	}
+	/** Zero feed retains a pending forward-only job. Probe its intended path only
+	 * for activation; callbacks and entity damage still see the actual zero motion. */
+	private boolean active(ActorDrive drive) {
+		if (behaviour().isActive(context)) return true;
+		if (!pending() || path == null || context.relativeMotion.lengthSqr() != 0) return false;
+		var actual = context.relativeMotion;
+		context.relativeMotion = drive.entity().reverseRotation(ContraptionMotion.vector(path.derivative(drive.travel())).scale(direction), 1);
+		if (!drive.stabilized() && drive.rotation()) context.relativeMotion = ContraptionMotion.rotate(context.relativeMotion, -drive.angle(), drive.axis());
+		try { return behaviour().isActive(context); }
+		finally { context.relativeMotion = actual; }
+	}
 	private void refreshContact(BlockPos cell, boolean entered) {
-		if (!context.world.isLoaded(cell)) { inspectedCell = null; inspectedState = null; return; }
+		if (!context.world.isLoaded(cell)) { inspected = null; return; }
 		MovementBehaviour actor = behaviour();
 		boolean cutting = actor instanceof com.simibubi.create.content.kinetics.drill.DrillMovementBehaviour
 			|| actor instanceof com.simibubi.create.content.kinetics.saw.SawMovementBehaviour;
-		if (!entered && (!cutting || pending() || breakingPos() != null)) return;
+		if (!entered && (pending() || breakingPos() != null)) return;
 		BlockState state = context.world.getBlockState(cell);
-		if (!entered && cell.equals(inspectedCell) && state.equals(inspectedState)) return;
-		inspectedCell = cell; inspectedState = state;
+		BlockState ground = actor instanceof com.simibubi.create.content.contraptions.actors.plough.PloughMovementBehaviour
+			? context.world.getBlockState(cell.below()) : null;
+		int surroundings = 0, material = 0;
+		if (actor instanceof com.simibubi.create.content.contraptions.actors.roller.RollerMovementBehaviour) {
+			// A stationary roller can receive new inventory or a changed paving
+			// profile without re-entering its current contact voxel.
+			for (int y = -2; y <= 2; y++) surroundings = 31 * surroundings + context.world.getBlockState(cell.offset(0, y, 0)).hashCode();
+			var available = com.simibubi.create.foundation.item.ItemHelper.extract(context.contraption.getStorage().getAllItems(),
+				stack -> context.getFilterFromBE().test(context.world, stack), 1, true);
+			material = ItemStack.hashItemAndComponents(available);
+		}
+		var observed = new Contact(cell, state, ground, surroundings, material);
+		if (!entered && observed.equals(inspected)) return;
+		inspected = observed;
 		// Preserve entry callbacks, but retry a same-cell visit only for a new breakable
 		// target. Air must not repeat native entity damage on every physics substep.
-		if (entered || ((BlockBreakingMovementBehaviour) actor).canBreak(context.world, cell, state))
+		if (entered || !cutting || ((BlockBreakingMovementBehaviour) actor).canBreak(context.world, cell, state))
 			actor.visitNewPosition(context, cell);
 	}
 	public static boolean queue(MovementContext context, String kind, BlockPos pos, double cost) {
@@ -128,7 +158,9 @@ public final class ContraptionActorWork implements ShaftWork {
 			job.putString("Target", context.world.getBlockState(target).toString());
 			job.putDouble("Cost", Math.max(1, cost));
 			job.putDouble("Feed", work.stroke(Math.max(1, cost)));
+			job.putDouble("FeedScale", work.pointRatio());
 			context.data.put(JOB, job);
+			ActorTargets.watch(work, target);
 			var cell = work.contactCell();
 			if (cell != null) context.data.putLong("DCActorContact", cell.asLong());
 		}
@@ -148,6 +180,9 @@ public final class ContraptionActorWork implements ShaftWork {
 		return NbtUtils.readBlockPos(context.data, "BreakingPos").orElse(null);
 	}
 	private double required() {
+		if (context.data.getBoolean("DCActorInvalidated")) {
+			behaviour().cancelStall(context); cancel(); return Double.POSITIVE_INFINITY;
+		}
 		if (context.disabled) {
 			behaviour().cancelStall(context); cancel(); context.stall = false;
 			return Double.POSITIVE_INFINITY;
@@ -155,6 +190,7 @@ public final class ContraptionActorWork implements ShaftWork {
 		if (pending()) {
 			var job = context.data.getCompound(JOB);
 			var pos = BlockPos.of(job.getLong(job.contains("TargetPos") ? "TargetPos" : "Pos"));
+			ActorTargets.watch(this, pos);
 			if (!context.world.isLoaded(pos)) return Double.POSITIVE_INFINITY;
 			if (!context.world.getBlockState(pos).toString().equals(job.getString("Target"))) {
 				cancel(); return Double.POSITIVE_INFINITY;
@@ -174,39 +210,53 @@ public final class ContraptionActorWork implements ShaftWork {
 			boolean legacy = !context.data.contains(TARGET);
 			context.data.putString(TARGET, target);
 			context.data.remove(FEED);
+			context.data.remove(FEED_SCALE);
 			context.data.putDouble(TRAVEL, legacy ? context.data.getInt("Progress") * cost / 10 : 0);
 			if (!legacy) { context.data.remove("Progress"); context.data.remove("TicksUntilNextProgress"); }
 		}
 		if (!context.data.contains(FEED)) {
 			context.data.putDouble(FEED, stroke(cost));
+			context.data.putDouble(FEED_SCALE, pointRatio());
 			var cell = contactCell();
 			if (cell != null) context.data.putLong("DCActorContact", cell.asLong());
 		}
+		ActorTargets.watch(this, pos);
 		context.stall = !continuous();
 		return cost;
 	}
 	private double progress() { return pending() ? context.data.getCompound(JOB).getDouble("Travel") : context.data.getDouble(TRAVEL); }
-	private double workRatio(double cost, ContraptionPhysics.Drive drive) {
+	private double workRatio(double cost, ActorDrive drive) {
 		if (!continuous()) return drive.workRatio(context);
 		double feed = pending() ? context.data.getCompound(JOB).getDouble("Feed") : context.data.getDouble(FEED);
+		double metric = pointRatio();
+		double scale = pending() ? context.data.getCompound(JOB).getDouble("FeedScale") : context.data.getDouble(FEED_SCALE);
 		if (!(feed > 0)) {
 			feed = stroke(cost);
 			if (pending()) context.data.getCompound(JOB).putDouble("Feed", feed); else context.data.putDouble(FEED, feed);
+			scale = 0;
 		}
-		return cost / feed;
+		// Preserve the physical stroke when a new cart turn uses a different
+		// angle per RPM-tick (speed, radius or yaw/pitch stage). Old saves acquire
+		// their metric once without changing already-paid work.
+		if (!(scale > 0)) {
+			scale = metric > 0 ? metric : 1;
+			if (pending()) context.data.getCompound(JOB).putDouble("FeedScale", scale); else context.data.putDouble(FEED_SCALE, scale);
+		}
+		return cost / feed * metric / scale;
 	}
 	@Override public double differentialcreate$remainingTravel() {
-		var drive = ContraptionPhysics.drive(context);
+		var drive = ActorDrive.of(context);
 		if (drive == null) return Double.POSITIVE_INFINITY;
 		prepareMotion(drive);
-		if (motionManaged && ContraptionMotion.active() && path == null) return Double.POSITIVE_INFINITY;
+		if (motionManaged && drive.motionActive() && path == null) return Double.POSITIVE_INFINITY;
 		double required = required(), ratio = Double.isFinite(required) ? workRatio(required, drive) : 0;
+		sampledRatio = ratio;
 		double job = Double.isFinite(required) && ratio > 0 ? Math.max(0, required - progress()) / ratio : Double.POSITIVE_INFINITY;
 		if (path != null) {
-			double sampledTravel = ContraptionMotion.travel(drive); sampledJob = job;
+			double sampledTravel = drive.travel(); sampledJob = job;
 			// Both directions are fixed throughout this event search, including trials that reverse.
-			positiveLimit = Math.min(ContraptionMotion.allowance(drive, 1), path.exit(sampledTravel, 1));
-			negativeLimit = Math.min(ContraptionMotion.allowance(drive, -1), path.exit(sampledTravel, -1));
+			positiveLimit = Math.min(drive.allowance(1), path.exit(sampledTravel, 1));
+			negativeLimit = Math.min(drive.allowance(-1), path.exit(sampledTravel, -1));
 		}
 		return path == null ? job : Math.min(job, direction > 0 ? positiveLimit : negativeLimit);
 	}
@@ -215,9 +265,9 @@ public final class ContraptionActorWork implements ShaftWork {
 			: new Boundary(sampledJob, positiveLimit, negativeLimit);
 	}
 	@Override public int differentialcreate$wakeDirection() {
-		if (!motionManaged || path != null || !ContraptionMotion.active() || context.disabled || !behaviour().isActive(context)) return 0;
-		var drive = ContraptionPhysics.drive(context);
-		return drive == null ? 0 : ContraptionMotion.wakeDirection(drive);
+		if (!motionManaged || path != null || context.disabled || !behaviour().isActive(context)) return 0;
+		var drive = ActorDrive.of(context);
+		return drive == null || !drive.motionActive() ? 0 : drive.wakeDirection();
 	}
 	@Override public double differentialcreate$phaseLimit(double travel, double signedTravel, double remaining) {
 		if (path == null) return remaining;
@@ -227,20 +277,22 @@ public final class ContraptionActorWork implements ShaftWork {
 			: Double.POSITIVE_INFINITY;
 		return Math.min(sampledJob, geometric);
 	}
-	public double torque(ContraptionPhysics.Drive drive) {
+	public double torque(ActorDrive drive) {
 		differentialcreate$remainingTravel();
 		double required = required();
-		if (!Double.isFinite(required) || motionManaged && ContraptionMotion.active() && path == null) return 0;
+		if (!Double.isFinite(required) || motionManaged && drive.motionActive() && path == null) return 0;
 		double rated = BlockStressValues.getImpact(context.state.getBlock());
 		if (rated <= 0) rated = context.state.is(com.simibubi.create.AllBlocks.MECHANICAL_ROLLER.get()) ? 8 : 2;
 		return rated * workRatio(required, drive);
 	}
 	@Override public void differentialcreate$advanceTravel(double travel) {
-		var drive = ContraptionPhysics.drive(context);
+		var drive = ActorDrive.of(context);
 		if (drive == null) return;
 		double required = required();
 		if (!Double.isFinite(required)) return;
-		double ratio = workRatio(required, drive);
+		// Torque and progress must use the same sampled metric. The drive has
+		// already advanced its pose when it accepts this event's paid travel.
+		double ratio = motionManaged && drive.motionActive() && path != null ? sampledRatio : workRatio(required, drive);
 		double progress = Math.min(required, progress() + Math.max(0, travel) * ratio);
 		// Match the scheduler's tolerance in shaft travel, not scaled cutting work.
 		boolean complete = ratio > 0 && (required - progress) / ratio <= MachineWork.EPSILON;
@@ -263,6 +315,7 @@ public final class ContraptionActorWork implements ShaftWork {
 		if (pending()) {
 			var job = context.data.getCompound(JOB).copy();
 			context.data.remove(JOB); context.stall = false;
+			clearBreaking();
 			var pos = BlockPos.of(job.getLong("Pos"));
 			if (job.getString("Kind").equals("fill")) {
 				var state = NbtUtils.readBlockState(context.world.holderLookup(Registries.BLOCK), job.getCompound("State"));
@@ -282,8 +335,9 @@ public final class ContraptionActorWork implements ShaftWork {
 		}
 	}
 	public void clearBreaking() {
-		context.data.remove(TRAVEL); context.data.remove(TARGET); context.data.remove(FEED); context.data.remove("DCActorContact");
-		inspectedCell = null; inspectedState = null;
+		ActorTargets.forget(this); context.data.remove("DCActorInvalidated");
+		context.data.remove(TRAVEL); context.data.remove(TARGET); context.data.remove(FEED); context.data.remove(FEED_SCALE); context.data.remove("DCActorContact");
+		inspected = null;
 	}
 	public void cancel() {
 		if (pending()) {
