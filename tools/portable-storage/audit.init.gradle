@@ -1,0 +1,7 @@
+// Register the native interface audit only for explicitly requested Gradle runs.
+allprojects {
+    afterEvaluate {
+        if (plugins.hasPlugin('java'))
+            sourceSets.main.java.srcDir('tools/portable-storage')
+    }
+}

@@ -13,5 +13,6 @@ public class DifferentialCreateClient {
     public DifferentialCreateClient() {
         // Advances the client-side network speed extrapolation every tick
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post event) -> ClientNetworkSpeeds.onClientTick());
+        NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post event) -> com.diliupengyun.differential_create.client.PortableDockingPreview.tick());
     }
 }

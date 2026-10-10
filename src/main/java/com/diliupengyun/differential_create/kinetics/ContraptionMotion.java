@@ -104,7 +104,8 @@ public final class ContraptionMotion {
 	public static boolean active() { return advancing; }
 	public static boolean managed(AbstractContraptionEntity entity) {
 		return entity != null && (outputs.containsKey(entity) || entity.getContraption() != null && entity.getContraption().getActors().stream()
-			.anyMatch(a -> a.getRight() != null && ContraptionActorWork.of(a.getRight()).motionManaged()));
+			.anyMatch(a -> a.getRight() != null && (ContraptionActorWork.of(a.getRight()).motionManaged()
+				|| com.diliupengyun.differential_create.kinetics.portable.PortableDocking.isPortable(a.getRight()))));
 	}
 	public static void begin(Level level) {
 		advancing = true; sampling = true;
@@ -116,7 +117,8 @@ public final class ContraptionMotion {
 				for (var drive : drives) {
 					if (drive.stabilized() || !SequencerKinetics.controlled(shaft) && drives.stream().noneMatch(d -> d.root() == drive.root()
 						&& d.entity().getContraption().getActors().stream().anyMatch(a -> a.getRight() != null
-							&& ContraptionActorWork.of(a.getRight()).motionManaged()))) continue;
+							&& (ContraptionActorWork.of(a.getRight()).motionManaged()
+								|| com.diliupengyun.differential_create.kinetics.portable.PortableDocking.isPortable(a.getRight()))))) continue;
 					outputs.put(drive.root(), new Output(drive));
 					captured.add(drive.root());
 				}
@@ -160,6 +162,22 @@ public final class ContraptionMotion {
 		var o = outputs.get(root); return sampling || o == null || !o.ready || o.consumed ? null
 			: stalled(root) ? Vec3.ZERO : o.translation.scale(Math.max(o.lowerTravel, Math.min(o.upperTravel, o.signedTravel)));
 	}
+	/** Entity actors tick before their block controller consumes this tick's accepted displacement. */
+	public static Vec3 pendingPosition(ContraptionPhysics.Drive drive, Vec3 current) {
+		Double angle = angular(drive.root());
+		if (angle == null) return current;
+		if (!drive.rotation()) return current.add(linear(drive.root()));
+		if (drive.stabilized()) {
+			Vec3 orbit = drive.root().applyRotation(Vec3.atLowerCornerOf(drive.mount()), 1);
+			return current.add(rotate(orbit, angle, drive.axis()).subtract(orbit));
+		}
+		Vec3 centre = drive.root().getAnchorVec().add(.5, .5, .5);
+		return centre.add(rotate(current.subtract(centre), angle, drive.axis()));
+	}
+	public static Vec3 pendingDirection(ContraptionPhysics.Drive drive, Vec3 current) {
+		Double angle = angular(drive.root());
+		return angle == null || !drive.rotation() || drive.stabilized() ? current : rotate(current, angle, drive.axis());
+	}
 	public static ActorContactPath path(ContraptionPhysics.Drive drive, MovementContext context) {
 		var o = outputs.get(drive.root());
 		if (!advancing || o == null || o.ready || drive.root().isStalled() || drive.root().getContraption().stalled
@@ -167,7 +185,8 @@ public final class ContraptionMotion {
 			|| allowance(drive) <= MOTION_EPSILON) return null;
 		if (drive.shaft() instanceof LinearActuatorBlockEntity actuator && ((LinearActuatorAccessor) actuator).differentialcreate$waiting()) return null;
 		var behaviour = com.simibubi.create.api.behaviour.movement.MovementBehaviour.REGISTRY.get(context.state);
-		Vec3 point = drive.entity().toGlobalVector(Vec3.atCenterOf(context.localPos).add(behaviour.getActiveAreaOffset(context)), 1);
+		Vec3 point = drive.entity().toGlobalVector(Vec3.atCenterOf(context.localPos).add(
+			com.diliupengyun.differential_create.kinetics.portable.PortableDocking.isPortable(context) ? Vec3.ZERO : behaviour.getActiveAreaOffset(context)), 1);
 		if (!drive.rotation()) return ActorContactPath.linear(point(point), point(o.translation));
 		Vec3 orbit;
 		Vec3 centre;
@@ -180,6 +199,16 @@ public final class ContraptionMotion {
 			drive.axis() == Direction.Axis.Y ? axial : 0, drive.axis() == Direction.Axis.Z ? axial : 0);
 		Vec3 radial = orbit.subtract(along), tangent = rotate(radial, 90, drive.axis());
 		return ActorContactPath.circular(point(centre.add(along)), point(radial), point(tangent), o.angularRate * Math.PI / 180);
+	}
+	public static ActorContactPath directionPath(ContraptionPhysics.Drive drive, Vec3 local) {
+		Vec3 direction = drive.entity().applyRotation(local, 1);
+		var output = outputs.get(drive.root());
+		if (output == null || !advancing || output.ready || !drive.rotation() || drive.stabilized())
+			return ActorContactPath.linear(point(direction), point(Vec3.ZERO));
+		double axial = drive.axis().choose(direction.x, direction.y, direction.z);
+		Vec3 along = new Vec3(drive.axis() == Direction.Axis.X ? axial : 0, drive.axis() == Direction.Axis.Y ? axial : 0, drive.axis() == Direction.Axis.Z ? axial : 0);
+		Vec3 radial = direction.subtract(along);
+		return ActorContactPath.circular(point(along), point(radial), point(rotate(radial, 90, drive.axis())), output.angularRate * Math.PI / 180);
 	}
 	public static double travel(ContraptionPhysics.Drive drive) { return outputs.get(drive.root()).signedTravel; }
 	public static double angle(ContraptionPhysics.Drive drive) { return outputs.get(drive.root()).angle; }

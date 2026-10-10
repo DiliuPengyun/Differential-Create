@@ -15,6 +15,10 @@ public interface ActorDrive {
     double speed();
     double preferredSpeed();
     ActorContactPath path(MovementContext context);
+    default ActorContactPath directionPath(MovementContext context, net.minecraft.world.phys.Vec3 local) {
+        var direction = entity().applyRotation(local, 1);
+        return ActorContactPath.linear(new ActorContactPath.Point(direction.x, direction.y, direction.z), new ActorContactPath.Point(0, 0, 0));
+    }
     double travel();
     default double angle() { return 0; }
     default double angularRate() { return 0; }

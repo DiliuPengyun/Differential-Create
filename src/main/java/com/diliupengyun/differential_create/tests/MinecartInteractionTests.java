@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.function.Consumer;
 import com.diliupengyun.differential_create.kinetics.*;
+import com.diliupengyun.differential_create.kinetics.portable.*;
 import com.simibubi.create.AllAttachmentTypes;
 import com.simibubi.create.AllBlocks;
 import com.simibubi.create.api.behaviour.movement.MovementBehaviour;
@@ -26,7 +27,7 @@ import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
-/** Real native actor dwell and original minecart interactions remain compatible. */
+/** Native deployer pauses, physical interface parking and original minecart interactions. */
 @GameTestHolder("differentialcreate_motion")
 @PrefixGameTestTemplate(false)
 public final class MinecartInteractionTests {
@@ -112,27 +113,58 @@ public final class MinecartInteractionTests {
             var actor = f.root.getContraption().getActors().stream().filter(a -> a.getLeft().state().is(extra.getBlock())).findFirst().orElseThrow().getRight();
             var behaviour = MovementBehaviour.REGISTRY.get(actor.state); actor.disabled = true; f.push(.05); f.tick();
             actor.disabled = false;
-            if (!storage) {
-                actor.blockEntityData.putString("Mode", "PUNCH"); actor.data.put("HeldItem", new ItemStack(Items.DIAMOND_PICKAXE).save(h.getLevel().registryAccess()));
+            if (storage) {
+                var body = f.root.toGlobalVector(Vec3.atCenterOf(actor.localPos), 1);
+                var normal = f.root.applyRotation(Vec3.atLowerCornerOf(facing.getNormal()), 1);
+                var direction = Direction.getNearest(normal.x, normal.y, normal.z);
+                var station = BlockPos.containing(body).relative(direction, 2);
+                h.getLevel().setBlockAndUpdate(station, extra.setValue(BlockStateProperties.FACING, direction.getOpposite()));
+                var endpoint = (PortableEndpoint) h.getLevel().getBlockEntity(station);
+                class Arrival {
+                    int ticks;
+                    void tick() {
+                        ticks++;
+                        var dock = endpoint.differentialcreate$docking();
+                        if (dock.permission()) {
+                            h.assertFalse(actor.stall || f.root.isStalled(), "interface parks the mixed structure without a native actor pause");
+                            near(h, 0, f.cart.getDeltaMovement().lengthSqr(), 1e-16, "interface removes actual cart velocity before opening inventory");
+                            h.assertTrue(dock.dissipated > 0, "mixed-actor arrival pays finite interface braking work");
+                            var held = f.cart.position(); var drillTarget = f.contact();
+                            h.getLevel().setBlockAndUpdate(drillTarget, Blocks.STONE.defaultBlockState());
+                            for (int i = 0; i < 3; i++) {
+                                f.tick(); near(h, 0, f.cart.position().distanceTo(held), 1e-8, "physical parking supplies no drill feed");
+                                near(h, 0, MinecartPhysics.state(f.cart).actorWork, 0, "parked drill receives no free work");
+                            }
+                            h.assertTrue(h.getLevel().getBlockState(drillTarget).is(Blocks.STONE), "parked drill leaves its target intact");
+                            h.getLevel().setBlockAndUpdate(station, Blocks.AIR.defaultBlockState());
+                            h.assertFalse(dock.permission(), "removing the stationary endpoint immediately revokes storage");
+                            f.push(.4); f.tick();
+                            h.assertTrue(h.getLevel().getBlockState(drillTarget).isAir(), "drill resumes paid feed after physical endpoint removal");
+                            f.cleanup(); h.succeed(); return;
+                        }
+                        if (ticks > 60) h.fail("mixed-actor interface did not settle: " + dock.phase + ", " + dock.failure);
+                        h.runAfterDelay(1, this::tick);
+                    }
+                }
+                h.runAfterDelay(1, new Arrival()::tick); return;
             }
+            actor.blockEntityData.putString("Mode", "PUNCH"); actor.data.put("HeldItem", new ItemStack(Items.DIAMOND_PICKAXE).save(h.getLevel().registryAccess()));
             var point = f.root.toGlobalVector(Vec3.atCenterOf(actor.localPos).add(behaviour.getActiveAreaOffset(actor)), 1);
             var target = BlockPos.containing(point);
-            h.getLevel().setBlockAndUpdate(target, storage ? extra.setValue(BlockStateProperties.FACING, facing.getOpposite()) : Blocks.OBSIDIAN.defaultBlockState());
+            h.getLevel().setBlockAndUpdate(target, Blocks.OBSIDIAN.defaultBlockState());
             // Invoke the native contact callback at the current actor position;
             // the following native root ticks own dwell and cancellation.
             actor.position = point; actor.rotation = v -> f.root.applyRotation(v, 1); actor.motion = vector(facing, .05);
             behaviour.visitNewPosition(actor, target); f.root.tick();
-            if (storage) for (int i = 0; i < 6 && !actor.stall; i++) f.tick();
-            h.assertTrue(actor.stall && f.root.isStalled(), "actual native deployer/interface pauses its mounted structure");
+            h.assertTrue(actor.stall && f.root.isStalled(), "actual native deployer pauses its mounted structure");
             var held = f.cart.position(); var drillTarget = f.contact(); h.getLevel().setBlockAndUpdate(drillTarget, Blocks.STONE.defaultBlockState());
             for (int i = 0; i < 3; i++) {
                 f.tick(); near(h, 0, f.cart.position().distanceTo(held), 1e-8, "native dwell cannot move the cart");
                 near(h, 0, MinecartPhysics.state(f.cart).actorWork, 0, "native dwell cannot grant drill work");
             }
             h.assertTrue(h.getLevel().getBlockState(drillTarget).is(Blocks.STONE), "drill leaves its target intact during native dwell");
-            if (storage) h.getLevel().setBlockAndUpdate(target, Blocks.AIR.defaultBlockState());
-            else f.root.getContraption().setActorsActive(new ItemStack(extra.getBlock()), false);
-            f.root.tick(); h.assertFalse(f.root.isStalled(), "removing the interface or disabling the real deployer releases the pause");
+            f.root.getContraption().setActorsActive(new ItemStack(extra.getBlock()), false);
+            f.root.tick(); h.assertFalse(f.root.isStalled(), "disabling the real deployer releases its native pause");
             f.push(.4); f.tick(); h.assertTrue(h.getLevel().getBlockState(drillTarget).isAir(), "drill resumes paid feed after actual native dwell cancellation");
             f.cleanup(); h.succeed();
         });

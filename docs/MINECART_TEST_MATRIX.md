@@ -14,7 +14,7 @@
 | [MinecartTurningTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartTurningTests.java) | 280 | 五种工具的转向作业、圆弧中间目标、停转及真实剩余冲程、双车偏航/俯仰/复合姿态、稳定子结构与姿态数据包 |
 | **合计** | **715** | X/Z 轴上的操作覆盖东、西、南、北四个方向 |
 
-[MinecartRegression](../src/physicsTest/java/com/diliupengyun/differential_create/MinecartRegression.java) 另有 5668 项数值检查。本轮构建及全部数值回归、1298 项运动 GameTest、247 项常规机械与流体 GameTest 全部通过；运动套件包含 715 个矿车场景，其中新增转向场景 280 个；常规套件同时检查共用代码对活塞、轴承等设备的影响。
+[MinecartRegression](../src/physicsTest/java/com/diliupengyun/differential_create/MinecartRegression.java) 另有 5668 项数值检查。接口首版构建与全部数值回归、1332 项运动 GameTest、247 项常规机械与流体 GameTest 通过；运动套件包含上述 715 个矿车场景和 34 项新的物品／流体接口专项。接口循环样机、泵管网与完整流体套件的结果和边界见[接口验证记录](PORTABLE_STORAGE.md#验证入口)。
 
 ## 玩家操作与判据
 
@@ -43,7 +43,7 @@
 | 矿车上的实际竖直动力轴承稳定子结构 | 长臂保持朝向，工具只沿安装点的小圆弧进给；父子实体 tick 不重复作业 |
 | 停转时的实际姿态数据包和迟加入状态 | 经原生实体数据包编解码，偏航、俯仰和旋转状态与服务端接受值一致；复制实体的渲染朝向正确 |
 | 玩家联结、重复联结、拆开；两车支撑同一结构 | 链接只耗一次；拒绝二车闭环；普通拖车不分走结构质量；双支撑结构和工具只计一次 |
-| 实际机械手或存储接口驻留，再禁用手或拆掉对接端 | 原生接触回调产生真实暂停；钻头无位移/免费工作；释放后恢复 |
+| 实际机械手或存储接口驻留，再禁用手或拆掉对接端 | 机械手未完成敲击使用原生暂停；接口以有限反力停稳并开放会话；两者驻留期间钻头无位移或免费工作；取消后恢复实际进给 |
 | 上下车、漏斗/探测/激活铁轨、已点燃 TNT 重载 | 原生坐席、收集开关、检测信号、引信计时与重载 |
 
 ## 本轮发现并修复的问题

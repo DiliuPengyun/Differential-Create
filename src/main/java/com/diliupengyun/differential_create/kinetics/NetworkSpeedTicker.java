@@ -44,6 +44,7 @@ public final class NetworkSpeedTicker {
 	@SubscribeEvent
 	public static void onStop(ServerStoppedEvent event) {
 		ContraptionMotion.clear();
+		com.diliupengyun.differential_create.kinetics.portable.PortableDocking.clear();
 		FluidKinetics.clear();
 		NetworkTopology.clear();
 		ClientSpeedSync.clear();

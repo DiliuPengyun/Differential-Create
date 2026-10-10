@@ -17,6 +17,7 @@ public final class MachiningClock {
         return registry == null ? List.of() : new ArrayList<>(registry.values());
     }
     public static void advance(Level level) {
+        com.diliupengyun.differential_create.kinetics.portable.PortableDocking.time(level);
         if (level.tickRateManager().isFrozen()) return;
         for (var network : networks(level)) ClutchPhysics.prepare(network);
         ContraptionMotion.begin(level);
@@ -52,6 +53,8 @@ public final class MachiningClock {
             }
             if (++transitions > 16384) throw new IllegalStateException("Physical events did not converge in " + level.dimension().location());
             if (immediate) continue;
+            var docks = com.diliupengyun.differential_create.kinetics.portable.PortableDocking.prepare(networks);
+            motionBounded |= !docks.isEmpty();
             for (var network : networks) ElasticKinetics.refresh(network);
             // A change of direction must be observed before a tool can leave its contact.
             double horizon = motionBounded ? Math.min(remaining, RotationMath.TICK_MINUTES / 8) : remaining;
@@ -67,6 +70,8 @@ public final class MachiningClock {
             for (var phase : phases)
                 limits.add(new ElasticKinetics.WorkEvent(phase.binding.shaft(),
                     phase.binding.work().differentialcreate$boundary(phase.remaining), phase.wakeDirection));
+            for (var dock : docks) if (dock.drive() instanceof ContraptionPhysics.Drive drive)
+                limits.add(new ElasticKinetics.WorkEvent(drive.shaft(), new ShaftWork.Boundary(Double.POSITIVE_INFINITY, dock.boundary(1), dock.boundary(-1))));
             var snapshot = ElasticKinetics.snapshot(networks, hydraulicTorques);
             snapshot.setExternalTorques(hydraulicTorques);
             SequencerKinetics.boundaries(networks, limits);
@@ -84,6 +89,8 @@ public final class MachiningClock {
             trial.commit();
             SequencerKinetics.observe(networks, trial.result.duration(), hydraulicTorques);
             ContraptionMotion.advance(trial);
+            for (var dock : docks) if (dock.drive() instanceof ContraptionPhysics.Drive drive)
+                com.diliupengyun.differential_create.kinetics.portable.PortableDocking.observe(List.of(dock), trial.signedTravel(drive.shaft()));
             for (var network : networks) ElasticKinetics.publishReference(network);
             trial.fracture();
             MachineWork.batch(() -> {

@@ -39,7 +39,15 @@ public abstract class AbstractContraptionEntityMixin {
 	@Redirect(method = "tickActors", at = @At(value = "INVOKE",
 		target = "Lcom/simibubi/create/api/behaviour/movement/MovementBehaviour;visitNewPosition(Lcom/simibubi/create/content/contraptions/behaviour/MovementContext;Lnet/minecraft/core/BlockPos;)V"))
 	private void differentialcreate$sweepOnPhysicalClock(MovementBehaviour behaviour, MovementContext context, BlockPos pos) {
+		if (!context.world.isClientSide && com.diliupengyun.differential_create.kinetics.portable.PortableDocking.managed(context)) return;
 		if (!ContraptionActorWork.of(context).motionManaged()) behaviour.visitNewPosition(context, pos);
+	}
+	@Redirect(method = "tickActors", at = @At(value = "INVOKE",
+		target = "Lcom/simibubi/create/api/behaviour/movement/MovementBehaviour;tick(Lcom/simibubi/create/content/contraptions/behaviour/MovementContext;)V"))
+	private void differentialcreate$portableTick(MovementBehaviour behaviour, MovementContext context) {
+		if (!context.world.isClientSide && com.diliupengyun.differential_create.kinetics.portable.PortableDocking.managed(context))
+			com.diliupengyun.differential_create.kinetics.portable.PortableDocking.tick(context);
+		else behaviour.tick(context);
 	}
 	@Inject(method = "setBlock", at = @At("RETURN"))
 	private void differentialcreate$changedGeometry(BlockPos pos, StructureBlockInfo info, CallbackInfo ci) {
@@ -49,6 +57,7 @@ public abstract class AbstractContraptionEntityMixin {
 	private void differentialcreate$cancelWork(CallbackInfo ci) {
 		var self = (AbstractContraptionEntity) (Object) this;
 		if (self.getContraption() == null || self.level().isClientSide) return;
+		com.diliupengyun.differential_create.kinetics.portable.PortableDocking.forget(self);
 		for (var actor : self.getContraption().getActors())
 			if (actor.getRight() != null) ContraptionActorWork.of(actor.getRight()).cancel();
 		ContraptionPhysics.disassembling(self);
@@ -57,6 +66,8 @@ public abstract class AbstractContraptionEntityMixin {
 	@Inject(method = "remove", at = @At("HEAD"))
 	private void differentialcreate$releaseOwner(RemovalReason reason, CallbackInfo ci) {
 		var self = (AbstractContraptionEntity) (Object) this;
+		com.diliupengyun.differential_create.kinetics.portable.PortableDocking.forget(self,
+			reason == RemovalReason.UNLOADED_TO_CHUNK || reason == RemovalReason.UNLOADED_WITH_PLAYER);
 		if (!self.level().isClientSide && self.getContraption() != null)
 			for (var actor : self.getContraption().getActors())
 				if (actor.getRight() != null) ActorTargets.forget(ContraptionActorWork.of(actor.getRight()));

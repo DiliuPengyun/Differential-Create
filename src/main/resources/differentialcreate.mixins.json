@@ -5,6 +5,11 @@
   "minVersion": "0.8",
   "refmap": "differentialcreate.refmap.json",
   "mixins": [
+    "PortableStorageInterfaceBlockEntityMixin",
+    "PortableStorageInterfaceMovementMixin",
+    "PortableInterfaceComparatorMixin",
+    "PortableItemInterfaceBlockEntityMixin",
+    "PortableFluidInterfaceBlockEntityMixin",
     "ActorTargetLevelMixin",
     "MinecartEntityMixin",
     "MinecartSpecialDragMixin",

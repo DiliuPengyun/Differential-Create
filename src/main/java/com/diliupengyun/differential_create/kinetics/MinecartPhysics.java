@@ -35,6 +35,7 @@ public final class MinecartPhysics {
         public boolean assembling;
         public double savedPushX, savedPushZ;
         public double actorWork;
+        public boolean dockingStart;
         public Vec3 actorDirection = Vec3.ZERO;
     }
     private record Body(List<AbstractContraptionEntity> structures, double share, boolean incomplete) {}
@@ -111,6 +112,7 @@ public final class MinecartPhysics {
     public static void save(AbstractMinecart cart, CompoundTag tag) {
         tag.putDouble("DCMinecartInertia", state(cart).inertia);
         tag.putBoolean("DCMinecartStructure", !body(cart).structures.isEmpty() || state(cart).awaitingStructure);
+        tag.putBoolean("DCMinecartDockStart", state(cart).dockingStart);
         var direction = state(cart).actorDirection;
         if (direction.lengthSqr() > 0) {
             var feed = new ListTag(); feed.add(DoubleTag.valueOf(direction.x)); feed.add(DoubleTag.valueOf(direction.y)); feed.add(DoubleTag.valueOf(direction.z));
@@ -121,6 +123,7 @@ public final class MinecartPhysics {
         double saved = tag.getDouble("DCMinecartInertia");
         state(cart).inertia = Double.isFinite(saved) && saved >= MinecartMotion.BASE_INERTIA ? saved : MinecartMotion.BASE_INERTIA;
         state(cart).awaitingStructure = tag.getBoolean("DCMinecartStructure");
+        state(cart).dockingStart = tag.getBoolean("DCMinecartDockStart");
         var feed = tag.getList("DCMinecartFeed", Tag.TAG_DOUBLE);
         var direction = feed.size() == 3 ? new Vec3(feed.getDouble(0), feed.getDouble(1), feed.getDouble(2)) : Vec3.ZERO;
         state(cart).actorDirection = Double.isFinite(direction.lengthSqr()) && direction.lengthSqr() > 1e-12 ? direction.normalize() : Vec3.ZERO;
@@ -183,7 +186,7 @@ public final class MinecartPhysics {
         double allowed = MinecartMotion.energy(j, before.horizontalDistance()) + MinecartMotion.RAIL_POWER * RotationMath.TICK_MINUTES;
         if (MinecartMotion.energy(j, next.horizontalDistance()) > allowed)
             next = speed(next, Math.sqrt(2 * allowed / j) / MinecartMotion.RPM_PER_SPEED);
-        return next;
+        return com.diliupengyun.differential_create.kinetics.portable.PortableDocking.balanceDrive(cart, before, next, j);
     }
     public static Vec3 brake(AbstractMinecart cart, Vec3 before) {
         if (!enabled(cart)) return before.multiply(.5, 0, .5);
@@ -201,7 +204,7 @@ public final class MinecartPhysics {
         double allowed = MinecartMotion.energy(j, before.horizontalDistance()) + MinecartMotion.CONTROL_POWER * RotationMath.TICK_MINUTES;
         if (MinecartMotion.energy(j, next.horizontalDistance()) > allowed)
             next = speed(next, Math.sqrt(2 * allowed / j) / MinecartMotion.RPM_PER_SPEED);
-        cart.setDeltaMovement(next);
+        cart.setDeltaMovement(com.diliupengyun.differential_create.kinetics.portable.PortableDocking.balanceDrive(cart, before, next, j));
     }
     public static void assembled(AbstractMinecart cart) {
         if (!enabled(cart)) return;

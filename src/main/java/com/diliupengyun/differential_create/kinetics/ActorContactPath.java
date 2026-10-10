@@ -63,4 +63,24 @@ public final class ActorContactPath {
 		}
 		return next > 1e-6 ? next : 1e-6;
 	}
+	/** Next crossing of an arbitrary plane; used by finite docking regions and facing limits. */
+	public double crossing(double travel, double direction, int axis, double plane) {
+		if (rate == 0) {
+			double v = velocity.coordinate(axis) * direction;
+			double result = v == 0 ? Double.POSITIVE_INFINITY : (plane - at(travel).coordinate(axis)) / v;
+			return result > 1e-6 ? result : Double.POSITIVE_INFINITY;
+		}
+		double a = cosine.coordinate(axis), b = sine.coordinate(axis), radius = Math.hypot(a, b);
+		if (radius == 0) return Double.POSITIVE_INFINITY;
+		double height = (plane - centre.coordinate(axis)) / radius;
+		if (Math.abs(height) >= 1) return Double.POSITIVE_INFINITY;
+		double next = Double.POSITIVE_INFINITY, offset = Math.atan2(b, a), angle = Math.acos(height);
+		for (double root : new double[]{offset - angle, offset + angle}) {
+			double phase = direction * Math.signum(rate) * (root - rate * travel);
+			phase -= Math.floor(phase / (2 * Math.PI)) * 2 * Math.PI;
+			if (phase < 1e-9) phase += 2 * Math.PI;
+			next = Math.min(next, phase / Math.abs(rate));
+		}
+		return next > 1e-6 ? next : Double.POSITIVE_INFINITY;
+	}
 }

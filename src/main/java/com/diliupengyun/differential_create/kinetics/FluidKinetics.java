@@ -31,7 +31,7 @@ public final class FluidKinetics {
     private static final class WorkBudget {
         long tick = Long.MIN_VALUE, used; int cursor;
         double airInitialised, airIn, airOut;
-        final Map<IFluidHandler, Double> receipts = new IdentityHashMap<>();
+        final Map<Object, Double> receipts = new IdentityHashMap<>();
         void begin(Level level) { if (tick != level.getGameTime()) { tick = level.getGameTime(); used = 0; } }
     }
     public record AirAudit(double initialised, double incoming, double outgoing) {}
@@ -39,6 +39,9 @@ public final class FluidKinetics {
         var b = budgets.computeIfAbsent(level, key -> new WorkBudget()); return new AirAudit(b.airInitialised, b.airIn, b.airOut);
     }
     private FluidKinetics() {}
+    private static Object inventoryKey(IFluidHandler handler) {
+        return com.diliupengyun.differential_create.kinetics.portable.DockingSession.inventoryIdentity(handler);
+    }
     public static void register(FluidTransportBehaviour pipe) {
         Level level = pipe.getWorld();
         if (level == null || level.isClientSide || pipe.blockEntity.isVirtual()) return;
@@ -151,7 +154,7 @@ public final class FluidKinetics {
         FluidStack offered = FluidStack.EMPTY;
         boolean supplies; double surface, face;
         boolean retained;
-        IFluidHandler receiptHandler; double receipt;
+        Object receiptHandler; double receipt;
         Endpoint(FluidTransportBehaviour pipe, Direction side, FlowSource source) {
             this.pipe = pipe; this.side = side; this.source = source;
             buffer = state(pipe).buffers.computeIfAbsent(side, key -> new PipeHydraulics.Buffer());
@@ -269,7 +272,7 @@ public final class FluidKinetics {
                 double accepted = p.differentialcreate$discharge(phase, 1000 + pending, FluidAction.SIMULATE);
                 if (accepted >= 0) return Math.max(0, accepted - pending);
             }
-            double others = Math.max(0, budgets.get(pipe.getWorld()).receipts.getOrDefault(handler, 0d) - receipt);
+            double others = Math.max(0, budgets.get(pipe.getWorld()).receipts.getOrDefault(inventoryKey(handler), 0d) - receipt);
             // A bounded probe avoids overflow in native whole-bucket machines.
             return FluidBudget.receiptSpace(handler.fill(phase.copyWithAmount(1000), FluidAction.SIMULATE), others + pending);
         }
@@ -284,8 +287,8 @@ public final class FluidKinetics {
             // Rounding each port up would reserve two mB for .4 + .6 mB and
             // permanently prevent the last real mB from being delivered.
             receipt = pending;
-            receiptHandler = handler;
-            if (handler != null && receipt != 0) claims.merge(handler, receipt, Double::sum);
+            receiptHandler = inventoryKey(handler);
+            if (handler != null && receipt != 0) claims.merge(receiptHandler, receipt, Double::sum);
         }
         void deliver() {
             if (!buffer.delivery || handler == null || buffer.amount == 0) return;
@@ -335,7 +338,7 @@ public final class FluidKinetics {
         final List<Channel> channels = new ArrayList<>(); final List<Set<Direction>> sides = new ArrayList<>();
         final List<List<Channel>> adjacent = new ArrayList<>();
         final Map<FluidTransportBehaviour, Integer> index = new IdentityHashMap<>();
-        final Map<IFluidHandler, Double> worldClaims = new IdentityHashMap<>();
+        final Map<Object, Double> worldClaims = new IdentityHashMap<>();
         final double[] capacity, geometryCapacity;
         boolean active; List<QueuedFluidSolver.Cell> cells; List<QueuedFluidSolver.Link> links;
         TransferPlan candidatePlan;
@@ -454,10 +457,10 @@ public final class FluidKinetics {
                 }
             }
             double free = 0; boolean vent = false; int lowest = inlet.pipe.getPos().getY(); boolean driven = false;
-            var counted = Collections.newSetFromMap(new IdentityHashMap<IFluidHandler, Boolean>());
-            var localPending = new IdentityHashMap<IFluidHandler, Double>();
+            var counted = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
+            var localPending = new IdentityHashMap<Object, Double>();
             for (var e : endpoints) if (seen[index.get(e.pipe)] && e.handler != null)
-                localPending.merge(e.handler, e.buffer.amount, Double::sum);
+                localPending.merge(inventoryKey(e.handler), e.buffer.amount, Double::sum);
             for (int n : visit) {
                 var pipe = members.get(n); var saved = state(pipe); free += saved.airVolume();
                 for (var b : saved.buffers.values()) free -= b.amount;
@@ -467,13 +470,13 @@ public final class FluidKinetics {
             // Retained world stock is already owned, irrespective of endpoint
             // iteration order. It cannot occupy a second bucket's receiving room.
             for (var e : endpoints) if (seen[index.get(e.pipe)] && e.handler instanceof OpenPipeDischarge.Placement
-                && counted.add(e.handler)) free -= e.handler.getFluidInTank(0).getAmount();
+                && counted.add(inventoryKey(e.handler))) free -= e.handler.getFluidInTank(0).getAmount();
             for (var e : endpoints) if (seen[index.get(e.pipe)] && e.handler != null) {
                 if (!(e.handler instanceof OpenPipeDischarge.Placement) && e.receives(identity)
                     && (mouth(index.get(e.pipe), e.side).isEmpty() || same(mouth(index.get(e.pipe), e.side), identity))
-                    && counted.add(e.handler)) {
-                    double reserved = Math.max(0, budgets.get(inlet.pipe.getWorld()).receipts.getOrDefault(e.handler, 0d)
-                        - localPending.getOrDefault(e.handler, 0d));
+                    && counted.add(inventoryKey(e.handler))) {
+                    double reserved = Math.max(0, budgets.get(inlet.pipe.getWorld()).receipts.getOrDefault(inventoryKey(e.handler), 0d)
+                        - localPending.getOrDefault(inventoryKey(e.handler), 0d));
                     reserved += frames.get(inlet.pipe.getWorld()).borrowedWorldRoom(e.handler, this, deadline);
                     if (!Double.isFinite(reserved)) return 0;
                     // Probe room for the new whole bucket AND previously owned
@@ -490,7 +493,7 @@ public final class FluidKinetics {
          * already subtracts its cached world stock. Cache the bounded walk until
          * that component next commits, without reserving imaginary tank space. */
         double borrowedWorldRoom(IFluidHandler receiver, long deadline) {
-            var cached = worldClaims.get(receiver); if (cached != null) return cached;
+            var cached = worldClaims.get(inventoryKey(receiver)); if (cached != null) return cached;
             var identities = new ArrayList<FluidStack>(); double owned = 0;
             for (var e : endpoints) if (e.handler instanceof OpenPipeDischarge.Placement) {
                 var stock = e.handler.getFluidInTank(0);
@@ -499,11 +502,11 @@ public final class FluidKinetics {
                     owned += part.amount(); if (identities.stream().noneMatch(s -> same(s, part.identity()))) identities.add(part.identity());
                 }
             }
-            if (owned == 0) { worldClaims.put(receiver, 0d); return 0; }
+            if (owned == 0) { worldClaims.put(inventoryKey(receiver), 0d); return 0; }
             double claim = 0;
             for (var identity : identities) {
                 var seen = new boolean[members.size()]; var visit = new ArrayList<Integer>();
-                for (var e : endpoints) if (e.handler == receiver && e.receives(identity)) {
+                for (var e : endpoints) if (inventoryKey(e.handler) == inventoryKey(receiver) && e.receives(identity)) {
                     int start = index.get(e.pipe); if (!seen[start]) { seen[start] = true; visit.add(start); }
                 }
                 if (visit.isEmpty()) continue;
@@ -520,11 +523,11 @@ public final class FluidKinetics {
                     var saved = state(members.get(n)); free += saved.airVolume();
                     for (var b : saved.buffers.values()) free -= b.amount;
                 }
-                var counted = Collections.newSetFromMap(new IdentityHashMap<IFluidHandler, Boolean>());
+                var counted = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
                 for (var e : endpoints) if (seen[index.get(e.pipe)] && e.handler != null) {
-                    if (e.handler == receiver) alreadyReserved += e.buffer.amount;
+                    if (inventoryKey(e.handler) == inventoryKey(receiver)) alreadyReserved += e.buffer.amount;
                     if (e.handler instanceof OpenPipeDischarge.Placement) {
-                        double stock = counted.add(e.handler) ? e.handler.getFluidInTank(0).getAmount() : 0;
+                        double stock = counted.add(inventoryKey(e.handler)) ? e.handler.getFluidInTank(0).getAmount() : 0;
                         free -= stock; worldStock += stock + (e.buffer.delivery ? 0 : e.buffer.amount);
                     }
                 }
@@ -533,12 +536,12 @@ public final class FluidKinetics {
                 // until it enters physical cells; ordinary pipe FIFO is intact.
                 if (worldStock > 0) claim += identities.size() == 1 ? Math.max(0, -free - alreadyReserved) : worldStock;
             }
-            worldClaims.put(receiver, claim); return claim;
+            worldClaims.put(inventoryKey(receiver), claim); return claim;
         }
         QueuedFluidSolver.Result limit(QueuedFluidSolver.Result r, double minutes, long deadline) {
             candidatePlan = null;
             double scale = 1;
-            var withdrawals = new IdentityHashMap<IFluidHandler, Map<FluidStack, Double>>();
+            var withdrawals = new IdentityHashMap<Object, Map<FluidStack, Double>>();
             for (int e = 0; e < channels.size(); e++) {
                 var c = channels.get(e); double amount = r.flow()[e] * minutes / RotationMath.TICK_MINUTES;
                 if (c.endpoint == null || amount >= 0) continue;
@@ -556,7 +559,7 @@ public final class FluidKinetics {
                 }
                 scale = Math.min(scale, allowed / needed);
                 if (c.endpoint.buffer.amount == 0) {
-                    var kinds = withdrawals.computeIfAbsent(c.endpoint.handler, key -> new LinkedHashMap<>());
+                    var kinds = withdrawals.computeIfAbsent(inventoryKey(c.endpoint.handler), key -> new LinkedHashMap<>());
                     var key = kinds.keySet().stream().filter(s -> same(s, phase)).findFirst().orElse(phase.copyWithAmount(1));
                     double total = kinds.merge(key, needed, Double::sum); scale = Math.min(scale, allowed / total);
                 }
@@ -570,7 +573,7 @@ public final class FluidKinetics {
             for (int pass = 0; pass < QueuedFluidSolver.CONTACT_PASSES && scale > 0; pass++) {
                 if (System.nanoTime() >= deadline) return QueuedFluidSolver.stationary(members.size(), channels.size());
                 var plan = withdraw(r, minutes, scale);
-                var receipts = new IdentityHashMap<IFluidHandler, Double>();
+                var receipts = new IdentityHashMap<Object, Double>();
                 double restricted = scale;
                 for (int e = 0; e < channels.size(); e++) {
                     var c = channels.get(e); double amount = r.flow()[e] * minutes / RotationMath.TICK_MINUTES * scale;
@@ -592,13 +595,13 @@ public final class FluidKinetics {
                             : c.endpoint.receives(phase)))) break;
                         double taken = part.amount();
                         if (c.endpoint != null && !phase.isEmpty()) {
-                            double room = c.endpoint.outputSpace(phase) - receipts.getOrDefault(c.endpoint.handler, 0d) - delivered;
+                            double room = c.endpoint.outputSpace(phase) - receipts.getOrDefault(inventoryKey(c.endpoint.handler), 0d) - delivered;
                             taken = Math.min(taken, Math.max(0, room)); delivered += taken;
                         }
                         allowed += taken;
                         if (taken < part.amount()) break;
                     }
-                    if (c.endpoint != null && delivered > 0) receipts.merge(c.endpoint.handler, delivered, Double::sum);
+                    if (c.endpoint != null && delivered > 0) receipts.merge(inventoryKey(c.endpoint.handler), delivered, Double::sum);
                     if (allowed + 8 * Math.ulp(Math.max(1, wanted)) < wanted) {
                         restricted = Math.min(restricted, scale * allowed / wanted); break;
                     }
@@ -714,7 +717,7 @@ public final class FluidKinetics {
         final Map<BlockPos, BlockState> adjacentStates = new HashMap<>(); final Map<BlockPos, Object> adjacentEntities = new HashMap<>();
         final Set<BlockPos> inactive = new HashSet<>();
         final List<Endpoint> retainedInlets = new ArrayList<>();
-        final Map<IFluidHandler, List<Component>> sharedReceivers = new IdentityHashMap<>();
+        final Map<Object, List<Component>> sharedReceivers = new IdentityHashMap<>();
         private long acceptedSteps, jointIterations, retries; private double shortestStep = Double.POSITIVE_INFINITY;
         Frame(Level level) { this.level = level; }
         public int pipeCount() { return captured.size(); }
@@ -743,21 +746,21 @@ public final class FluidKinetics {
             for (var c : components) for (var e : c.endpoints) e.updateReceipt();
             sharedReceivers.clear();
             for (var c : components) for (var e : c.endpoints) if (e.handler != null && !(e.handler instanceof OpenPipeDischarge.Placement)) {
-                var users = sharedReceivers.computeIfAbsent(e.handler, key -> new ArrayList<>());
+                var users = sharedReceivers.computeIfAbsent(inventoryKey(e.handler), key -> new ArrayList<>());
                 if (!users.contains(c)) users.add(c);
             }
         }
         double borrowedWorldRoom(IFluidHandler receiver, Component requester, long deadline) {
-            var users = sharedReceivers.get(receiver); if (users == null || users.size() < 2) return 0;
+            var users = sharedReceivers.get(inventoryKey(receiver)); if (users == null || users.size() < 2) return 0;
             double claimed = 0;
             for (var c : users) if (c != requester) claimed += c.borrowedWorldRoom(receiver, deadline);
             return claimed;
         }
         void deliverShared() {
-            var groups = new IdentityHashMap<IFluidHandler, List<Endpoint>>();
+            var groups = new IdentityHashMap<Object, List<Endpoint>>();
             for (var c : components) for (var e : c.endpoints)
                 if (e.handler != null && !(e.handler instanceof OpenPipeDischarge.Placement))
-                    groups.computeIfAbsent(e.handler, key -> new ArrayList<>()).add(e);
+                    groups.computeIfAbsent(inventoryKey(e.handler), key -> new ArrayList<>()).add(e);
             for (var entries : groups.entrySet()) {
                 var ports = entries.getValue();
                 if (ports.size() < 2 || ports.stream().noneMatch(e -> e.buffer.delivery)) continue;
@@ -780,7 +783,10 @@ public final class FluidKinetics {
                         returnTankFraction(ports, identity);
                         continue;
                     }
-                    int accepted = entries.getKey().fill(identity.copyWithAmount(integer), FluidAction.EXECUTE);
+                    // Budget identity is shared; permission remains attached to an actual live endpoint.
+                    var receiver = ports.stream().map(e -> e.handler).filter(h -> !(h instanceof com.diliupengyun.differential_create.kinetics.portable.DockingSession.Bound bound)
+                        || bound.session().valid()).findFirst().orElse(null);
+                    int accepted = receiver == null ? 0 : receiver.fill(identity.copyWithAmount(integer), FluidAction.EXECUTE);
                     if (accepted < 0 || accepted > integer) throw new IllegalStateException("Invalid shared external receipt");
                     double remaining = accepted;
                     for (var e : ports) if (remaining > 0 && e.buffer.volume(identity) > 0) {

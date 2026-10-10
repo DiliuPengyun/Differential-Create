@@ -202,6 +202,7 @@ C = Σc_i |r_i|³          （平方阻力）
 | 标定、惯量、结构几何 | [PhysicsTuning](src/main/java/com/diliupengyun/differential_create/kinetics/PhysicsTuning.java)、[InertiaRegistry](src/main/java/com/diliupengyun/differential_create/kinetics/InertiaRegistry.java)、[ContraptionGeometry](src/main/java/com/diliupengyun/differential_create/kinetics/ContraptionGeometry.java) |
 | 数值、精度、回退、动画与轨迹 | [physicsTest](src/physicsTest/java/com/diliupengyun/differential_create)；树形参考解与回退见 [TreeSolverRegression](src/physicsTest/java/com/diliupengyun/differential_create/kinetics/TreeSolverRegression.java) |
 | 真实拓扑、加工、供汽、管网与结构 | [GameTest](src/main/java/com/diliupengyun/differential_create/tests) |
+| 移动式物品／流体接口、循环搭建与扩展 | [接口使用指南](docs/PORTABLE_STORAGE.md)、[停靠行为设计](docs/PORTABLE_STORAGE_DESIGN.md)；`runMotionCoverageServer -PmotionSelect=dock_.+` |
 | 黄铜等级名单 | [brass_strength.json](src/main/resources/data/differentialcreate/tags/block/brass_strength.json) |
 | 黄铜离合器可复用模型生成 | [generate_clutch_models.py](tools/generate_clutch_models.py) |
 | CI 构建与日志保存 | [build.yml](.github/workflows/build.yml) |

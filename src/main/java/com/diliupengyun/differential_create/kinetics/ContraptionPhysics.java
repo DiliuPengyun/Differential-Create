@@ -44,6 +44,7 @@ public final class ContraptionPhysics {
 		@Override public double speed() { return NetworkDynamics.preciseSpeed(shaft); }
 		@Override public double preferredSpeed() { return shaft.getTheoreticalSpeed(); }
 		@Override public ActorContactPath path(MovementContext context) { return ContraptionMotion.path(this, context); }
+		@Override public ActorContactPath directionPath(MovementContext context, Vec3 local) { return ContraptionMotion.directionPath(this, local); }
 		@Override public double travel() { return ContraptionMotion.travel(this); }
 		@Override public double angle() { return ContraptionMotion.angle(this); }
 		@Override public double angularRate() { return ContraptionMotion.angularRate(this); }
@@ -212,7 +213,8 @@ public final class ContraptionPhysics {
 		double torque = 0;
 		for (var drive : drives(be)) for (var pair : drive.entity.getContraption().getActors()) {
 			var context = pair.getRight();
-			if (context != null) torque += ContraptionActorWork.of(context).torque(drive);
+			if (context != null) torque += ContraptionActorWork.of(context).torque(drive)
+				+ com.diliupengyun.differential_create.kinetics.portable.PortableDocking.torque(context);
 		}
 		return torque;
 	}

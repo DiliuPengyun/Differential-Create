@@ -20,7 +20,11 @@ public abstract class MinecartEntityMixin implements IMinecartDynamics {
     @Inject(method = "tick", at = @At("HEAD"))
     private void differentialcreate$mass(CallbackInfo ci) {
         var self = (AbstractMinecart) (Object) this;
-        if (MinecartPhysics.enabled(self)) { MinecartPhysics.state(self).actorWork = 0; MinecartPhysics.refresh(self); }
+        if (MinecartPhysics.enabled(self)) {
+            var state = MinecartPhysics.state(self); state.actorWork = 0;
+            if (self.getDeltaMovement().horizontalDistanceSqr() > 1e-16) state.dockingStart = false;
+            MinecartPhysics.refresh(self);
+        }
     }
     @Inject(method = "applyNaturalSlowdown", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$drag(CallbackInfo ci) {
@@ -59,9 +63,10 @@ public abstract class MinecartEntityMixin implements IMinecartDynamics {
         var state = MinecartPhysics.state(cart);
         // A powered rail keeps feeding a loaded tool after cutting exhausts the
         // cart's speed; empty-cart native wall-start behaviour remains intact.
-        if (MinecartPhysics.enabled(cart) && x == before.x && z == before.z && state.actorWork > 0
+        if (MinecartPhysics.enabled(cart) && x == before.x && z == before.z && (state.actorWork > 0 || state.dockingStart)
             && MinecartPhysics.mounted(cart) != null && state.actorDirection.horizontalDistanceSqr() > 0) {
-            var next = before.add(state.actorDirection.scale(MinecartMotion.RAIL_ACCELERATION)); x = next.x; z = next.z;
+            var next = before.add(state.actorDirection.scale(state.dockingStart ? .02 : MinecartMotion.RAIL_ACCELERATION)); x = next.x; z = next.z;
+            state.dockingStart = false;
         }
         cart.setDeltaMovement(MinecartPhysics.impulse(cart, before, new Vec3(x, y, z).subtract(before)));
     }
