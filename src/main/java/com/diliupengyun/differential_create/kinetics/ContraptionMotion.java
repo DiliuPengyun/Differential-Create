@@ -91,8 +91,7 @@ public final class ContraptionMotion {
 			angularRate = 0; angularLimit = upperTravel = Double.POSITIVE_INFINITY; lowerTravel = Double.NEGATIVE_INFINITY; ready = true;
 		}
 		void advance(double signed) {
-			// A dwelling actor can pause the native controller while its shaft
-			// keeps turning to pay for the action. That shaft travel is not feed.
+			// Preserve native pauses from behaviours outside the paid feed model.
 			if (stalled(drive.root())) return;
 			signedTravel = Math.max(lowerTravel, Math.min(upperTravel, signedTravel + signed));
 			angle = Math.max(-angularLimit, Math.min(angularLimit, signedTravel * angularRate));
@@ -102,6 +101,7 @@ public final class ContraptionMotion {
 		return root != null && (root.isStalled() || root.getContraption() != null && root.getContraption().stalled);
 	}
 	public static boolean active() { return advancing; }
+	public static boolean samplingGeometry() { return sampling; }
 	public static boolean managed(AbstractContraptionEntity entity) {
 		return entity != null && (outputs.containsKey(entity) || entity.getContraption() != null && entity.getContraption().getActors().stream()
 			.anyMatch(a -> a.getRight() != null && (ContraptionActorWork.of(a.getRight()).motionManaged()
@@ -128,7 +128,7 @@ public final class ContraptionMotion {
 	}
 	public static void advance(ElasticKinetics.Trial trial) {
 		for (var output : outputs.values()) if (!output.ready && !output.drive.shaft().isRemoved())
-			output.advance(trial.signedTravel(output.drive.shaft()));
+			output.advance(ActorFeed.enabled(output.drive.shaft()) ? trial.outputTravel(output.drive.shaft()) : trial.signedTravel(output.drive.shaft()));
 	}
 	public static void end(Level level) {
 		for (var output : outputs.values()) if (output.drive != null && output.drive.shaft().getLevel() == level) output.ready = true;
@@ -214,8 +214,8 @@ public final class ContraptionMotion {
 	public static double angle(ContraptionPhysics.Drive drive) { return outputs.get(drive.root()).angle; }
 	public static double angularRate(ContraptionPhysics.Drive drive) { return outputs.get(drive.root()).angularRate; }
 	public static double allowance(ContraptionPhysics.Drive drive) {
-		double speed = NetworkDynamics.preciseSpeed(drive.shaft());
-		double direction = Math.signum(speed == 0 ? drive.shaft().getTheoreticalSpeed() : speed);
+		double speed = drive.speed();
+		double direction = Math.signum(speed == 0 ? drive.preferredSpeed() : speed);
 		return allowance(drive, direction == 0 ? 1 : direction);
 	}
 	/** A blocked feed must refresh its tool load as soon as the shaft turns back inward. */
@@ -223,8 +223,8 @@ public final class ContraptionMotion {
 		var output = outputs.get(drive.root());
 		if (!advancing || sampling || output == null || output.ready || stalled(drive.root()) || stalled(drive.entity())) return 0;
 		if (drive.shaft() instanceof LinearActuatorBlockEntity actuator && ((LinearActuatorAccessor) actuator).differentialcreate$waiting()) return 0;
-		double speed = NetworkDynamics.preciseSpeed(drive.shaft());
-		double direction = Math.signum(speed == 0 ? drive.shaft().getTheoreticalSpeed() : speed);
+		double speed = drive.speed();
+		double direction = Math.signum(speed == 0 ? drive.preferredSpeed() : speed);
 		if (direction == 0) direction = 1;
 		return allowance(drive, direction) <= MOTION_EPSILON && allowance(drive, -direction) > MOTION_EPSILON
 			? (int) -direction : 0;

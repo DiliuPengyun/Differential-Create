@@ -277,7 +277,7 @@ final class ContraptionPhysicsTests {
 			h.setBlock(pos.east(), Blocks.SLIME_BLOCK);
 			h.setBlock(pos.east().south(), Blocks.CHEST);
 			if (i == 1) ((ChestBlockEntity) h.getBlockEntity(pos.east().south())).setItem(0, new ItemStack(Items.STONE, 16));
-			h.setBlock(pos.east().above(), i == 0
+			h.setBlock(i == 0 ? pos.east(2) : pos.east().above(), i == 0
 				? AllBlocks.DEPLOYER.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST)
 				: AllBlocks.MECHANICAL_ROLLER.getDefaultState().setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST));
 		}
@@ -288,27 +288,25 @@ final class ContraptionPhysicsTests {
 				var contraption = shaft.getMovedContraption().getContraption();
 				var pair = contraption.getActors().getFirst(); var context = pair.getRight();
 				var behaviour = MovementBehaviour.REGISTRY.get(context.state);
-				BlockPos target = h.absolutePos(bearings[i].east(3).offset(0, i == 0 ? 1 : -1, 0));
+				if (i == 0) { MovingDeployerTests.paidLifecycle(h, shaft, pair); shaft.disassemble(); continue; }
+				BlockPos target = h.absolutePos(bearings[i].east(3).offset(0, -1, 0));
 				context.position = Vec3.atCenterOf(target); context.motion = context.relativeMotion = new Vec3(1, 0, 0);
-				if (i == 0) {
-					context.blockEntityData.putString("Mode", "PUNCH");
-					context.data.put("HeldItem", new ItemStack(Items.DIAMOND_PICKAXE).save(h.getLevel().registryAccess()));
-				} else {
+
 					context.blockEntityData.putInt("ScrollValue", 1);
 					context.blockEntityData.put("Filter", new ItemStack(Items.STONE).save(h.getLevel().registryAccess()));
 					h.getLevel().setBlockAndUpdate(target.below(), Blocks.BEDROCK.defaultBlockState());
-				}
+
 				for (double[] schedule : new double[][]{{16}, {512}, {0, 32, -64, 128}}) {
-					h.getLevel().setBlockAndUpdate(target, i == 0 ? Blocks.GLASS.defaultBlockState() : Blocks.AIR.defaultBlockState());
+					h.getLevel().setBlockAndUpdate(target, Blocks.AIR.defaultBlockState());
 					int beforeMaterials = stones(context);
 					behaviour.visitNewPosition(context, target); contraption.stalled = true;
 					var work = ContraptionActorWork.of(context);
 					double remaining = work.differentialcreate$remainingTravel();
-					h.assertTrue(work.pending() && Double.isFinite(remaining), "native deployer/roller callback queues work");
+					h.assertTrue(work.pending() && Double.isFinite(remaining), "native roller callback queues work");
 					if (i == 1) near(h, beforeMaterials - 1, stones(context), 0, "roller reserves exactly one real inventory item");
 					for (int repeat = 0; repeat < 25; repeat++) { speed(shaft, 0); behaviour.tick(context); MachiningClock.advance(h.getLevel()); }
-					near(h, remaining, work.differentialcreate$remainingTravel(), 1e-9, "deployer/roller makes no free progress at zero speed");
-					h.assertTrue(h.getLevel().getBlockState(target).is(i == 0 ? Blocks.GLASS : Blocks.AIR), "world operation waits for physical work");
+					near(h, remaining, work.differentialcreate$remainingTravel(), 1e-9, "roller makes no free progress at zero speed");
+					h.assertTrue(h.getLevel().getBlockState(target).is(Blocks.AIR), "world operation waits for physical work");
 					speed(shaft, 16);
 					double energy = ElasticKinetics.kineticEnergy(shaft.getOrCreateNetwork()); MachiningClock.advance(h.getLevel());
 					double spent = energy - ElasticKinetics.kineticEnergy(shaft.getOrCreateNetwork());
@@ -320,22 +318,9 @@ final class ContraptionPhysicsTests {
 					work = ContraptionActorWork.of(context);
 					near(h, remaining, work.differentialcreate$remainingTravel(), 1e-9, "reload retains fractional action travel and reserved material");
 					spent += finishAction(h, shaft, context, schedule);
-					near(h, (i == 0 ? 4 : 8) * 1000.0 / 1200, spent, 1e-7, "deployer/roller cost is independent of RPM");
-					if (i == 0) {
-						var player = (DeployerFakePlayer) context.temporaryData;
-						float perHit = Blocks.GLASS.defaultBlockState().getDestroyProgress(player, h.getLevel(), target) * 16;
-						int expectedHits = (int) Math.ceil((1 - 1e-6) / perHit), hits = 1;
-						while (!h.getLevel().getBlockState(target).isAir() && hits < 20) {
-							h.assertTrue(context.stall, "native deployer keeps a partially broken target: hit=" + hits + ", native progress per hit=" + perHit);
-							for (int repeat = 0; repeat < 25; repeat++) { speed(shaft, 0); behaviour.tick(context); MachiningClock.advance(h.getLevel()); }
-							h.assertTrue(h.getLevel().getBlockState(target).is(Blocks.GLASS) && ContraptionActorWork.of(context).pending(),
-								"native repeated activation queues work and waits at zero RPM");
-							near(h, 4 * 1000.0 / 1200, finishAction(h, shaft, context, schedule), 1e-7, "every native repeated deployer hit is charged");
-							hits++;
-						}
-						near(h, expectedHits, hits, 0, "physical work preserves native tool strength and hit count");
-					}
-					h.assertTrue(h.getLevel().getBlockState(target).is(i == 0 ? Blocks.AIR : Blocks.STONE), "paid action executes native punching/paving: actor=" + i
+					near(h, 8 * 1000.0 / 1200, spent, 1e-7, "roller cost is independent of RPM");
+
+					h.assertTrue(h.getLevel().getBlockState(target).is(Blocks.STONE), "paid action executes native paving: actor=" + i
 						+ ", state=" + h.getLevel().getBlockState(target) + ", data=" + context.data + ", be=" + context.blockEntityData
 						+ ", held=" + (context.temporaryData instanceof DeployerFakePlayer player ? player.getMainHandItem() : null));
 					if (i == 1) near(h, beforeMaterials - 1, stones(context), 0, "successful paving consumes only its reserved item");

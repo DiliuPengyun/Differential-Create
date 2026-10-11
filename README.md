@@ -35,7 +35,7 @@
 
 Linux 使用 `./gradlew build runGameTestServer runVirtualAirServer`，首次运行需要下载依赖。成品位于 `build/libs/differentialcreate-1.0.0.jar`。
 
-客户端和服务端均安装同一版本，并安装对应的 Create 及其依赖。当前网络兼容版本为 **10**，接口设置与显示需客户端、服务端一起更新。
+客户端和服务端均安装同一版本，并安装对应的 Create 及其依赖。当前网络兼容版本为 **11**，机械手动画与接口设置需客户端、服务端一起更新。
 
 `build` 自动运行数值回归；`runGameTestServer` 验证拓扑、配方、物品控制、供汽和动态结构，默认使用 `run-gametest/`。`runVirtualAirServer` 在 `build/` 中运行流体、机器、动态管网与卸载场景，可用 `-PvirtualAirSelect=pump_direction_.*,structure_.*` 选择子集。CI 执行上述完整命令并保存日志，验证入口见 [设计文档](DESIGN.md#9-验证与维护) 和 [流体覆盖矩阵](docs/FLUID_COVERAGE.md)。
 

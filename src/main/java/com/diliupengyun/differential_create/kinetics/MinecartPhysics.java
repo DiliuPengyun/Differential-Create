@@ -186,7 +186,8 @@ public final class MinecartPhysics {
         double allowed = MinecartMotion.energy(j, before.horizontalDistance()) + MinecartMotion.RAIL_POWER * RotationMath.TICK_MINUTES;
         if (MinecartMotion.energy(j, next.horizontalDistance()) > allowed)
             next = speed(next, Math.sqrt(2 * allowed / j) / MinecartMotion.RPM_PER_SPEED);
-        return com.diliupengyun.differential_create.kinetics.portable.PortableDocking.balanceDrive(cart, before, next, j);
+        return MovingDeployerWork.balanceDrive(cart, before,
+            com.diliupengyun.differential_create.kinetics.portable.PortableDocking.balanceDrive(cart, before, next, j), j);
     }
     public static Vec3 brake(AbstractMinecart cart, Vec3 before) {
         if (!enabled(cart)) return before.multiply(.5, 0, .5);
@@ -204,7 +205,8 @@ public final class MinecartPhysics {
         double allowed = MinecartMotion.energy(j, before.horizontalDistance()) + MinecartMotion.CONTROL_POWER * RotationMath.TICK_MINUTES;
         if (MinecartMotion.energy(j, next.horizontalDistance()) > allowed)
             next = speed(next, Math.sqrt(2 * allowed / j) / MinecartMotion.RPM_PER_SPEED);
-        cart.setDeltaMovement(com.diliupengyun.differential_create.kinetics.portable.PortableDocking.balanceDrive(cart, before, next, j));
+        cart.setDeltaMovement(MovingDeployerWork.balanceDrive(cart, before,
+            com.diliupengyun.differential_create.kinetics.portable.PortableDocking.balanceDrive(cart, before, next, j), j));
     }
     public static void assembled(AbstractMinecart cart) {
         if (!enabled(cart)) return;

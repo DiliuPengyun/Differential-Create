@@ -19,8 +19,12 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
     implements CustomPacketPayload {
     public record BearingPose(int entityId, double angle) {}
     public record OutputPose(double angle) {}
+    public record FeedPose(float speed, double inertia, double brake, double heat) {}
     public record Rotor(BlockPos pos, float speed, double angle, float torque, float steamVent, double elasticEnergy,
-        BearingPose bearing, OutputPose output) {
+        BearingPose bearing, OutputPose output, FeedPose feed) {
+        public Rotor(BlockPos pos, float speed, double angle, float torque, float steamVent, double elasticEnergy, BearingPose bearing, OutputPose output) {
+            this(pos, speed, angle, torque, steamVent, elasticEnergy, bearing, output, null);
+        }
         public Rotor(BlockPos pos, float speed, double angle, float torque, float steamVent, double elasticEnergy) {
             this(pos, speed, angle, torque, steamVent, elasticEnergy, null, null);
         }
@@ -42,6 +46,8 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
             if (r.bearing != null) buf.writeDouble(r.bearing.angle);
             buf.writeBoolean(r.output != null);
             if (r.output != null) buf.writeDouble(r.output.angle);
+            buf.writeBoolean(r.feed != null);
+            if (r.feed != null) { buf.writeFloat(r.feed.speed); buf.writeDouble(r.feed.inertia); buf.writeDouble(r.feed.brake); buf.writeDouble(r.feed.heat); }
         }
     }, buf -> {
         var dimension = buf.readResourceLocation(); long id = buf.readVarLong(); double energy = buf.readDouble();
@@ -57,7 +63,10 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
             if (entity < 0) throw new IllegalArgumentException("Invalid bearing entity id");
             BearingPose bearing = entity == 0 ? null : new BearingPose(entity - 1, buf.readDouble());
             OutputPose output = buf.readBoolean() ? new OutputPose(buf.readDouble()) : null;
-            rotors.add(new Rotor(pos, speed, angle, torque, steamVent, localEnergy, bearing, output));
+            FeedPose feed = buf.readBoolean() ? new FeedPose(buf.readFloat(), buf.readDouble(), buf.readDouble(), buf.readDouble()) : null;
+            if (feed != null && (!Float.isFinite(feed.speed) || !Double.isFinite(feed.inertia) || !Double.isFinite(feed.brake) || !Double.isFinite(feed.heat)))
+                throw new IllegalArgumentException("Invalid feed rotor state");
+            rotors.add(new Rotor(pos, speed, angle, torque, steamVent, localEnergy, bearing, output, feed));
         }
         return new RotorStatePayload(dimension, id, energy, elasticEnergy, load, rotors);
     });

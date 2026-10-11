@@ -34,6 +34,9 @@ public final class ActorTargets {
         if (level.isClientSide) return;
         var positions = targets.get(level); if (positions == null) return;
         var owners = positions.get(pos.asLong()); if (owners == null) return;
-        for (var work : owners) work.context().data.putBoolean("DCActorInvalidated", true);
+        for (var work : owners) {
+            if (MovingDeployerWork.isHand(work.context()) && work.hand().firing) continue;
+            work.context().data.putBoolean("DCActorInvalidated", true);
+        }
     }
 }

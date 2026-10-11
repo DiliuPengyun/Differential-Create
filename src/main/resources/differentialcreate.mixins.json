@@ -12,6 +12,7 @@
     "PortableFluidInterfaceBlockEntityMixin",
     "ActorTargetLevelMixin",
     "MinecartEntityMixin",
+    "MinecartSubstepMixin",
     "MinecartSpecialDragMixin",
     "MinecartControllerRailMixin",
     "MinecartAssemblerMixin",
@@ -26,6 +27,9 @@
     "HarvesterMovementBehaviourMixin",
     "PloughMovementBehaviourMixin",
     "DeployerMovementBehaviourMixin",
+    "DeployerMovementAccessor",
+    "DeployerPlayerAccessor",
+    "DeployerHandlerInvoker",
     "RollerMovementBehaviourMixin",
     "AirCurrentMixin",
     "ArmBlockEntityMixin",
@@ -76,7 +80,7 @@
     "TorquePropagatorAccessor",
     "WindmillBearingBlockEntityMixin"
   ],
-  "client": ["ControlledContraptionRendererMixin", "MechanicalBearingRendererMixin", "KineticBlockEntityRendererMixin", "BracketedKineticBlockEntityRendererMixin", "RotatingInstanceMixin", "SplitShaftVisualMixin", "SplitShaftRendererMixin", "FlywheelVisualMixin", "FlywheelRendererMixin", "SteamEngineParticlesMixin", "TransparentStraightPipeRendererMixin", "GlassPipeVisualMixin"],
+  "client": ["MovingDeployerRendererMixin", "MovingDeployerVisualMixin", "ControlledContraptionRendererMixin", "MechanicalBearingRendererMixin", "KineticBlockEntityRendererMixin", "BracketedKineticBlockEntityRendererMixin", "RotatingInstanceMixin", "SplitShaftVisualMixin", "SplitShaftRendererMixin", "FlywheelVisualMixin", "FlywheelRendererMixin", "SteamEngineParticlesMixin", "TransparentStraightPipeRendererMixin", "GlassPipeVisualMixin"],
   "server": [],
   "injectors": {
     "defaultRequire": 1

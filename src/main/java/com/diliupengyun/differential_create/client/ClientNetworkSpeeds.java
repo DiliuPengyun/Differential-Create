@@ -103,6 +103,16 @@ public final class ClientNetworkSpeeds {
 		entry.elasticEnergy = payload.elasticEnergy();
 		entry.loadFactor = payload.loadFactor();
 		for (var update : payload.rotors()) {
+			var clientLevel = net.minecraft.client.Minecraft.getInstance().level;
+			if (clientLevel != null && clientLevel.dimension().equals(dimension)
+				&& clientLevel.getBlockEntity(update.pos()) instanceof KineticBlockEntity be) {
+				var feed = com.diliupengyun.differential_create.kinetics.ActorFeed.of(be);
+				feed.active = update.feed() != null;
+				if (update.feed() != null) {
+					feed.initialized = true; feed.speed = update.feed().speed(); feed.inertia = update.feed().inertia();
+					feed.brake = update.feed().brake(); feed.brakeHeat = update.feed().heat();
+				}
+			}
 			Rotor rotor = entry.rotors.computeIfAbsent(update.pos(), $ -> new Rotor());
 			rotor.speed = update.speed(); rotor.torque = update.torque();
 			rotor.steamVent = update.steamVent();

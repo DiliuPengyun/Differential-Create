@@ -42,7 +42,8 @@ public final class KineticGoggleInfo {
 
 	private static void appendDynamics(KineticBlockEntity kbe, List<Component> tooltip) {
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.inertia", fmt(InertiaRegistry.getInertia(kbe)
-			+ (kbe instanceof ISequencerDynamics ? SequencerMotion.OUTPUT_INERTIA : 0))));
+			+ (kbe instanceof ISequencerDynamics ? SequencerMotion.OUTPUT_INERTIA : 0)
+			+ (ActorFeed.of(kbe).active ? ActorFeed.of(kbe).inertia : 0))));
 		double strength = ElasticKinetics.strengthOf(kbe);
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.strength",
 			Double.isInfinite(strength) ? "∞" : fmt(strength)));
@@ -140,8 +141,12 @@ public final class KineticGoggleInfo {
 		}
 		float impact = MachineActivity.impact(kbe);
 		if (impact > 0 || MachineActivity.manages(kbe)) {
+			// Keep the bearing's established output reading tied to the body,
+			// even while the built-in hand take-off keeps its input turning.
+			float output = mechanicalBearing && ((MechanicalBearingBlockEntity) kbe).isRunning() && ActorFeed.of(kbe).active
+				? (float) ActorFeed.of(kbe).speed : local;
 			tooltip.add(Component.translatable(mechanicalBearing
-				? "gui.differentialcreate.goggles.bearing_output_speed" : "gui.differentialcreate.goggles.speed", fmtSigned(local, 1)));
+				? "gui.differentialcreate.goggles.bearing_output_speed" : "gui.differentialcreate.goggles.speed", fmtSigned(output, 1)));
 			if (MachineActivity.manages(kbe))
 				tooltip.add(Component.translatable(MachineActivity.active(kbe)
 					? "gui.differentialcreate.goggles.machine_working" : "gui.differentialcreate.goggles.machine_idle"));
@@ -172,6 +177,7 @@ public final class KineticGoggleInfo {
 		double local = NetworkDynamics.preciseSpeed(kbe);
 		double energy = 0.5 * InertiaRegistry.getInertia(kbe) * local * local;
 		if (kbe instanceof ISequencerDynamics servo) energy += .5 * SequencerMotion.OUTPUT_INERTIA * Math.pow(servo.differentialcreate$motion().speed, 2);
+		if (ActorFeed.of(kbe).active) energy += .5 * ActorFeed.of(kbe).inertia * Math.pow(ActorFeed.of(kbe).speed, 2);
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.local_energy", fmt(energy)));
 		if (kbe instanceof ISequencerDynamics servo)
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.servo_brake_heat", fmt(servo.differentialcreate$motion().brakeHeat)));

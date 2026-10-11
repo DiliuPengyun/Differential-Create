@@ -5,18 +5,16 @@ import com.diliupengyun.differential_create.kinetics.portable.*;
 import com.simibubi.create.content.contraptions.Contraption;
 import com.simibubi.create.content.contraptions.actors.psi.PortableStorageInterfaceBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
-import com.simibubi.create.api.equipment.goggles.IHaveGoggleInformation;
 import net.createmod.catnip.animation.LerpedFloat;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.*;
 import org.spongepowered.asm.mixin.injection.*;
 import org.spongepowered.asm.mixin.injection.callback.*;
 
 @Mixin(PortableStorageInterfaceBlockEntity.class)
-public abstract class PortableStorageInterfaceBlockEntityMixin implements PortableEndpoint, IHaveGoggleInformation {
+public abstract class PortableStorageInterfaceBlockEntityMixin implements PortableEndpoint {
     @Shadow protected int transferTimer;
     @Shadow protected float distance;
     @Shadow protected LerpedFloat connectionAnimation;
@@ -103,13 +101,5 @@ public abstract class PortableStorageInterfaceBlockEntityMixin implements Portab
     @Inject(method = "read", at = @At("TAIL"))
     private void differentialcreate$load(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
         if (tag.contains("DCPortDocking")) differentialcreate$docking().read(tag.getCompound("DCPortDocking"), packet);
-    }
-    @Override public boolean addToGoggleTooltip(List<Component> tooltip, boolean sneaking) {
-        var state = differentialcreate$docking();
-        tooltip.add(Component.translatable("gui.differentialcreate.portable.state", Component.translatable("gui.differentialcreate.portable.phase." + state.phase.name().toLowerCase(java.util.Locale.ROOT))));
-        tooltip.add(Component.translatable("gui.differentialcreate.portable.speed", String.format(java.util.Locale.ROOT, "%.2f", state.speed)));
-        tooltip.add(Component.translatable("gui.differentialcreate.portable.load", String.format(java.util.Locale.ROOT, "%.1f", state.torque)));
-        if (!state.failure.equals("none") && !state.failure.isEmpty()) tooltip.add(Component.translatable("gui.differentialcreate.portable.failure." + state.failure));
-        return true;
     }
 }

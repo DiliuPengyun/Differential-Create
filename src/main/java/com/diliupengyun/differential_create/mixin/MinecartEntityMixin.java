@@ -31,6 +31,8 @@ public abstract class MinecartEntityMixin implements IMinecartDynamics {
         var self = (AbstractMinecart) (Object) this;
         if (MinecartPhysics.enabled(self)) { MinecartPhysics.slowdown(self); ci.cancel(); }
     }
+    @Inject(method = "tick", at = @At("TAIL"))
+    private void differentialcreate$handRotors(CallbackInfo ci) { MinecartActorMotion.tickHands((AbstractMinecart) (Object) this); }
     @Redirect(method = "moveAlongTrack", at = @At(value = "INVOKE", ordinal = 5,
         target = "Lnet/minecraft/world/phys/Vec3;add(DDD)Lnet/minecraft/world/phys/Vec3;"))
     private Vec3 differentialcreate$railDrive(Vec3 before, double x, double y, double z) {

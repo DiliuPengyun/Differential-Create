@@ -39,6 +39,7 @@ public final class NetworkSpeedTicker {
 			MachiningClock.advance(level);
 		ClientSpeedSync.prune(live);
 		ClientSpeedSync.flush();
+		MovingHandSync.flush();
 	}
 
 	@SubscribeEvent
@@ -48,5 +49,6 @@ public final class NetworkSpeedTicker {
 		FluidKinetics.clear();
 		NetworkTopology.clear();
 		ClientSpeedSync.clear();
+		MovingHandSync.clear();
 	}
 }

@@ -61,13 +61,15 @@
 
 离轨时同样对实际三维位移分段扣除工具工作；底车的原生地面、空中运动和碰撞规则保留。进给方向随矿车 NBT 保存，熔炉从库存补煤后能重新启动停转作业。熔炉装配/拆解的原生实体读回不会使 Create 控制器丢失矿车引用。
 
-移动式存储与流体接口已使用有限反力制动和独立装卸会话，搭建见[接口使用指南](PORTABLE_STORAGE.md)。移动机械手持工具敲击未完成的方块时仍保留原生驻留暂停，直到破坏完成或取消；普通放置与使用动作并非一律暂停。它的独立工具供能与物理停靠约束仍待适配。
+移动式存储与流体接口已使用有限反力制动和独立装卸会话，搭建见[接口使用指南](PORTABLE_STORAGE.md)。移动机械手使用[独立作业转子与物理制动](CONTRAPTIONS.md#移动机械手)，不设置原生整车暂停。全车机械手共用有限取能能力，低速时优先保留起步余量，正在作业的机械手优先充能；仅实际位移能给转子充能，停稳后消耗已经储存的能量。普通种植和放置采用较短的接触动作，边走边执行，收回期间继续移动；持续采掘或已获得足够能量、但来不及保持接触的使用动作才制动。种树消耗原有树苗并检查原有地面规则；物理停车后沿已知方向重新接受动力铁轨的有限起步冲量。
 
 ## 验证与边界
 
 数值入口为 [MinecartRegression](../src/physicsTest/java/com/diliupengyun/differential_create/MinecartRegression.java)，真实游戏入口为 [MinecartIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartIntegrationTests.java)。原生实体逐 tick 对照 Minecraft 的独立速度递推和实际位移，另外检查燃料、组装动量、重复刷新、重载、拆解、有限驱动及双车支撑。
 
-验证：构建及全套数值回归通过，其中矿车数值检查 5668 项；完整运动 GameTest 1298 项通过，包含 715 个矿车场景，其中转向专项为 280 个；常规机械与流体 GameTest 247 项通过，包含活塞和轴承。详细入口、玩家操作、判据和未覆盖范围见[测试覆盖表](MINECART_TEST_MATRIX.md)。未装配直轨对照覆盖两个轴、正反方向及连续 64 tick；另外检查全部十种轨道形态的原版轨迹和速度修正。
+[矿车机械手供能专项](../src/main/java/com/diliupengyun/differential_create/tests/MinecartHandPowerTests.java)覆盖四个方向的单台与 16 台机械手冷启动、两格通电轨道接近后不停车连续补种三排、高速补种、无外部供能时的能量转移、禁用工具不取能，以及储能不足时不免费种植。共 28 个真实游戏场景，测试不反复赋予矿车速度或机械手能量。另有[机械手专项](../src/main/java/com/diliupengyun/differential_create/tests/MovingDeployerTests.java)验证普通活塞的连续播种、方块放置、锄地、断电、失去接触、采掘与种植混合作业、切换模式、一次性攻击，以及右键使用收回阶段读档后的完成记录，包含旧版长行程与收回时耗尽动力的存档迁移。可用 `runMotionCoverageServer '-PmotionSelect=minecart_hand_.+'` 单独运行矿车专项。
+
+验证：构建及全套数值回归通过，其中矿车数值检查 5668 项；本轮完整运动 GameTest 1383 项通过，随后对最终机械手行为运行 53 个专项场景，包括新增的旧存档迁移和 1331 方块载荷种植。常规机械与流体 GameTest 此前 247 项通过，包含活塞和轴承。详细入口、玩家操作、判据和未覆盖范围见[测试覆盖表](MINECART_TEST_MATRIX.md)。未装配直轨对照覆盖两个轴、正反方向及连续 64 tick；另外检查全部十种轨道形态的原版轨迹和速度修正。
 
 ```powershell
 .\gradlew.bat build

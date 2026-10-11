@@ -49,6 +49,7 @@ public final class InertiaRegistry {
 
 	public static float getInertia(KineticBlockEntity kbe) {
 		double inertia = getBaseInertia(kbe);
+		if (ActorFeed.enabled(kbe)) return (float) inertia + ActorFeed.INPUT_INERTIA;
 		inertia += ContraptionPhysics.inertia(kbe);
 		if (ContraptionPhysics.awaitingEntity(kbe)) {
 			var state = ElasticKinetics.state(kbe);

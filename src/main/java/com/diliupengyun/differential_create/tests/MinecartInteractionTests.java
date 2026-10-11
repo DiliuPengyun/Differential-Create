@@ -27,7 +27,7 @@ import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
-/** Native deployer pauses, physical interface parking and original minecart interactions. */
+/** Paid moving hands, physical interface parking and original minecart interactions. */
 @GameTestHolder("differentialcreate_motion")
 @PrefixGameTestTemplate(false)
 public final class MinecartInteractionTests {
@@ -148,25 +148,54 @@ public final class MinecartInteractionTests {
                 }
                 h.runAfterDelay(1, new Arrival()::tick); return;
             }
-            actor.blockEntityData.putString("Mode", "PUNCH"); actor.data.put("HeldItem", new ItemStack(Items.DIAMOND_PICKAXE).save(h.getLevel().registryAccess()));
-            var point = f.root.toGlobalVector(Vec3.atCenterOf(actor.localPos).add(behaviour.getActiveAreaOffset(actor)), 1);
-            var target = BlockPos.containing(point);
-            h.getLevel().setBlockAndUpdate(target, Blocks.OBSIDIAN.defaultBlockState());
-            // Invoke the native contact callback at the current actor position;
-            // the following native root ticks own dwell and cancellation.
-            actor.position = point; actor.rotation = v -> f.root.applyRotation(v, 1); actor.motion = vector(facing, .05);
-            behaviour.visitNewPosition(actor, target); f.root.tick();
-            h.assertTrue(actor.stall && f.root.isStalled(), "actual native deployer pauses its mounted structure");
-            var held = f.cart.position(); var drillTarget = f.contact(); h.getLevel().setBlockAndUpdate(drillTarget, Blocks.STONE.defaultBlockState());
-            for (int i = 0; i < 3; i++) {
-                f.tick(); near(h, 0, f.cart.position().distanceTo(held), 1e-8, "native dwell cannot move the cart");
-                near(h, 0, MinecartPhysics.state(f.cart).actorWork, 0, "native dwell cannot grant drill work");
+            actor.blockEntityData.putString("Mode", "PUNCH");
+            var hand = ContraptionActorWork.of(actor).hand();
+            hand.player().setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.DIAMOND_PICKAXE));
+            var target = BlockPos.containing(f.root.toGlobalVector(Vec3.atCenterOf(actor.localPos).add(behaviour.getActiveAreaOffset(actor)), 1));
+            h.getLevel().setBlockAndUpdate(target, Blocks.STONE.defaultBlockState());
+            f.push(0); hand.prepare();
+            double empty = hand.cartEnergy(); int hits = actor.data.getCompound(MovingDeployerWork.TAG).getInt("Hits");
+            for (int i = 0; i < 3; i++) { f.tick(); }
+            near(h, empty, hand.cartEnergy(), 0, "a stationary hand cannot charge its internal rotor");
+            near(h, hits, actor.data.getCompound(MovingDeployerWork.TAG).getInt("Hits"), 0, "an empty rotor cannot execute a free world interaction");
+            h.getLevel().setBlockAndUpdate(target, Blocks.AIR.defaultBlockState()); hand.cancel("lost_target");
+            class Cycle {
+                int ticks; BlockPos mining, drillTarget; Vec3 held; double energy;
+                void tick() {
+                    ticks++;
+                    if (ticks <= 12) {
+                        f.push(.1); double before = .5 * MinecartPhysics.refresh(f.cart) * Math.pow(.1 * 512, 2) + hand.cartEnergy();
+                        f.tick();
+                        double after = .5 * MinecartPhysics.refresh(f.cart) * Math.pow(f.cart.getDeltaMovement().horizontalDistance() * 512, 2) + hand.cartEnergy();
+                        h.assertTrue(after <= before + 1e-8, "charging transfers real cart energy into the hand without creating energy");
+                    } else {
+                        if (ticks == 13) {
+                            actor.disabled = false; f.push(.01);
+                            mining = BlockPos.containing(f.root.toGlobalVector(Vec3.atCenterOf(actor.localPos).add(behaviour.getActiveAreaOffset(actor)), 1));
+                            h.getLevel().setBlockAndUpdate(mining, Blocks.STONE.defaultBlockState()); energy = hand.cartEnergy(); hand.prepare();
+                        }
+                        f.tick();
+                        h.assertFalse(actor.stall || f.root.isStalled(), "the moving hand uses a finite brake instead of native whole-body pause");
+                        if (held == null && f.cart.getDeltaMovement().horizontalDistance() < 1e-9 && hand.pending()) {
+                            held = f.cart.position(); drillTarget = f.contact();
+                            h.getLevel().setBlockAndUpdate(drillTarget, Blocks.STONE.defaultBlockState());
+                        }
+                        if (held != null && hand.holding()) {
+                            near(h, 0, f.cart.position().distanceTo(held), 1e-8, "the physically parked cart has no phantom feed");
+                            h.assertTrue(h.getLevel().getBlockState(drillTarget).is(Blocks.STONE), "independent hand power cannot run the parked drill");
+                        }
+                        if (mining != null && h.getLevel().getBlockState(mining).isAir() && !hand.pending()) {
+                            h.assertTrue(held != null && hand.cartEnergy() < energy, "parked mining consumes a charged finite rotor");
+                            actor.disabled = true; f.push(.4); f.tick();
+                            h.assertTrue(h.getLevel().getBlockState(drillTarget).isAir(), "releasing the hand permits a fresh paid drill feed");
+                            f.cleanup(); h.succeed(); return;
+                        }
+                    }
+                    if (ticks > 90) h.fail("charged moving hand did not finish: " + actor.data + ", E=" + hand.cartEnergy());
+                    h.runAfterDelay(1, this::tick);
+                }
             }
-            h.assertTrue(h.getLevel().getBlockState(drillTarget).is(Blocks.STONE), "drill leaves its target intact during native dwell");
-            f.root.getContraption().setActorsActive(new ItemStack(extra.getBlock()), false);
-            f.root.tick(); h.assertFalse(f.root.isStalled(), "disabling the real deployer releases its native pause");
-            f.push(.4); f.tick(); h.assertTrue(h.getLevel().getBlockState(drillTarget).isAir(), "drill resumes paid feed after actual native dwell cancellation");
-            f.cleanup(); h.succeed();
+            h.runAfterDelay(1, new Cycle()::tick);
         });
     }
 }

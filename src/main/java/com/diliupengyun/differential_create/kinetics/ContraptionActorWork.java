@@ -20,6 +20,8 @@ public final class ContraptionActorWork implements ShaftWork {
 	/** A quarter-block cutting stroke keeps the work within the tool's active voxel. */
 	public static final double FEED_DISTANCE = .25;
 	private final MovementContext context;
+	private MovingDeployerWork hand;
+	public MovingDeployerWork hand() { if (hand == null) hand = new MovingDeployerWork(context); return hand; }
 	BlockPos watchedTarget;
 	private boolean firing;
 	private boolean motionManaged;
@@ -37,10 +39,10 @@ public final class ContraptionActorWork implements ShaftWork {
 	public static boolean supported(MovementContext context) {
 		return !context.world.isClientSide && ActorDrive.of(context) != null;
 	}
-	public boolean pending() { return context.data.contains(JOB); }
+	public boolean pending() { return MovingDeployerWork.supported(context) ? hand().pending() : context.data.contains(JOB); }
 	public boolean firing() { return firing; }
 	public boolean continuous() { return !(behaviour() instanceof com.simibubi.create.content.kinetics.deployer.DeployerMovementBehaviour); }
-	public boolean motionManaged() { return motionManaged; }
+	public boolean motionManaged() { return motionManaged || MovingDeployerWork.supported(context); }
 	public void manageMotion() {
 		if (supported(context) && (behaviour() instanceof BlockBreakingMovementBehaviour
 			|| behaviour() instanceof com.simibubi.create.content.contraptions.actors.harvester.HarvesterMovementBehaviour)) {
@@ -245,6 +247,7 @@ public final class ContraptionActorWork implements ShaftWork {
 		return cost / feed * metric / scale;
 	}
 	@Override public double differentialcreate$remainingTravel() {
+		if (MovingDeployerWork.supported(context)) return hand().remaining();
 		var drive = ActorDrive.of(context);
 		if (drive == null) return Double.POSITIVE_INFINITY;
 		prepareMotion(drive);
@@ -261,6 +264,7 @@ public final class ContraptionActorWork implements ShaftWork {
 		return path == null ? job : Math.min(job, direction > 0 ? positiveLimit : negativeLimit);
 	}
 	@Override public Boundary differentialcreate$boundary(double remaining) {
+		if (MovingDeployerWork.supported(context)) return ShaftWork.super.differentialcreate$boundary(remaining);
 		return path == null ? ShaftWork.super.differentialcreate$boundary(remaining)
 			: new Boundary(sampledJob, positiveLimit, negativeLimit);
 	}
@@ -278,6 +282,7 @@ public final class ContraptionActorWork implements ShaftWork {
 		return Math.min(sampledJob, geometric);
 	}
 	public double torque(ActorDrive drive) {
+		if (MovingDeployerWork.supported(context)) return hand().torque();
 		differentialcreate$remainingTravel();
 		double required = required();
 		if (!Double.isFinite(required) || motionManaged && drive.motionActive() && path == null) return 0;
@@ -286,6 +291,7 @@ public final class ContraptionActorWork implements ShaftWork {
 		return rated * workRatio(required, drive);
 	}
 	@Override public void differentialcreate$advanceTravel(double travel) {
+		if (MovingDeployerWork.supported(context)) { hand().advance(travel); return; }
 		var drive = ActorDrive.of(context);
 		if (drive == null) return;
 		double required = required();

@@ -32,6 +32,12 @@ public final class NetworkLoad {
             loss += LoadFactor.contactLoss(0, SequencerMotion.COUPLING_DAMPING, c.coupling(), 0,
                 c.gear() * NetworkDynamics.preciseSpeed(be) - m.speed) + c.brake() * Math.abs(m.speed);
         }
+        for (var be : network.members.keySet()) if (ActorFeed.enabled(be)) {
+            var feed = ActorFeed.of(be); double ratio = ratios.getOrDefault(be, 1f);
+            members.add(new LoadFactor.Member(ratio, feed.speed, 0, feed.brake + ContraptionPhysics.feedLoad(be)
+                + ContraptionPhysics.airDrag(be) * feed.speed * feed.speed, false));
+            loss += LoadFactor.contactLoss(0, ActorFeed.DAMPING, feed.coupling, 0, NetworkDynamics.preciseSpeed(be) - feed.speed);
+        }
         return LoadFactor.calculate(members, loss);
     }
 

@@ -168,7 +168,14 @@ public final class FluidKinetics {
             if (!retained && (!ticking(world, pos) || be instanceof FluidTankBlockEntity t && !ticking(world, t.getController()))) {
                 handler = null; tank = null; supplies = false; return;
             }
-            var provider = source == null ? null : source.provideHandler(); handler = provider == null ? null : provider.getCapability();
+            var provider = source == null ? null : source.provideHandler();
+            // Portable interfaces revoke the cached provider while the pipe
+            // frame remains reusable. Recreate only a missing generic cache;
+            // tanks below already read their actual controller directly.
+            if (!retained && provider == null && source instanceof FlowSource.FluidHandler && !(be instanceof FluidTankBlockEntity)) {
+                source.manageSource(world, pipe.blockEntity); provider = source.provideHandler();
+            }
+            handler = provider == null ? null : provider.getCapability();
             tank = !retained && be instanceof FluidTankBlockEntity t ? t.getControllerBE() : null;
             if (!retained && be instanceof FluidTankBlockEntity) {
                 // A reloaded non-controller can expose its constructor's local

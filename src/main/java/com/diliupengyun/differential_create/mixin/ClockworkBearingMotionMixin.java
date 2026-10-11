@@ -37,6 +37,7 @@ public abstract class ClockworkBearingMotionMixin {
 		if (self.getLevel() == null || self.getLevel().isClientSide) return;
 		Double angle = ContraptionMotion.angular(((ClockworkBearingAccessor) this).differentialcreate$hour());
 		if (angle != null) cir.setReturnValue(angle.floatValue());
+		else if (!ContraptionMotion.samplingGeometry() && com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(self)) cir.setReturnValue(0f);
 	}
 	@Inject(method = "getMinuteArmSpeed", at = @At("RETURN"), cancellable = true)
 	private void differentialcreate$minuteTravel(CallbackInfoReturnable<Float> cir) {
@@ -44,5 +45,6 @@ public abstract class ClockworkBearingMotionMixin {
 		if (self.getLevel() == null || self.getLevel().isClientSide) return;
 		Double angle = ContraptionMotion.angular(((ClockworkBearingAccessor) this).differentialcreate$minute());
 		if (angle != null) cir.setReturnValue(angle.floatValue());
+		else if (!ContraptionMotion.samplingGeometry() && com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(self)) cir.setReturnValue(0f);
 	}
 }

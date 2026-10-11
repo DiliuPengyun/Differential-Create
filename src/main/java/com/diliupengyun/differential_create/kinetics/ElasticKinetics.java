@@ -65,6 +65,7 @@ public final class ElasticKinetics {
             double speed = NetworkDynamics.localSpeed(be, network);
             total += .5 * InertiaRegistry.getInertia(be) * speed * speed;
             if (be instanceof ISequencerDynamics servo) total += .5 * SequencerMotion.OUTPUT_INERTIA * Math.pow(servo.differentialcreate$motion().speed, 2);
+            if (ActorFeed.enabled(be)) total += .5 * ActorFeed.of(be).inertia * Math.pow(ActorFeed.of(be).speed, 2);
         }
         return total;
     }
@@ -196,11 +197,16 @@ public final class ElasticKinetics {
                 state.torqueContact = null;
             }
             for (var entry : outputs.entrySet()) {
-                var servo = ((ISequencerDynamics) entry.getKey()).differentialcreate$motion();
                 int at = entry.getValue();
-                servo.speed = result.speed()[at];
-                servo.angle += result.angle()[at];
-                servo.brakeHeat += brakes.get(entry.getKey()) * result.travel()[at];
+                if (entry.getKey() instanceof ISequencerDynamics dynamics) {
+                    var servo = dynamics.differentialcreate$motion();
+                    servo.speed = result.speed()[at]; servo.angle += result.angle()[at];
+                    servo.brakeHeat += brakes.get(entry.getKey()) * result.travel()[at];
+                } else {
+                    var feed = ActorFeed.of(entry.getKey());
+                    feed.speed = result.speed()[at]; feed.angle += result.angle()[at];
+                    feed.brakeHeat += feed.brake * result.travel()[at];
+                }
                 entry.getKey().setChanged();
             }
             for (int e = 0; e < connections.size(); e++) {
@@ -214,6 +220,10 @@ public final class ElasticKinetics {
         public double outputTravel(KineticBlockEntity be) {
             Integer i = outputs.get(be);
             return i == null ? 0 : result.angle()[i] / RotationMath.TICK_MINUTES;
+        }
+        public double outputAbsTravel(KineticBlockEntity be) {
+            Integer i = outputs.get(be);
+            return i == null ? 0 : result.travel()[i] / RotationMath.TICK_MINUTES;
         }
         public void fracture() {
             if (result.broken() < 0 || result.broken() >= connections.size()) return;
@@ -305,8 +315,10 @@ public final class ElasticKinetics {
         Map<KineticBlockEntity, Integer> indices = new HashMap<>();
         List<TorsionSolver.Body> bodies = new ArrayList<>();
         var servos = members.stream().filter(ISequencerDynamics.class::isInstance).toList();
+        var feeds = members.stream().filter(ActorFeed::enabled).toList();
+        feeds.forEach(ActorFeed::prepare);
         var outputs = new HashMap<KineticBlockEntity, Integer>();
-        double[] speeds = new double[members.size() + servos.size()], sourceDrives = new double[speeds.length];
+        double[] speeds = new double[members.size() + servos.size() + feeds.size()], sourceDrives = new double[speeds.length];
         for (int i = 0; i < members.size(); i++) {
             var be = members.get(i);
             indices.put(be, i);
@@ -314,6 +326,7 @@ public final class ElasticKinetics {
             var curve = SourcePhysics.curve(be);
             double load = ContraptionPhysics.manages(be) ? ContraptionPhysics.workTorque(be) : MachineActivity.impact(be);
             double drag = MachineActivity.quadraticDrag(be);
+            if (ActorFeed.enabled(be)) drag = 0;
             if (be instanceof EncasedFanBlockEntity) load = 0;
             sourceDrives[i] = be.isSource() ? curve.stallTorque() : 0;
             bodies.add(new TorsionSolver.Body(InertiaRegistry.getInertia(be),
@@ -330,6 +343,12 @@ public final class ElasticKinetics {
             speeds[at] = motion.speed;
             bodies.add(new TorsionSolver.Body(SequencerMotion.OUTPUT_INERTIA, 0, 0, command.brake(), 0));
         }
+        for (var be : feeds) {
+            int at = bodies.size(); outputs.put(be, at);
+            var feed = ActorFeed.of(be); speeds[at] = feed.speed;
+            bodies.add(new TorsionSolver.Body(feed.inertia, 0, 0,
+                feed.brake + ContraptionPhysics.feedLoad(be), ContraptionPhysics.airDrag(be)));
+        }
         connections.removeIf(edge -> !indices.containsKey(edge.a) || !indices.containsKey(edge.b));
         List<TorsionSolver.Link> links = new ArrayList<>();
         double[] twists = new double[connections.size()];
@@ -339,11 +358,16 @@ public final class ElasticKinetics {
                 SequencerKinetics.portIndex(edge.b, edge.a, indices, outputs), edge.ratio,
                 edge.stiffness(), edge.damping(), edge.strength(), edge.friction()));
         }
-        double[] allTwists = java.util.Arrays.copyOf(twists, twists.length + servos.size());
+        double[] allTwists = java.util.Arrays.copyOf(twists, twists.length + servos.size() + feeds.size());
         for (var be : servos) {
             var command = ((ISequencerDynamics) be).differentialcreate$motion().command;
             links.add(new TorsionSolver.Link(indices.get(be), outputs.get(be), command.gear(),
                 0, SequencerMotion.COUPLING_DAMPING, Double.POSITIVE_INFINITY, command.coupling()));
+        }
+        for (var be : feeds) {
+            var feed = ActorFeed.of(be);
+            links.add(new TorsionSolver.Link(indices.get(be), outputs.get(be), 1, 0,
+                ActorFeed.DAMPING, Double.POSITIVE_INFINITY, feed.coupling));
         }
         return new Snapshot(members, connections, indices, outputs, bodies, links, speeds, allTwists, sourceDrives);
     }

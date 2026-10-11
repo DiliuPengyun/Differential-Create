@@ -96,7 +96,7 @@ public final class KineticPhysicsTests {
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_completion", timeoutTicks = 100)
 	public static void contraptionCompletionTolerance(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.completionTolerance(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_native_stall", timeoutTicks = 100)
-	public static void mixedActorNativeStall(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.mixedActorNativeStall(helper); }
+	public static void mixedActorPhysicalBrake(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.mixedActorPhysicalBrake(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_farm", timeoutTicks = 100)
 	public static void movingContraptionFarmTools(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.movingFarmTools(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_roller", timeoutTicks = 100)

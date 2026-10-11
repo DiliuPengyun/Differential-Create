@@ -34,6 +34,8 @@ public abstract class GantryContraptionEntityMixin {
 	private float differentialcreate$integratedStructureTravel(GantryShaftBlockEntity shaft) {
 		var self = (GantryContraptionEntity) (Object) this;
 		var motion = self.level().isClientSide ? null : ContraptionMotion.linear(self);
+		if (motion == null && !self.level().isClientSide && !ContraptionMotion.samplingGeometry()
+			&& com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(shaft)) return 0;
 		return motion == null ? shaft.getPinionMovementSpeed()
 			: (float) motion.dot(net.minecraft.world.phys.Vec3.atLowerCornerOf(shaft.getBlockState().getValue(GantryShaftBlock.FACING).getNormal()));
 	}
@@ -44,7 +46,7 @@ public abstract class GantryContraptionEntityMixin {
 			? differentialcreate$restoredSpeed : differentialcreate$lastKnownSpeed);
 		var shaft = ContraptionPhysics.gantryShaft(self);
 		if (shaft != null && !shaft.isRemoved()) {
-			differentialcreate$lastKnownSpeed = NetworkDynamics.preciseSpeed(shaft);
+			differentialcreate$lastKnownSpeed = com.diliupengyun.differential_create.kinetics.ActorFeed.speed(shaft);
 			differentialcreate$restoredSpeed = Double.NaN;
 		}
 	}
@@ -52,6 +54,8 @@ public abstract class GantryContraptionEntityMixin {
 		target = "Lcom/simibubi/create/content/contraptions/gantry/GantryContraptionEntity;disassemble()V"))
 	private void differentialcreate$keepPoweredStall(GantryContraptionEntity self) {
 		var shaft = ContraptionPhysics.gantryShaft(self);
+		if (shaft != null && com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(shaft)
+			&& !shaft.getBlockState().getValue(GantryShaftBlock.POWERED)) return;
 		// A stationary physical rotor can still be commanded to move: it first has
 		// to accelerate the carriage, or overcome a work load. Preserve that assembly.
 		if (shaft != null && shaft.getTheoreticalSpeed() != 0 && shaft.getSpeed() == 0

@@ -71,6 +71,8 @@ public final class PortableMachineTests {
                 boolean completedConnection, sawClutchOpen;
                 void tick() {
                     ticks++;
+                    h.assertTrue(state.failure.equals("none"), "normal docking and departure must not record a failed capture: " + state.failure
+                        + ", tick=" + ticks + ", cycles=" + cycles + ", opened=" + opened);
                     if (state.phase == DockingState.Phase.TRANSFER) {
                         h.assertFalse(root.isStalled(), "bearing is stopped by actual reaction, without native model freezing");
                         if (generation != state.session().generation()) {

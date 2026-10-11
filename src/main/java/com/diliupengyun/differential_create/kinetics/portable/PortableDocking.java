@@ -159,11 +159,14 @@ public final class PortableDocking {
             if (selected == null) {
                 for (var candidate : stations) {
                     var geometry = geometry(context, point, facing, candidate, 1.5);
-                    if (!geometry.valid || candidate.owner.isPowered() || candidate.owner.getLevel().hasNeighborSignal(candidate.owner.getBlockPos())) continue;
                     if (context.data.contains("DCPortCooldown") && context.data.getLong("DCPortCooldown") == candidate.owner.getBlockPos().asLong()) {
-                        if (geometry(context, point, facing, candidate, .5).valid) continue;
-                        context.data.remove("DCPortCooldown");
+                        // Leave the preparation area with a margin: native and
+                        // accepted solver poses can straddle its edge in one tick.
+                        if (!geometry(context, point, facing, candidate, 1.75, .75, .25).valid)
+                            context.data.remove("DCPortCooldown");
+                        continue;
                     }
+                    if (!geometry.valid || candidate.owner.isPowered() || candidate.owner.getLevel().hasNeighborSignal(candidate.owner.getBlockPos())) continue;
                     if (!candidate.claim(context, geometry.axial)) continue;
                     selected = candidate; bindings.put(context, selected);
                     context.data.putLong("DCPortManaged", 1);
@@ -172,7 +175,11 @@ public final class PortableDocking {
                 }
             }
             if (selected == null) return;
-            var broad = geometry(context, point, facing, selected, 1.5);
+            // Preparing heads have no mechanical contact. A small exit margin
+            // avoids cancelling an arrival at an exact solver boundary crossing.
+            var broad = selected.phase == DockingState.Phase.PREPARING
+                ? geometry(context, point, facing, selected, 1.501, .874, .001)
+                : geometry(context, point, facing, selected, 1.5);
             if (!broad.valid) { selected.release("alignment"); return; }
             if (drive.root().isStalled() || drive.root().getContraption().stalled) { selected.release("paused"); return; }
             var path = path();
@@ -194,14 +201,18 @@ public final class PortableDocking {
     }
     private record Geometry(boolean valid, double axial) {}
     private static Geometry geometry(MovementContext context, Vec3 position, Vec3 facing, DockingState station, double width) {
+        return geometry(context, position, facing, station, width, .875, 0);
+    }
+    private static Geometry geometry(MovementContext context, Vec3 position, Vec3 facing, DockingState station,
+            double width, double alignment, double margin) {
         var state = station.owner.getBlockState();
         if (!adapter(context).compatible(context.state, state) || adapter(context).facing(state) == null) return new Geometry(false, 0);
         Direction target = adapter(context).facing(state).getOpposite();
         Vec3 normal = Vec3.atLowerCornerOf(target.getNormal());
-        if (facing.dot(normal) < .875 - 1e-8) return new Geometry(false, 0);
+        if (facing.dot(normal) < alignment - 1e-8) return new Geometry(false, 0);
         Vec3 delta = Vec3.atCenterOf(station.owner.getBlockPos()).subtract(position);
         double axial = delta.dot(normal);
-        if (axial < 1.5 - 1e-7 || axial > 3 + 1e-7) return new Geometry(false, axial);
+        if (axial < 1.5 - margin - 1e-7 || axial > 3 + margin + 1e-7) return new Geometry(false, axial);
         Vec3 lateral = delta.subtract(normal.scale(axial));
         return new Geometry(Math.abs(lateral.x) <= width + 1e-7 && Math.abs(lateral.y) <= width + 1e-7 && Math.abs(lateral.z) <= width + 1e-7, axial);
     }

@@ -183,70 +183,46 @@ final class ContinuousActorTests {
 			root.setAngle(0); be.disassemble(); h.succeed();
 		});
 	}
-	static void mixedActorNativeStall(GameTestHelper h) {
-		setup(h, AllBlocks.MECHANICAL_DRILL.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
-		h.setBlock(POS.east().above().south(), AllBlocks.DEPLOYER.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
-		h.runAfterDelay(5, () -> {
-			MechanicalBearingBlockEntity be = h.getBlockEntity(POS); be.assemble(); NetworkTopology.mark(be); NetworkTopology.flush();
-			var root = be.getMovedContraption();
-			var drill = root.getContraption().getActors().stream().filter(a -> AllBlocks.MECHANICAL_DRILL.has(a.getLeft().state())).findFirst().orElseThrow().getRight();
-			var hand = root.getContraption().getActors().stream().filter(a -> AllBlocks.DEPLOYER.has(a.getLeft().state())).findFirst().orElseThrow().getRight();
-			var deployer = MovementBehaviour.REGISTRY.get(hand.state);
-			hand.disabled = true;
-			hand.blockEntityData.putString("Mode", "PUNCH");
-			hand.data.put("HeldItem", new ItemStack(Items.DIAMOND_PICKAXE).save(h.getLevel().registryAccess()));
-			speed(be, 64); root.tickActors(); MachiningClock.advance(h.getLevel()); be.tick();
-			h.assertTrue(ContraptionActorWork.of(drill).motionManaged(), "mixed fixture binds its continuous drill sweep");
-			double held = root.getAngle(1);
-			h.assertTrue(held > 0, "fixture reaches a nonzero structure pose before the dwell");
-			var pose = (IBearingMotion) be;
-			BlockPos target = BlockPos.containing(root.toGlobalVector(Vec3.atCenterOf(hand.localPos).add(deployer.getActiveAreaOffset(hand)), 1));
-			h.getLevel().setBlockAndUpdate(target, Blocks.OBSIDIAN.defaultBlockState());
-			hand.disabled = false;
-			root.tickActors();
-			h.assertTrue(ContraptionActorWork.of(hand).pending() && hand.stall && root.isStalled() && root.getContraption().stalled,
-				"a real deployer visit pauses the mixed structure for its paid action");
-			ContraptionMotion.begin(h.getLevel());
-			try {
-				ContraptionActorWork.of(drill).differentialcreate$remainingTravel();
-				h.assertTrue(ContraptionActorWork.of(drill).differentialcreate$wakeDirection() == 0, "native actor dwell never requests a physical feed wake-up");
-			} finally { ContraptionMotion.end(h.getLevel()); }
-			for (int tick = 0; tick < 3; tick++) {
-				speed(be, 16); root.tickActors();
-				double shaftAngle = ElasticKinetics.state(be).angle;
-				MachiningClock.advance(h.getLevel());
-				h.assertTrue(ElasticKinetics.state(be).angle > shaftAngle && ContraptionActorWork.of(hand).pending(),
-					"the paused structure's shaft still turns to pay for its dwelling deployer");
-				near(h, 0, ContraptionMotion.angular(root), 0, "native pause generates no pending output rotation");
-				near(h, held, pose.differentialcreate$syncedAngle(), 2e-5, "the authoritative snapshot stays at the paused server pose");
-				near(h, held, pose.differentialcreate$syncedAngle(), 2e-5, "repeated paused snapshots cannot accumulate shaft travel");
-				if (tick == 2) {
-					var saved = root.saveWithoutId(new CompoundTag());
-					near(h, 0, saved.getCompound("DCOutputMotion").getDouble("Angle"), 0, "paused NBT contains no unconsumed shaft rotation");
-					ContraptionMotion.forget(root); ContraptionMotion.load(root, saved); be.attach(root);
-					near(h, held, root.getAngle(1), 2e-5, "restoring a paused output cannot advance the structure");
-				} else be.tick();
-				near(h, held, root.getAngle(1), 2e-5, "the native paused controller and its snapshot remain at the same pose");
-				near(h, held, pose.differentialcreate$syncedAngle(), 2e-5, "consuming a paused output cannot publish phantom motion");
-			}
-			hand.disabled = true; deployer.cancelStall(hand); root.tickActors();
-			h.assertFalse(root.isStalled() || root.getContraption().stalled, "disabling the dwelling actor releases the native pause");
-			speed(be, 0); be.tick();
-			near(h, held, root.getAngle(1), 2e-5, "releasing the pause cannot replay any of its shaft travel");
-			speed(be, 64); root.tickActors(); MachiningClock.advance(h.getLevel());
-			double paid = ContraptionMotion.angular(root);
-			h.assertTrue(paid > 0, "new unpaused movement still produces real paid feed");
-			near(h, held + paid, pose.differentialcreate$syncedAngle(), 2e-5, "the resumed snapshot includes only newly paid feed");
-			var saved = root.saveWithoutId(new CompoundTag());
-			near(h, paid, saved.getCompound("DCOutputMotion").getDouble("Angle"), 0, "unpaused NBT retains its real pending feed");
-			ContraptionMotion.forget(root); ContraptionMotion.load(root, saved); be.attach(root);
-			near(h, held + paid, root.getAngle(1), 2e-5, "restoring resumed feed consumes its displacement exactly once");
-			speed(be, 0); root.tickActors(); MachiningClock.advance(h.getLevel()); be.tick();
-			near(h, held + paid, root.getAngle(1), 2e-5, "a later native tick cannot replay resumed or paused feed");
-			near(h, root.getAngle(1), pose.differentialcreate$syncedAngle(), 2e-5, "the final snapshot agrees with the native server pose");
-			root.setAngle(0); be.disassemble(); h.succeed();
-		});
-	}
+	static void mixedActorPhysicalBrake(GameTestHelper h) {
+        setup(h, AllBlocks.MECHANICAL_DRILL.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
+        h.setBlock(POS.east(2), AllBlocks.DEPLOYER.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
+        h.runAfterDelay(5, () -> {
+            MechanicalBearingBlockEntity be = h.getBlockEntity(POS); be.assemble(); NetworkTopology.mark(be); NetworkTopology.flush();
+            var root = be.getMovedContraption();
+            var drill = root.getContraption().getActors().stream().filter(a -> AllBlocks.MECHANICAL_DRILL.has(a.getLeft().state())).findFirst().orElseThrow().getRight();
+            var ctx = root.getContraption().getActors().stream().filter(a -> MovingDeployerWork.isHand(a.getRight())).findFirst().orElseThrow().getRight();
+            var hand = ContraptionActorWork.of(ctx).hand();
+            ctx.blockEntityData.putString("Mode", "PUNCH"); hand.player().setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, new ItemStack(Items.DIAMOND_PICKAXE));
+            var target = BlockPos.containing(root.toGlobalVector(Vec3.atCenterOf(ctx.localPos).add(2, 0, 0), 1));
+            h.getLevel().setBlockAndUpdate(target, Blocks.OBSIDIAN.defaultBlockState());
+            ActorFeed.enabled(be); var feed = ActorFeed.of(be); feed.speed = 256;
+            double before = feed.speed; speed(be, 256); root.tickActors(); MachiningClock.advance(h.getLevel());
+            h.assertFalse(ctx.stall || root.isStalled() || root.getContraption().stalled, "a hand never sets a whole-body stall");
+            h.assertTrue(feed.speed > 0 && feed.speed < before, "finite braking keeps the first tick's real residual velocity");
+            double pending = ContraptionMotion.angular(root);
+            h.assertTrue(pending > 0, "the native controller receives actual braking displacement");
+            near(h, pending, ((IBearingMotion) be).differentialcreate$syncedAngle(), 2e-5, "snapshot includes the accepted physical brake travel");
+            var saved = root.saveWithoutId(new CompoundTag());
+            ContraptionMotion.forget(root); ContraptionMotion.load(root, saved); be.attach(root);
+            near(h, pending, root.getAngle(1), 2e-5, "reload consumes pending brake displacement once");
+            be.tick(); near(h, pending, root.getAngle(1), 2e-5, "the next native tick cannot replay pending displacement");
+            for (int i = 0; i < 8; i++) { speed(be, 256); root.tickActors(); MachiningClock.advance(h.getLevel()); be.tick(); }
+            near(h, 0, feed.speed, 1e-8, "the passive output brake reaches physical rest");
+            h.assertTrue(hand.pending() && feed.brakeHeat > 0 && Math.abs(be.getSpeed()) > 1, "input supplies the hand while finite output braking dissipates energy");
+            h.assertTrue(ContraptionActorWork.of(drill).motionManaged(), "the mixed drill shares the real output coordinate");
+            var drillTarget = BlockPos.containing(root.toGlobalVector(Vec3.atCenterOf(drill.localPos).add(1, 0, 0), 1));
+            h.getLevel().setBlockAndUpdate(drillTarget, Blocks.STONE.defaultBlockState());
+            double held = root.getAngle(1);
+            for (int i = 0; i < 3; i++) { speed(be, 16); root.tickActors(); MachiningClock.advance(h.getLevel()); be.tick(); }
+            near(h, held, root.getAngle(1), 2e-5, "a parked output gives a continuous drill no feed");
+            h.assertTrue(h.getLevel().getBlockState(drillTarget).is(Blocks.STONE), "the drill cannot consume the hand's independent work");
+            ctx.disabled = true; hand.cancel("disabled"); root.tickActors();
+            speed(be, 64); MachiningClock.advance(h.getLevel()); double resumed = ContraptionMotion.angular(root); be.tick();
+            h.assertTrue(resumed > 0 && feed.speed > 0, "disabling the hand releases the clutch and physically accelerates feed");
+            near(h, held + resumed, root.getAngle(1), 2e-5, "resumption contains only newly accepted output travel");
+            root.setAngle(0); be.disassemble(); h.succeed();
+        });
+    }
 	private static void farmSetup(GameTestHelper h, BlockState tool) {
 		h.setBlock(POS, AllBlocks.MECHANICAL_BEARING.getDefaultState().setValue(BlockStateProperties.FACING, Direction.UP));
 		for (int x = 0; x < 4; x++) h.setBlock(POS.above().east(x), Blocks.SLIME_BLOCK);

@@ -25,10 +25,11 @@ import net.minecraft.util.Mth;
  * actor ticks observe the result; they cannot repeat the cutting work. */
 public final class MinecartActorMotion {
     private static Frame active;
+    public static boolean preciseStep(net.minecraft.world.entity.Entity entity) { return active != null && active.cart == entity; }
     private MinecartActorMotion() {}
     private static boolean supported(MovementContext context) {
         var behaviour = MovementBehaviour.REGISTRY.get(context.state);
-        return behaviour instanceof BlockBreakingMovementBehaviour || behaviour instanceof HarvesterMovementBehaviour
+        return behaviour instanceof BlockBreakingMovementBehaviour || behaviour instanceof HarvesterMovementBehaviour || MovingDeployerWork.isHand(context)
             || com.diliupengyun.differential_create.kinetics.portable.PortableDocking.isPortable(context);
     }
     private static AbstractContraptionEntity root(AbstractContraptionEntity entity) {
@@ -67,6 +68,7 @@ public final class MinecartActorMotion {
         }
     }
     private static final class Frame {
+        final AbstractMinecart cart;
         final Vec3 direction, translation;
         final double storedRatio;
         final boolean pausedActors;
@@ -77,8 +79,10 @@ public final class MinecartActorMotion {
         final Map<MovementContext, ActorContactPath> normalPaths = new IdentityHashMap<>();
         final List<MovementContext> ports = new ArrayList<>();
         final List<ContraptionActorWork> work = new ArrayList<>();
+        final List<MovementContext> hands = new ArrayList<>();
         double speed, travel;
         Frame(AbstractMinecart cart, AbstractContraptionEntity root, Vec3 requested, boolean onRail) {
+            this.cart = cart;
             turn = null; angularRate = 0; maxTravel = Double.POSITIVE_INFINITY;
             pausedActors = rotationPause(cart, root);
             double storedSpeed = (onRail ? cart.getDeltaMovement().horizontalDistance() : cart.getDeltaMovement().length()) * 512;
@@ -106,11 +110,13 @@ public final class MinecartActorMotion {
                         ports.add(context);
                         var facing = com.diliupengyun.differential_create.kinetics.portable.PortableDocking.adapter(context).facing(context.state);
                         if (facing != null) normalPaths.put(context, ActorContactPath.linear(point(entity.applyRotation(Vec3.atLowerCornerOf(facing.getNormal()), 1)), point(Vec3.ZERO)));
-                    } else work.add(ContraptionActorWork.of(context));
+                    } else if (MovingDeployerWork.isHand(context)) hands.add(context);
+                    else work.add(ContraptionActorWork.of(context));
                 }
             }
         }
         Frame(AbstractMinecart cart, Turn turn, double speed) {
+            this.cart = cart;
             this.turn = turn; this.speed = speed; maxTravel = speed;
             direction = translation = Vec3.ZERO; storedRatio = 1; pausedActors = false;
             angularRate = turn.amount / speed;
@@ -134,7 +140,8 @@ public final class MinecartActorMotion {
                             normalPaths.put(context, ActorContactPath.circular(point(centreNormal), point(normal.subtract(centreNormal)),
                                 point(quarterNormals.get(context).subtract(centreNormal)), angularRate * Math.PI / 180));
                         }
-                    } else work.add(ContraptionActorWork.of(context));
+                    } else if (MovingDeployerWork.isHand(context)) hands.add(context);
+                    else work.add(ContraptionActorWork.of(context));
                 }
             }
         }
@@ -235,6 +242,15 @@ public final class MinecartActorMotion {
                 if (immediate) continue;
                 var docks = com.diliupengyun.differential_create.kinetics.portable.PortableDocking.prepareCart(frame.ports);
                 for (var dock : docks) { limit = Math.min(limit, dock.boundary(1)); torque += com.diliupengyun.differential_create.kinetics.portable.PortableDocking.torque(dock.context()); }
+                for (var ctx : frame.hands) {
+                    var hand = ContraptionActorWork.of(ctx).hand(); hand.prepare();
+                    torque += hand.cartHolding() ? ActorFeed.TORQUE : 0;
+                    var path = frame.paths.get(ctx); if (path != null) limit = Math.min(limit, path.exit(frame.travel, 1));
+                }
+                var charges = MovingDeployerWork.cartCharges(frame.hands, frame.speed, inertia, torque);
+                for (var entry : charges.entrySet()) {
+                    torque += entry.getValue(); limit = Math.min(limit, entry.getKey().cartChargeBoundary(entry.getValue()));
+                }
                 var cut = MinecartMotion.cut(frame.speed, inertia, torque, limit, remaining);
                 if (cut.travel() == 0) break;
                 frame.travel += cut.travel(); frame.speed = cut.speed();
@@ -245,6 +261,7 @@ public final class MinecartActorMotion {
                     MinecartPhysics.state(support.cart).actorWork += torque * cut.travel() / 1200 * support.energy() / energy;
                 }
                 com.diliupengyun.differential_create.kinetics.portable.PortableDocking.observe(docks, cut.travel());
+                charges.forEach((hand, charge) -> hand.charge(charge * cut.travel() / 1200));
                 MachineWork.batch(() -> phases.forEach(work -> work.differentialcreate$advanceTravel(cut.travel())));
                 remaining = Math.max(0, remaining - cut.minutes());
             }
@@ -308,15 +325,26 @@ public final class MinecartActorMotion {
                 if (immediate) continue;
                 var docks = com.diliupengyun.differential_create.kinetics.portable.PortableDocking.prepareCart(frame.ports);
                 for (var dock : docks) { limit = Math.min(limit, dock.boundary(1)); torque += com.diliupengyun.differential_create.kinetics.portable.PortableDocking.torque(dock.context()); }
+                for (var ctx : frame.hands) {
+                    var hand = ContraptionActorWork.of(ctx).hand(); hand.prepare();
+                    torque += hand.cartHolding() ? ActorFeed.TORQUE : 0;
+                    var path = frame.paths.get(ctx); if (path != null) limit = Math.min(limit, path.exit(frame.travel, 1));
+                }
+                var charges = MovingDeployerWork.cartCharges(frame.hands, frame.speed, j, torque);
+                for (var entry : charges.entrySet()) {
+                    torque += entry.getValue(); limit = Math.min(limit, entry.getKey().cartChargeBoundary(entry.getValue()));
+                }
                 var cut = MinecartMotion.cut(frame.speed, j, torque, limit, remaining);
                 if (cut.travel() == 0) break;
                 var movement = frame.translation.scale(cut.travel()); var before = cart.position();
                 cart.setDeltaMovement(frame.direction.scale(cut.speed() * frame.storedRatio / 512)); cart.move(type, movement);
                 var actual = cart.position().subtract(before);
-                double accepted = actual.subtract(movement).lengthSqr() <= 1e-14 ? cut.travel()
+                double accepted = actual.lengthSqr() == 0 ? 0 : actual.subtract(movement).lengthSqr() <= 1e-14 ? cut.travel()
                     : Math.min(cut.travel(), Math.max(0, actual.dot(frame.translation) / frame.translation.lengthSqr()));
                 frame.travel += accepted; frame.speed = (onRail ? cart.getDeltaMovement().horizontalDistance() : cart.getDeltaMovement().length()) * 512 / frame.storedRatio;
                 state.actorWork += torque * accepted / 1200;
+                double chargedTravel = accepted;
+                charges.forEach((hand, charge) -> hand.charge(charge * chargedTravel / 1200));
                 com.diliupengyun.differential_create.kinetics.portable.PortableDocking.observe(docks, accepted);
                 double paid = accepted;
                 MachineWork.batch(() -> phases.forEach(work -> work.differentialcreate$advanceTravel(paid)));
@@ -331,6 +359,13 @@ public final class MinecartActorMotion {
                 var parent = entity.getVehicle();
                 if (parent != null) parent.positionRider(entity);
             }
+        }
+    }
+    public static void tickHands(AbstractMinecart cart) {
+        if (cart.level().isClientSide || !MinecartPhysics.enabled(cart)) return;
+        for (var entity : MinecartPhysics.structures(cart)) for (var actor : entity.getContraption().getActors()) {
+            var ctx = actor.getRight();
+            if (ctx != null && MovingDeployerWork.isHand(ctx)) ContraptionActorWork.of(ctx).hand().cartTick();
         }
     }
 }

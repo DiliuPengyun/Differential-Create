@@ -102,6 +102,7 @@ public abstract class MechanicalBearingBlockEntityMixin implements IBearingMotio
 		if (self.getLevel() == null || self.getLevel().isClientSide) return;
 		Double angle = ContraptionMotion.angular(self.getMovedContraption());
 		if (angle != null) cir.setReturnValue(angle.floatValue());
+		else if (!ContraptionMotion.samplingGeometry() && com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(self)) cir.setReturnValue(0f);
 	}
 
 	@Redirect(method = "addToTooltip", at = @At(value = "INVOKE",

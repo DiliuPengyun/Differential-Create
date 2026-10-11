@@ -114,8 +114,10 @@ public final class ClientSpeedSync {
 				((IBearingMotion) bearing).differentialcreate$syncedAngle());
 		RotorStatePayload.OutputPose output = be instanceof ISequencerDynamics servo
 			? new RotorStatePayload.OutputPose(servo.differentialcreate$motion().shaftAngle() * 360) : null;
+		var feed = ActorFeed.enabled(be) ? ActorFeed.of(be) : null;
 		return new RotorStatePayload.Rotor(be.getBlockPos(), (float) member.physicalSpeed,
-			member.angle * 360, (float) member.transmittedTorque, steamVent, elasticEnergy, pose, output);
+			member.angle * 360, (float) member.transmittedTorque, steamVent, elasticEnergy, pose, output,
+			feed == null ? null : new RotorStatePayload.FeedPose((float) feed.speed, feed.inertia, feed.brake, feed.brakeHeat));
 	}
 
 	private static void queue(ServerPlayer player, CustomPacketPayload payload) {

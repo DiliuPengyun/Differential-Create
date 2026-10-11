@@ -82,6 +82,7 @@ public final class MachineActivity {
 		return (be instanceof EncasedFanBlockEntity ? 0 : impact) + quadraticDrag(be) * speed * speed;
 	}
 	public static double quadraticDrag(KineticBlockEntity be) {
+		if (ActorFeed.enabled(be)) return 0;
 		return ContraptionPhysics.airDrag(be) + (be instanceof EncasedFanBlockEntity
 			? impact(be) / Math.pow(PhysicsTuning.FAN_ANCHOR_RPM, 2) : 0);
 	}

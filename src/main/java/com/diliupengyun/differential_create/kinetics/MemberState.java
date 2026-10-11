@@ -8,6 +8,7 @@ public final class MemberState {
 	/** Integrated render angle in turns, with its assembly zero aligned on non-clutch connections. */
 	public double angle;
 	public double lastInertia = Double.NaN;
+	public final ActorFeed actorFeed = new ActorFeed();
 	/** Saved total bearing inertia while its contraption entity is still loading. */
 	public float pendingBearingInertia = Float.NaN;
 	public float pendingStructureInertia = Float.NaN;

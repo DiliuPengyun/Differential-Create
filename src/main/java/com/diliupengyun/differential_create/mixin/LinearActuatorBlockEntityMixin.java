@@ -19,6 +19,23 @@ import org.objectweb.asm.Opcodes;
 public abstract class LinearActuatorBlockEntityMixin {
 	@Shadow protected boolean assembleNextTick;
 	@Shadow protected abstract void resetContraptionToOffset();
+	@Inject(method = "tryDisassemble", at = @At("HEAD"), cancellable = true)
+	private void differentialcreate$waitForPhysicalFeed(CallbackInfo ci) {
+		var self = (LinearActuatorBlockEntity) (Object) this;
+		if (self.getLevel() == null || self.getLevel().isClientSide
+			|| !com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(self)) return;
+		for (var drive : com.diliupengyun.differential_create.kinetics.ContraptionPhysics.drives(self)) {
+			boolean busy = drive.entity().getContraption().getActors().stream().anyMatch(a -> a.getRight() != null
+				&& com.diliupengyun.differential_create.kinetics.MovingDeployerWork.isHand(a.getRight())
+				&& com.diliupengyun.differential_create.kinetics.ContraptionActorWork.of(a.getRight()).hand().pending());
+			double direction = Math.signum(com.diliupengyun.differential_create.kinetics.NetworkDynamics.preciseSpeed(self));
+			// A newly assembled output starts at rest. Allow its clutch to accelerate
+			// away from an endpoint before Create considers the stroke finished.
+			if (busy || direction != 0 && drive.allowance(direction) > com.diliupengyun.differential_create.kinetics.MachineWork.EPSILON) {
+				ci.cancel(); return;
+			}
+		}
+	}
 	@Inject(method = "attach", at = @At("RETURN"))
 	private void differentialcreate$recoverPaidTravel(com.simibubi.create.content.contraptions.ControlledContraptionEntity root, CallbackInfo ci) {
 		var self = (LinearActuatorBlockEntity) (Object) this;

@@ -18,5 +18,6 @@ public abstract class LinearActuatorMotionMixin {
 		if (self.getLevel() == null || self.getLevel().isClientSide) return;
 		Vec3 motion = ContraptionMotion.linear(self.movedContraption);
 		if (motion != null) cir.setReturnValue((float) motion.dot(((LinearActuatorAccessor) self).differentialcreate$toMotionVector(1)));
+		else if (!ContraptionMotion.samplingGeometry() && com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(self)) cir.setReturnValue(0f);
 	}
 }
