@@ -17,6 +17,11 @@ public final class SteamEnginePhysics {
 
 	public static FluidTankBlockEntity tank(SteamEngineBlockEntity engine) {
 		var level = engine.getLevel();
+		if (((com.diliupengyun.differential_create.trains.SteamHoseLinks.EngineLink) engine).differentialcreate$hose() != null) {
+			var remote = engine.isRemoved() ? null : com.diliupengyun.differential_create.trains.SteamHoseLinks.tank(engine);
+			if (engine.source.get() != remote) engine.source = new WeakReference<>(remote);
+			return remote;
+		}
 		FluidTankBlockEntity attached = null;
 		if (level != null && !engine.isRemoved() && engine.getBlockState().getBlock() instanceof SteamEngineBlock) {
 			BlockPos pos = engine.getBlockPos().relative(SteamEngineBlock.getFacing(engine.getBlockState()).getOpposite());
@@ -31,6 +36,8 @@ public final class SteamEnginePhysics {
 
 	public static PoweredShaftBlockEntity shaft(SteamEngineBlockEntity engine) {
 		var level = engine.getLevel();
+		if (level != null && level.isClientSide && engine.isVirtual())
+			return com.diliupengyun.differential_create.client.ClientTrainKinetics.renderShaft(engine);
 		PoweredShaftBlockEntity target = null;
 		// Create calls getShaft() during remove(), after marking the engine removed.
 		if (level != null && engine.getBlockState().getBlock() instanceof SteamEngineBlock) {

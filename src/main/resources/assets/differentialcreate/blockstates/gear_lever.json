@@ -1,0 +1,16 @@
+{
+  "variants": {
+    "gear=0": {
+      "model": "differentialcreate:block/gear_lever_0"
+    },
+    "gear=1": {
+      "model": "differentialcreate:block/gear_lever_1"
+    },
+    "gear=2": {
+      "model": "differentialcreate:block/gear_lever_2"
+    },
+    "gear=3": {
+      "model": "differentialcreate:block/gear_lever_3"
+    }
+  }
+}

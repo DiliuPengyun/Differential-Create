@@ -7,7 +7,6 @@ import com.simibubi.create.api.behaviour.movement.MovementBehaviour;
 import com.simibubi.create.api.stress.BlockStressValues;
 import com.simibubi.create.content.contraptions.behaviour.MovementContext;
 import com.simibubi.create.content.kinetics.deployer.*;
-import com.simibubi.create.content.trains.entity.CarriageContraption;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
@@ -32,7 +31,7 @@ public final class MovingDeployerWork {
         return MovementBehaviour.REGISTRY.get(ctx.state) instanceof DeployerMovementBehaviour;
     }
     public static boolean supported(MovementContext ctx) {
-        return isHand(ctx) && !(ctx.contraption instanceof CarriageContraption) && ActorDrive.of(ctx) != null;
+        return isHand(ctx) && ActorDrive.of(ctx) != null;
     }
     private CompoundTag data() {
         if (!context.data.contains(TAG)) context.data.put(TAG, new CompoundTag());

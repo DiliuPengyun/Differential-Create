@@ -27,6 +27,16 @@ public final class ModContent {
 		.item("composite_friction_plate", Item::new)
 		.register();
 
+	public static final ItemEntry<com.diliupengyun.differential_create.trains.SteamHoseItem> STEAM_HOSE = REGISTRATE
+		.item("steam_hose", com.diliupengyun.differential_create.trains.SteamHoseItem::new).register();
+
+	public static final BlockEntry<com.diliupengyun.differential_create.trains.GearLeverBlock> GEAR_LEVER = REGISTRATE
+		.block("gear_lever", com.diliupengyun.differential_create.trains.GearLeverBlock::new)
+		.initialProperties(SharedProperties::stone)
+		.onRegister(com.simibubi.create.api.behaviour.interaction.MovingInteractionBehaviour.interactionBehaviour(
+			new com.diliupengyun.differential_create.trains.GearLeverInteraction()))
+		.simpleItem().register();
+
 	public static final BlockEntityEntry<BrassClutchBlockEntity> BRASS_CLUTCH_ENTITY = REGISTRATE
 		.blockEntity("brass_clutch", BrassClutchBlockEntity::new)
 		.visual(() -> SplitShaftVisual::new, false)

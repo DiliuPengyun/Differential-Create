@@ -11,6 +11,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(SteamEngineBlockEntity.class)
 public abstract class SteamEngineParticlesMixin {
+    @Inject(method = "tick", at = @At("HEAD"))
+    private void differentialcreate$hoseRenderer(CallbackInfo ci) {
+        com.diliupengyun.differential_create.client.SteamHoseRenderer.observe((SteamEngineBlockEntity) (Object) this);
+    }
     @Unique private final SteamExhaustAnimation differentialcreate$exhaust = new SteamExhaustAnimation();
 
     @Inject(method = "spawnParticles", at = @At("HEAD"))

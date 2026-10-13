@@ -72,6 +72,13 @@ neoForge {
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
+        trainClientSmoke {
+            client()
+            gameDirectory = project.file('build/train-client/runs/' + UUID.randomUUID())
+            systemProperty 'differentialcreate.trainClientSmoke', 'true'
+            logLevel = org.slf4j.event.Level.INFO
+        }
+
         server {
             server()
             programArgument '--nogui'
@@ -127,6 +134,14 @@ neoForge {
             gameDirectory = project.file('build/motion-coverage/runs/' + UUID.randomUUID())
             systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_motion'
             systemProperty 'differentialcreate.motion.select', providers.gradleProperty('motionSelect').getOrElse('.*')
+            logLevel = org.slf4j.event.Level.INFO
+        }
+
+        trainCoverageServer {
+            type = "gameTestServer"
+            gameDirectory = project.file('build/train-coverage/runs/' + UUID.randomUUID())
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_trains'
+            systemProperty 'differentialcreate.trains.select', providers.gradleProperty('trainSelect').getOrElse('.*')
             logLevel = org.slf4j.event.Level.INFO
         }
 
@@ -189,6 +204,26 @@ tasks.named('runMotionCoverageServer') {
         def log = new File(directory, 'logs/latest.log')
         if (!log.isFile() || !(log.text =~ /All \d+ required tests passed/))
             throw new GradleException('Motion server did not report a completed successful test run; inspect its latest.log.')
+    }
+}
+
+tasks.named('runTrainCoverageServer') {
+    notCompatibleWithConfigurationCache('Each train integration run requires a fresh disposable world.')
+    doLast {
+        def directory = neoForge.runs.getByName('trainCoverageServer').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !(log.text =~ /All \d+ required tests passed/))
+            throw new GradleException('Train server did not report a successful completed test run; inspect its latest.log.')
+    }
+}
+
+tasks.named('runTrainClientSmoke') {
+    notCompatibleWithConfigurationCache('The client smoke run requires a fresh disposable directory.')
+    doLast {
+        def directory = neoForge.runs.getByName('trainClientSmoke').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !log.text.contains('DC_TRAIN_CLIENT_SMOKE_PASS') || log.text.contains('DC_TRAIN_CLIENT_SMOKE_FAIL'))
+            throw new GradleException('Train client smoke check did not pass; inspect its latest.log.')
     }
 }
 

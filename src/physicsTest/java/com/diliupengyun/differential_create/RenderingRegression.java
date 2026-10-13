@@ -5,6 +5,7 @@ import com.diliupengyun.differential_create.client.RotationFrame;
 import com.diliupengyun.differential_create.client.InstanceRotation;
 import com.diliupengyun.differential_create.client.FreeShaftRotation;
 import com.diliupengyun.differential_create.client.ClutchAnimationCache;
+import com.diliupengyun.differential_create.client.RenderObservationCache;
 import com.diliupengyun.differential_create.client.RotorAnimation;
 import com.diliupengyun.differential_create.client.RotorPoseAnimation;
 import com.diliupengyun.differential_create.client.BearingAnimation;
@@ -32,6 +33,7 @@ public final class RenderingRegression {
 		clutchCogShaftAlignment();
 		freeClutchOutput();
 		clutchAnimationCache();
+		hoseRenderObservations();
 		rotorSamples();
 		bearingPoses();
 		bearingSampleBuffer();
@@ -315,6 +317,34 @@ public final class RenderingRegression {
 			FreeShaftRotation shared = await(states.getFirst());
 			for (var state : states) check(await(state) == shared, "simultaneous visual creation installs one phase state");
 			check(parallel.snapshot(key -> false).size() == 1, "simultaneous first use never duplicates a clutch entry");
+		}
+	}
+
+	private static void hoseRenderObservations() {
+		var cache = new RenderObservationCache<Object>();
+		Object first = new Object(), second = new Object();
+		cache.observe(first); cache.observe(second); cache.observe(first);
+		var frame = cache.snapshot(key -> false);
+		check(frame.size() == 2, "repeated engine ticks cannot duplicate a rendered hose");
+		var additions = new ArrayList<Object>();
+		for (int i = 0; i < 64; i++) additions.add(new Object());
+		try (var worker = Executors.newSingleThreadExecutor()) {
+			int visited = 0;
+			for (var engine : frame) {
+				// Insert during the render callback, then resume the frame's iterator.
+				// The original shared WeakHashMap iterator throws here.
+				await(worker.submit(() -> { additions.forEach(cache::observe); return null; }));
+				check(engine == first || engine == second, "new engine observations wait until the next render frame");
+				visited++;
+			}
+			check(visited == 2, "concurrent observation cannot skip or repeat hoses in an active frame");
+			check(cache.snapshot(key -> false).size() == 66, "the next render frame receives all concurrently observed engines");
+			var retained = cache.snapshot(key -> key != first);
+			check(retained.size() == 1 && retained.getFirst() == first, "removed engines and other worlds are pruned before drawing");
+			check(frame.size() == 2, "world cleanup cannot invalidate an already captured frame");
+			await(worker.submit(() -> { cache.clear(); return null; }));
+			check(retained.getFirst() == first, "disconnecting keeps the in-progress frame's engine alive");
+			check(cache.snapshot(key -> false).isEmpty(), "disconnecting releases all engine observations");
 		}
 	}
 

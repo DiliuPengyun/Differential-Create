@@ -27,6 +27,8 @@ public interface ActorDrive {
     boolean motionActive();
     static ActorDrive of(MovementContext context) {
         var shaft = ContraptionPhysics.drive(context);
-        return shaft != null ? shaft : MinecartActorMotion.drive(context);
+        if (shaft != null) return shaft;
+        var train = TrainActorMotion.drive(context);
+        return train != null ? train : MinecartActorMotion.drive(context);
     }
 }
