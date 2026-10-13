@@ -3,7 +3,6 @@ package com.diliupengyun.differential_create.mixin;
 import java.util.Collection;
 import com.llamalad7.mixinextras.sugar.Local;
 import com.diliupengyun.differential_create.trains.TrainPhysics;
-import com.diliupengyun.differential_create.trains.CarriageSteamState;
 import com.simibubi.create.content.trains.entity.Carriage;
 import com.simibubi.create.content.trains.entity.CarriageContraption;
 import com.simibubi.create.content.trains.entity.CarriageContraptionEntity;

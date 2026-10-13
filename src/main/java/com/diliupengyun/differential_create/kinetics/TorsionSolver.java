@@ -52,10 +52,12 @@ public final class TorsionSolver {
     private record Step(double[] speed, double[] twist, double[] velocity, double[] torque,
                         boolean[] slipping, int broken) {}
     private static final class ConvergenceFailure extends RuntimeException {
+        private static final long serialVersionUID = 1L;
         ConvergenceFailure(String message) { super(message); }
     }
     /** A numerical guard requests the original algorithm from the captured initial state. */
     private static final class OriginalRequired extends RuntimeException {
+        private static final long serialVersionUID = 1L;
         private OriginalRequired() { super(null, null, false, false); }
     }
     private static final OriginalRequired ORIGINAL_REQUIRED = new OriginalRequired();
@@ -769,7 +771,8 @@ public final class TorsionSolver {
         static final ForkJoinPool POOL = new ForkJoinPool(Math.min(2, Runtime.getRuntime().availableProcessors() / 4));
     }
 
-    /** Only detached numerical captures enter workers; world state and callbacks stay on the caller. */
+    /** Only detached numerical captures enter workers; world state and callbacks stay on the caller.
+     * These in-process tasks are never serialized despite RecursiveAction's Serializable base. */
     private static final class ComponentBatch extends RecursiveAction {
         private static final long serialVersionUID = 1;
         final List<Component> components;

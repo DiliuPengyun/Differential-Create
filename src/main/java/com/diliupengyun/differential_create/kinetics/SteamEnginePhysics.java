@@ -29,7 +29,7 @@ public final class SteamEnginePhysics {
 				attached = tank;
 		}
 		if (engine.source.get() != attached) engine.source = new WeakReference<>(attached);
-		if (attached == null || !level.isLoaded(attached.getController())) return null;
+		if (level == null || attached == null || !level.isLoaded(attached.getController())) return null;
 		return level.getBlockEntity(attached.getController()) instanceof FluidTankBlockEntity controller
 			&& !controller.isRemoved() && controller.isController() ? controller : null;
 	}

@@ -5,7 +5,6 @@ import java.util.*;
 import com.diliupengyun.differential_create.kinetics.*;
 import com.simibubi.create.api.behaviour.movement.MovementBehaviour;
 import com.simibubi.create.content.contraptions.AbstractContraptionEntity;
-import com.simibubi.create.content.contraptions.actors.psi.PortableStorageInterfaceBlockEntity;
 import com.simibubi.create.content.contraptions.actors.psi.PortableStorageInterfaceMovement;
 import com.simibubi.create.content.contraptions.behaviour.MovementContext;
 import com.simibubi.create.content.kinetics.KineticNetwork;
@@ -79,7 +78,8 @@ public final class PortableDocking {
         var result = new ArrayList<DockingState>();
         index.entrySet().removeIf(entry -> {
             var state = entry.getValue().get();
-            if (state == null || state.owner.isRemoved() || !level.hasChunkAt(entry.getKey())) return true;
+            if (state == null || state.owner.isRemoved()
+                || !level.getChunkSource().hasChunk(entry.getKey().getX() >> 4, entry.getKey().getZ() >> 4)) return true;
             if (level.getBlockEntity(entry.getKey()) != state.owner) return true;
             result.add(state); return false;
         });

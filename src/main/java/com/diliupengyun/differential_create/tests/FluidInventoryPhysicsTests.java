@@ -119,7 +119,6 @@ public final class FluidInventoryPhysicsTests {
                 FluidKinetics.invalidate(h.getLevel());
                 var frame = FluidKinetics.capture(h.getLevel());
                 double total = stored(h);
-                int sourceBefore = source.getTankInventory().getFluidAmount();
                 int before = nearlyEmpty ? source.getTankInventory().getFluidAmount() : sink.getTankInventory().getFluidAmount();
                 FluidKinetics.beginTick(h.getLevel());
                 FluidKinetics.advance(frame, com.diliupengyun.differential_create.kinetics.RotationMath.TICK_MINUTES);

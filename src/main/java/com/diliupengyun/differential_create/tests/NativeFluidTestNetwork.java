@@ -13,7 +13,6 @@ import java.util.function.Consumer;
 import com.diliupengyun.differential_create.kinetics.FluidKinetics;
 import com.diliupengyun.differential_create.kinetics.IPipePressure;
 import com.simibubi.create.AllBlocks;
-import com.simibubi.create.content.fluids.FluidPropagator;
 import com.simibubi.create.content.fluids.OpenEndedPipe;
 import com.simibubi.create.content.fluids.FluidTransportBehaviour;
 import com.simibubi.create.content.fluids.FlowSource;

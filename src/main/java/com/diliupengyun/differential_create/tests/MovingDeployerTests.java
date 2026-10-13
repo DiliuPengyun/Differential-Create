@@ -268,7 +268,7 @@ public final class MovingDeployerTests {
             h.runAfterDelay(4, () -> {
                 var f = fixture(h, piston); h.getLevel().setBlockAndUpdate(f.target, (hard ? Blocks.OBSIDIAN : Blocks.STONE).defaultBlockState());
                 class Loop {
-                    int ticks, parked, hits; double lastAngle, heldAngle; boolean resumed;
+                    int ticks, parked, hits; double heldAngle; boolean resumed;
                     void tick() {
                         ticks++; var hand = ContraptionActorWork.of(f.ctx).hand(); var feed = ActorFeed.of(f.driver);
                         h.assertFalse(f.ctx.stall || f.root.isStalled() || f.root.getContraption().stalled, "paid hand never invokes a native whole-body stall");

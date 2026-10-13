@@ -400,7 +400,7 @@ final class ElasticKineticsTests {
         BlockPos inputPos = controllerPos.above().north();
         h.setBlock(inputPos, AllBlocks.FLYWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.Z));
         KineticBlockEntity input = h.getBlockEntity(inputPos);
-        var output = flywheel(h, 12, 5); shaft(h, 11, 5);
+        flywheel(h, 12, 5); shaft(h, 11, 5);
         h.runAfterDelay(5, () -> {
             for (int setting : new int[]{32, -32}) {
                 controller.targetSpeed.setValue(setting);

@@ -47,7 +47,8 @@ public final class DockingState {
     }
     private boolean loaded() {
         var level = owner.getLevel();
-        return level != null && !owner.isRemoved() && level.hasChunkAt(owner.getBlockPos())
+        return level != null && !owner.isRemoved()
+            && level.getChunkSource().hasChunk(owner.getBlockPos().getX() >> 4, owner.getBlockPos().getZ() >> 4)
             && level.getBlockEntity(owner.getBlockPos()) == owner;
     }
     public boolean permission() {

@@ -367,7 +367,7 @@ public final class FluidKinetics {
             }
             for (int n = 0; n < members.size(); n++) for (var d : sides.get(n)) {
                 var next = live.get(members.get(n).getPos().relative(d)); var to = next == null ? null : index.get(next);
-                if (to != null && n < to && sides.get(to).contains(d.getOpposite())) {
+                if (next != null && to != null && n < to && sides.get(to).contains(d.getOpposite())) {
                     if (retainedIntake(members.get(n), d) != null || retainedIntake(next, d.getOpposite()) != null
                         || bufferedInput(members.get(n), d) || bufferedInput(next, d.getOpposite())) continue;
                     var c = new Channel(n, to, d, null, 1 - (members.get(n).blockEntity instanceof PumpBlockEntity ? .25 : 0)

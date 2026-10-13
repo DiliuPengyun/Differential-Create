@@ -13,7 +13,6 @@ import com.simibubi.create.content.contraptions.StructureTransform;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.Mirror;
 import com.simibubi.create.content.fluids.tank.FluidTankBlockEntity;
-import com.simibubi.create.content.kinetics.speedController.SpeedControllerBlock;
 import com.simibubi.create.content.kinetics.speedController.SpeedControllerBlockEntity;
 import com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlock;
 import com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlockEntity;
@@ -41,7 +40,6 @@ import net.minecraft.nbt.NbtUtils;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate.StructureBlockInfo;
@@ -56,7 +54,7 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 @PrefixGameTestTemplate(false)
 public final class TrainIntegrationTests {
     private static final BlockPos BOILER = new BlockPos(2, 4, 4), RESERVE = new BlockPos(9, 4, 8), ENGINE = new BlockPos(5, 4, 4);
-    private static final BlockPos SHAFT = new BlockPos(5, 6, 4), CONTROLLER = new BlockPos(5, 5, 6), WHEEL = new BlockPos(6, 4, 5);
+    private static final BlockPos CONTROLLER = new BlockPos(5, 5, 6), WHEEL = new BlockPos(6, 4, 5);
     private static final BlockPos CHEST = new BlockPos(9, 4, 4), LEVER = new BlockPos(8, 4, 5);
     private static void add(List<TestFunction> cases, String name, Consumer<GameTestHelper> test) {
         if (name.matches(System.getProperty("differentialcreate.trains.select", ".*")))

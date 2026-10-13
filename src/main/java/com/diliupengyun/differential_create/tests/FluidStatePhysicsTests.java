@@ -7,7 +7,6 @@ import com.diliupengyun.differential_create.DifferentialCreate;
 import com.diliupengyun.differential_create.kinetics.*;
 import com.simibubi.create.AllBlocks;
 import com.simibubi.create.content.fluids.FluidPropagator;
-import com.simibubi.create.content.fluids.FluidTransportBehaviour;
 import com.simibubi.create.content.fluids.pipes.FluidPipeBlock;
 import com.simibubi.create.content.fluids.pump.PumpBlock;
 import com.simibubi.create.content.fluids.pump.PumpBlockEntity;

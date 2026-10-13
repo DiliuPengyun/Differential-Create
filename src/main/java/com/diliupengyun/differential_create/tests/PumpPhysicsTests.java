@@ -376,7 +376,6 @@ public final class PumpPhysicsTests {
                 f.motor.generatedSpeed.setValue(direction * 32);
                 double target = SourcePhysics.curve(f.motor).noLoadSpeed();
                 f.speed(target + Math.copySign(Math.ulp(target), target) * ulps);
-                var pipe = f.pump.getBehaviour(FluidTransportBehaviour.TYPE);
                 double rpm = NetworkDynamics.preciseSpeed(f.pump);
                 double flow = flowSign * Math.ulp(8d);
                 double torque = IdealFluidSolver.coupling(new IdealFluidSolver.Material(1000, false), rpm, flow) * flow;

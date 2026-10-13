@@ -2,7 +2,6 @@ package com.diliupengyun.differential_create.tests;
 
 import java.util.*;
 import java.util.function.Consumer;
-import com.diliupengyun.differential_create.kinetics.*;
 import com.diliupengyun.differential_create.kinetics.portable.*;
 import com.simibubi.create.AllBlocks;
 import com.simibubi.create.content.contraptions.actors.psi.PortableStorageInterfaceBlockEntity;
@@ -55,11 +54,10 @@ public final class PortableDockingTests {
             var arrival = f.cart.position();
             class Run {
                 int elapsed, connectedAt = -1, releasedAt = -1;
-                boolean acted, secondConnected, checkedClosed;
+                boolean acted, checkedClosed;
                 IFluidHandler oldFluid;
                 IItemHandler oldItem;
                 DockingSession first;
-                Vec3 held;
                 void tick() {
                     elapsed++;
                     h.assertFalse(f.root.isStalled() || f.context.stall, "physical docking never creates native stall data");
@@ -73,7 +71,7 @@ public final class PortableDockingTests {
                         h.runAfterDelay(1, this::tick); return;
                     }
                     if (state.phase == DockingState.Phase.TRANSFER && connectedAt < 0) {
-                        connectedAt = elapsed; held = f.cart.position(); first = state.session();
+                        connectedAt = elapsed; first = state.session();
                         h.assertTrue(owner.canTransfer(), "stable physical contact opens inventory");
                         h.assertTrue(f.cart.getDeltaMovement().lengthSqr() < 1e-16, "cart is physically stopped before storage opens");
                         state.owner.getBehaviour(DockingSettingBehaviour.OUTPUT).setValue(1);
@@ -133,7 +131,7 @@ public final class PortableDockingTests {
                         }
                     }
                     if (mode.equals("reconnect") && releasedAt >= 0 && state.phase == DockingState.Phase.TRANSFER) {
-                        secondConnected = true; h.assertFalse(first.valid(), "new connection never revives old generation"); checkOld();
+                        h.assertFalse(first.valid(), "new connection never revives old generation"); checkOld();
                         var now = state.session(); h.assertTrue(now.valid(), "new connection obtains a new valid generation");
                         f.cleanup(); h.succeed(); return;
                     }

@@ -15,7 +15,6 @@ import com.simibubi.create.AllItems;
 import com.simibubi.create.content.fluids.FlowSource;
 import com.simibubi.create.content.fluids.OpenEndedPipe;
 import com.simibubi.create.content.fluids.FluidTransportBehaviour;
-import com.simibubi.create.content.fluids.pipes.EncasedPipeBlock;
 import com.simibubi.create.content.fluids.pipes.FluidPipeBlock;
 import com.simibubi.create.content.fluids.pipes.SmartFluidPipeBlock;
 import com.simibubi.create.content.fluids.pipes.valve.FluidValveBlock;
@@ -147,7 +146,7 @@ final class FluidStructureMutationTests {
                 n.after(tick + 80, () -> {
                     wrench(n, at); n.expect(AllBlocks.FLUID_PIPE.has(n.state(at)), "the native wrench returns glass to a normal pipe");
                     var player = FakePlayerFactory.getMinecraft(h.getLevel()); var abs = n.absolute(at);
-                    ((EncasedPipeBlock)AllBlocks.ENCASED_FLUID_PIPE.get()).handleEncasing(n.state(at), h.getLevel(), abs,
+                    AllBlocks.ENCASED_FLUID_PIPE.get().handleEncasing(n.state(at), h.getLevel(), abs,
                         new ItemStack(AllBlocks.COPPER_CASING.asItem()), player, InteractionHand.MAIN_HAND,
                         new BlockHitResult(Vec3.atCenterOf(abs), Direction.UP, abs, false));
                     initialise(n, at);

@@ -58,7 +58,8 @@ public abstract class PressingBehaviourMixin implements ShaftWork {
 				if (self.onBasin()) applyOnBasin();
 				if (self.mode == PressingBehaviour.Mode.BELT) differentialcreate$beltContactTick = self.getWorld().getGameTime();
 				else self.runningTicks = 121; // Contact is an event, not another unit of shaft work.
-				if (self.getWorld().getBlockState(self.getPos().below(2)).getSoundType() == SoundType.WOOL)
+				var support = self.getPos().below(2);
+				if (self.getWorld().getBlockState(support).getSoundType(self.getWorld(), support, null) == SoundType.WOOL)
 					AllSoundEvents.MECHANICAL_PRESS_ACTIVATION_ON_BELT.playOnServer(self.getWorld(), self.getPos());
 				else AllSoundEvents.MECHANICAL_PRESS_ACTIVATION.playOnServer(self.getWorld(), self.getPos(), .5f,
 					.75f + Math.abs(self.specifics.getKineticSpeed()) / 1024f);

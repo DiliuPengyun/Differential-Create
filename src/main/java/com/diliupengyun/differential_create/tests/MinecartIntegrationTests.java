@@ -162,7 +162,7 @@ public final class MinecartIntegrationTests {
             if (cart instanceof MinecartFurnace motor) {
                 var tag = motor.saveWithoutId(new CompoundTag()); tag.putShort("Fuel", (short) 3600); tag.putDouble("PushX", 1); motor.load(tag);
             }
-            var assembler = fixture(h, cart); var root = MinecartPhysics.mounted(cart);
+            fixture(h, cart); var root = MinecartPhysics.mounted(cart);
             double j = .01 + ContraptionPhysics.shape(root.getContraption()).linearInertia();
             near(h, j, MinecartPhysics.refresh(cart), 1e-15, "mounted cart uses the existing piston structure inertia");
             near(h, .004 / j, cart.getDeltaMovement().x, 1e-12, "assembly conserves momentum when resting mass joins");

@@ -7,7 +7,6 @@ import com.diliupengyun.differential_create.kinetics.INetworkDynamics;
 import com.diliupengyun.differential_create.kinetics.NetworkTopology;
 import com.diliupengyun.differential_create.kinetics.SourcePhysics;
 import com.diliupengyun.differential_create.kinetics.KineticGoggleInfo;
-import com.diliupengyun.differential_create.kinetics.InertiaRegistry;
 import com.diliupengyun.differential_create.kinetics.NetworkDynamics;
 import com.diliupengyun.differential_create.kinetics.PhysicsTuning;
 import com.diliupengyun.differential_create.kinetics.NetworkLoad;

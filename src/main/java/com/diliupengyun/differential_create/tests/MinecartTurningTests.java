@@ -230,7 +230,8 @@ public final class MinecartTurningTests {
         h.assertTrue(snapshot != null && snapshot.yaw() == f.root.yaw && snapshot.pitch() == f.root.pitch,
             "server publishes the accepted partial pose rather than the full unpaid native turn");
         var packet = new ClientboundSetEntityDataPacket(f.root.getId(), f.root.getEntityData().getNonDefaultValues());
-        var buffer = new RegistryFriendlyByteBuf(Unpooled.buffer(), h.getLevel().registryAccess());
+        var buffer = new RegistryFriendlyByteBuf(Unpooled.buffer(), h.getLevel().registryAccess(),
+            net.neoforged.neoforge.network.connection.ConnectionType.OTHER);
         try {
             ClientboundSetEntityDataPacket.STREAM_CODEC.encode(buffer, packet);
             var decoded = ClientboundSetEntityDataPacket.STREAM_CODEC.decode(buffer);

@@ -13,7 +13,7 @@ public final class FluidMaterials {
         ResourceLocation.fromNamespaceAndPath(DifferentialCreate.MODID, "gases"));
     private FluidMaterials() {}
     public static boolean isGas(FluidStack fluid) {
-        return fluid.isEmpty() || fluid.getFluid().is(GASES) || fluid.getFluidType().isLighterThanAir();
+        return fluid.isEmpty() || fluid.is(GASES) || fluid.getFluidType().isLighterThanAir();
     }
     public static IdealFluidSolver.Material of(FluidStack fluid) {
         if (fluid.isEmpty()) return new IdealFluidSolver.Material(1000, true); // owned virtual air, never an external FluidStack

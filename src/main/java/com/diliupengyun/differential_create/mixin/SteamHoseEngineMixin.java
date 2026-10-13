@@ -3,8 +3,6 @@ package com.diliupengyun.differential_create.mixin;
 import com.diliupengyun.differential_create.trains.SteamHoseLinks;
 import com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlockEntity;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.HolderLookup;
-import net.minecraft.nbt.CompoundTag;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;

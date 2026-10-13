@@ -4,11 +4,9 @@ import java.util.List;
 import java.util.IdentityHashMap;
 import com.diliupengyun.differential_create.kinetics.FluidKinetics;
 import com.diliupengyun.differential_create.kinetics.IPipePressure;
-import com.simibubi.create.AllBlocks;
 import com.simibubi.create.content.fluids.OpenEndedPipe;
 import com.simibubi.create.content.fluids.FlowSource;
 import com.simibubi.create.content.fluids.pipes.FluidPipeBlock;
-import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
@@ -29,9 +27,6 @@ final class FluidStructureBoundaryTests {
     static final List<String> OUTFLOWS = List.of("close_face", "close_reload", "seal_mouth");
     static final List<String> SOURCES = List.of("close_face", "remove_and_seal");
     private static BlockPos p(int x, int y, int z) { return new BlockPos(x, y, z); }
-    private static void initialise(NativeFluidTestNetwork n, BlockPos at) {
-        if (n.entity(at) instanceof SmartBlockEntity smart) smart.initialize();
-    }
     private static FluidStack tagged(String name, int amount) {
         var stack = new FluidStack(Fluids.WATER, amount); var tag = new CompoundTag(); tag.putString("structure_identity", name);
         stack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag)); return stack;

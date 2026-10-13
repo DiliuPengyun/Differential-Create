@@ -24,15 +24,18 @@ public final class IdealFluidSolver {
      * no state was committed. Keep pressure and flow failures on the same
      * recovery path, including an ill-conditioned but nonsingular CG solve. */
     public static final class ConstraintConvergenceException extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
         public ConstraintConvergenceException() { this("Fluid flow correction did not converge"); }
         public ConstraintConvergenceException(String message) { super(message); }
     }
     /** Arithmetic failed the linear trial's work check; the trial is rejected. */
     public static final class WorkConvergenceException extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
         public WorkConvergenceException(String message) { super(message); }
     }
     /** Live macro updates may defer work; exact numerical regression paths have no deadline. */
     public static final class WorkBudgetException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
         public WorkBudgetException() { super("Macro fluid update budget exhausted", null, false, false); }
     }
 

@@ -1,7 +1,6 @@
 package com.diliupengyun.differential_create.tests;
 
 import java.util.EnumSet;
-import com.diliupengyun.differential_create.kinetics.FluidKinetics;
 import com.diliupengyun.differential_create.kinetics.IBearingMotion;
 import com.diliupengyun.differential_create.kinetics.PipeHydraulics;
 import com.simibubi.create.AllBlocks;

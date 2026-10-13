@@ -15,7 +15,6 @@ import com.diliupengyun.differential_create.kinetics.MachineActivity;
 import com.diliupengyun.differential_create.kinetics.ElasticKinetics;
 import com.diliupengyun.differential_create.kinetics.RotationMath;
 import com.diliupengyun.differential_create.kinetics.KineticGoggleInfo;
-import com.diliupengyun.differential_create.kinetics.NetworkDynamics;
 import com.diliupengyun.differential_create.kinetics.NetworkTopology;
 import com.simibubi.create.AllBlocks;
 import com.simibubi.create.AllItems;
