@@ -1,6 +1,7 @@
 package com.diliupengyun.differential_create.mixin;
 
 import com.diliupengyun.differential_create.trains.SteamHoseLinks;
+import com.diliupengyun.differential_create.trains.SteamHosePort;
 import com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlockEntity;
 import net.minecraft.core.BlockPos;
 import org.spongepowered.asm.mixin.Mixin;
@@ -12,9 +13,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(SteamEngineBlockEntity.class)
 public abstract class SteamHoseEngineMixin implements SteamHoseLinks.EngineLink {
     @Unique private BlockPos differentialcreate$hose;
+    @Unique private SteamHosePort differentialcreate$port;
     @Unique private boolean differentialcreate$mountEvaluated;
     @Override public BlockPos differentialcreate$hose() { return differentialcreate$hose; }
-    @Override public void differentialcreate$hose(BlockPos offset) { differentialcreate$hose = offset; differentialcreate$mountEvaluated = false; }
+    @Override public void differentialcreate$hose(BlockPos offset) { differentialcreate$hose = offset; differentialcreate$port = null; differentialcreate$mountEvaluated = false; }
+    @Override public SteamHosePort differentialcreate$port() { return differentialcreate$port; }
+    @Override public void differentialcreate$port(SteamHosePort port) { differentialcreate$port = port; }
     @Inject(method = "tick", at = @At("HEAD"))
     private void differentialcreate$rebuildTankIndex(CallbackInfo ci) {
         var engine = (SteamEngineBlockEntity) (Object) this;

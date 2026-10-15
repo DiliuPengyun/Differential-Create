@@ -89,18 +89,23 @@ public final class TrainIntegrationTests {
         add(result, "closed_valve_no_new_fuel", h -> withTrain(h, 4000, false, t -> {
             int initial = items(t); t.throttle = 0;
             for (int i = 0; i < 20; i++) { TrainPhysics.manual(t, 1, false); t.tick(h.getLevel()); }
-            h.assertTrue(items(t) == initial && water(t) == 4000 && t.speed == 0, "Closed valve takes neither new fuel nor water"); h.succeed();
+            h.assertTrue(items(t) == initial && water(t) == 4000 && t.speed == 0, "Closed admission stops water, new fuel and driving torque"); h.succeed();
         }));
         add(result, "fractional_valve_conserves_water", h -> withTrain(h, 4000, false, t -> {
             t.throttle = .03;
-            for (int i = 0; i < 20; i++) { TrainPhysics.manual(t, 1, false); t.tick(h.getLevel()); }
-            double buffered = TrainPhysics.carriage(t.carriages.getFirst()).water.values().stream().mapToDouble(Double::doubleValue).sum();
-            h.assertTrue(Math.abs(4000 - water(t) - buffered - 6) < 1e-8, "Fractional admission is paid from real water with conserved carry"); h.succeed();
+            var cs = TrainPhysics.carriage(t.carriages.getFirst()); double flow = 0;
+            for (int i = 0; i < 20; i++) {
+                TrainPhysics.manual(t, 1, false); t.tick(h.getLevel());
+                flow += cs.boilers.values().stream().mapToDouble(b -> b.waterSupply).sum();
+            }
+            double buffered = cs.water.values().stream().mapToDouble(Double::doubleValue).sum();
+            h.assertTrue(flow > 0 && Math.abs(4000 - water(t) - buffered - flow) < 1e-5,
+                "Partial admission pays actual RPM-dependent flow without losing fractional supply"); h.succeed();
         }));
         add(result, "neutral_clutch_and_shared_levers", h -> withTrain(h, 4000, false, t -> {
             TrainPhysics.shift(t, 0);
             for (int i = 0; i < 20; i++) { TrainPhysics.manual(t, 1, false); t.tick(h.getLevel()); }
-            h.assertTrue(t.speed == 0 && water(t) == 4000, "N disconnects and closes admission");
+            h.assertTrue(t.speed == 0 && water(t) < 4000 && TrainPhysics.state(t).engineRpm > 0, "N disconnects the wheels while W admits real steam to the input");
             TrainPhysics.shift(t, 3); h.assertTrue(TrainPhysics.state(t).gear == 3, "Remote lever controls train state"); h.succeed();
         }));
         add(result, "carriage_and_burner_reload", h -> withTrain(h, 4000, false, t -> {
@@ -118,7 +123,7 @@ public final class TrainIntegrationTests {
             h.assertTrue(inventory.getStackInSlot(0).is(Items.BUCKET) && TrainPhysics.carriage(t.carriages.getFirst()).burners.values().iterator().next().remaining == 20000,
                 "Native lava burn time and returned bucket retained"); h.succeed();
         }));
-        add(result, "ratio_legacy_nbt_and_clipboard", TrainIntegrationTests::ratio);
+        add(result, "ratio_native_nbt_and_clipboard", TrainIntegrationTests::ratio);
         add(result, "native_fuel_blacklist", TrainIntegrationTests::blacklist);
         add(result, "native_assembly_and_rotated_disassembly", TrainIntegrationTests::assembly);
         add(result, "native_rail_coast_above_old_limit", h -> onRail(h, t -> {
@@ -137,11 +142,6 @@ public final class TrainIntegrationTests {
             h.assertTrue(TrainPhysics.state(restored).gear == 3 && restored.speed == t.speed && water(restored) == water(t) && items(restored) == items(t), "Native train reload retains gear, momentum and cargo");
             var before = TrainPhysics.carriage(t.carriages.getFirst()); var after = TrainPhysics.carriage(restored.carriages.getFirst());
             h.assertTrue(before.engines.values().iterator().next().omega == after.engines.values().iterator().next().omega, "Native train reload retains engine rotor");
-            var old = tag.copy();
-            for (var raw : old.getList("Carriages", net.minecraft.nbt.Tag.TAG_COMPOUND)) ((CompoundTag) raw).remove("DCSteam");
-            var legacy = Train.read(old, h.getLevel().registryAccess(), Map.of(t.graph.id, t.graph), palette);
-            h.assertTrue(TrainPhysics.carriage(legacy.carriages.getFirst()).layout.blocks == before.layout.blocks
-                && TrainPhysics.carriage(legacy.carriages.getFirst()).layout.failure.equals("needs_assembly"), "Old trains retain captured structural mass and request reassembly");
             double speed = t.speed;
             TrainPhysics.manual(t, 0, true); t.tick(h.getLevel());
             h.assertTrue(t.speed >= 0 && t.speed < speed && speed - t.speed < .025, "Native rail brake changes speed by finite force"); h.succeed();
@@ -156,8 +156,14 @@ public final class TrainIntegrationTests {
             c.getDimensional(otherLevel).entity = new java.lang.ref.WeakReference<>(other);
             int[] entities = {0}; c.forEachPresentEntity(e -> entities[0]++); h.assertTrue(entities[0] == 2, "Two native dimensional entity copies share one carriage");
             TrainPhysics.state(t).level = h.getLevel();
-            for (int i = 0; i < 20; i++) { TrainPhysics.manual(t, 1, false); TrainPhysics.advance(t); }
-            h.assertTrue(water(t) == 3800 && items(t) == 15, "Portal entity copies cannot double-consume water or fuel"); h.succeed();
+            var cs = TrainPhysics.carriage(c); double flow = 0;
+            for (int i = 0; i < 20; i++) {
+                TrainPhysics.manual(t, 1, false); TrainPhysics.advance(t);
+                flow += cs.boilers.values().stream().mapToDouble(b -> b.waterSupply).sum();
+            }
+            double buffered = cs.water.values().stream().mapToDouble(Double::doubleValue).sum();
+            h.assertTrue(Math.abs(4000 - water(t) - buffered - flow) < 1e-5 && items(t) == 15,
+                "Portal entity copies cannot double-consume the current engine demand or fuel"); h.succeed();
         }));
         add(result, "native_station_finite_approach", h -> onRail(h, t -> {
             var lead = t.carriages.getFirst().getLeadingPoint(); var station = station(h, t, lead.position + 60);
@@ -265,7 +271,7 @@ public final class TrainIntegrationTests {
             }));
         return result;
     }
-    private static Set<BlockPos> structure(GameTestHelper h, int water, boolean two) {
+    static Set<BlockPos> structure(GameTestHelper h, int water, boolean two) {
         var positions = new HashSet<BlockPos>();
         Consumer<BlockPos> remember = positions::add;
         for (BlockPos root : List.of(BOILER, RESERVE)) for (int x = 0; x < 2; x++) for (int y = 0; y < 2; y++) for (int z = 0; z < 2; z++) {
@@ -286,7 +292,7 @@ public final class TrainIntegrationTests {
         }
         return positions;
     }
-    private static void unpower(GameTestHelper h) {
+    static void unpower(GameTestHelper h) {
         AbstractBogeyBlockEntity bogey=h.getBlockEntity(WHEEL);
         var data=bogey.getBogeyData().copy(); data.remove(SteamBogey.ENGINE); data.remove("DCGeared");
         bogey.setBogeyData(data); bogey.notifyUpdate();
@@ -334,7 +340,7 @@ public final class TrainIntegrationTests {
     private static void withTrain(GameTestHelper h, int volume, boolean two, Consumer<GameTestHelper> customise, Consumer<Train> check) {
         withTrain(h,volume,two,customise,check,true);
     }
-    private static void withTrain(GameTestHelper h, int volume, boolean two, Consumer<GameTestHelper> customise, Consumer<Train> check, boolean connect) {
+    static void withTrain(GameTestHelper h, int volume, boolean two, Consumer<GameTestHelper> customise, Consumer<Train> check, boolean connect) {
         Set<BlockPos> positions = structure(h, volume, two);
         customise.accept(h);
         h.runAtTickTime(25, () -> {
@@ -365,9 +371,15 @@ public final class TrainIntegrationTests {
     private static void supply(GameTestHelper h, int volume, boolean two) {
         withTrain(h, volume, two, t -> {
             var cs = TrainPhysics.carriage(t.carriages.getFirst()); h.assertTrue(cs.layout.drives.size() == (two ? 2 : 1), "Physical engines counted once");
-            for (int i = 0; i < 20; i++) { TrainPhysics.manual(t, 1, false); t.tick(h.getLevel()); }
+            double flow = 0;
+            for (int i = 0; i < 20; i++) {
+                TrainPhysics.manual(t, 1, false); t.tick(h.getLevel());
+                flow += cs.boilers.values().stream().mapToDouble(b -> b.waterSupply).sum();
+            }
             h.assertTrue(t.speed > 0 && cs.engines.values().stream().allMatch(e -> e.omega != 0), "Finite live boiler output starts train offscreen");
-            h.assertTrue(water(t) == volume - (two ? 400 : 200), "Water actually drained once per boiler level per tick");
+            double buffered = cs.water.values().stream().mapToDouble(Double::doubleValue).sum();
+            h.assertTrue(flow > 0 && Math.abs(volume - water(t) - buffered - flow) < 1e-5,
+                "Actual RPM-dependent cylinder flow is paid exactly once per train tick");
             h.assertTrue(items(t) == 16 - (two ? 2 : 1), "Each boiler burner takes one real coal item");
             h.assertTrue(t.fuelTicks == 0, "No second vanilla fuel boost"); h.succeed();
         });
@@ -406,7 +418,7 @@ public final class TrainIntegrationTests {
         SpeedControllerBlockEntity controller = h.getBlockEntity(CONTROLLER); var ratio = (RatioValueBehaviour) controller.targetSpeed;
         for (int raw : new int[]{-256, -131, -17, -1, 0, 1, 17, 131, 256}) {
             ratio.setValue(raw); var cursor = ratio.getValueSettings(); ratio.setValueSettings(null, cursor, false);
-            h.assertTrue(ratio.getValue() == raw, "Opening/closing logarithmic dial preserves exact legacy ratio");
+            h.assertTrue(ratio.getValue() == raw, "Opening/closing logarithmic dial preserves the exact native ratio");
             var tag = new CompoundTag(); ratio.writeToClipboard(h.getLevel().registryAccess(), tag, Direction.UP);
             ratio.setValue(raw == 16 ? 32 : 16); ratio.readFromClipboard(h.getLevel().registryAccess(), tag, null, Direction.UP, false);
             h.assertTrue(ratio.getValue() == raw, "Clipboard retains signed sixteenths, including N");

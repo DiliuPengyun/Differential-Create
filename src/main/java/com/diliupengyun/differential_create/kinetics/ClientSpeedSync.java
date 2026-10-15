@@ -105,8 +105,8 @@ public final class ClientSpeedSync {
 	/** Read both spindles after the same accepted physics tick, before either is sent. */
 	public static RotorStatePayload.Rotor captureRotor(KineticBlockEntity be, double elasticEnergy) {
 		var member = ElasticKinetics.state(be);
-		float steamVent = be instanceof PoweredShaftBlockEntity shaft
-			? (float) SourcePhysics.steamCurve(shaft).steamVent(member.physicalSpeed) : 0;
+		float steamIntake = be instanceof PoweredShaftBlockEntity shaft
+			? (float) SourcePhysics.steamIntake(shaft, member.physicalSpeed) : 0;
 		RotorStatePayload.BearingPose pose = null;
 		if (be instanceof MechanicalBearingBlockEntity bearing && bearing.isRunning()
 			&& bearing.getMovedContraption() != null)
@@ -116,7 +116,7 @@ public final class ClientSpeedSync {
 			? new RotorStatePayload.OutputPose(servo.differentialcreate$motion().shaftAngle() * 360) : null;
 		var feed = ActorFeed.enabled(be) ? ActorFeed.of(be) : null;
 		return new RotorStatePayload.Rotor(be.getBlockPos(), (float) member.physicalSpeed,
-			member.angle * 360, (float) member.transmittedTorque, steamVent, elasticEnergy, pose, output,
+			member.angle * 360, (float) member.transmittedTorque, steamIntake, elasticEnergy, pose, output,
 			feed == null ? null : new RotorStatePayload.FeedPose((float) feed.speed, feed.inertia, feed.brake, feed.brakeHeat));
 	}
 

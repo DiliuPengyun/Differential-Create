@@ -65,6 +65,6 @@ public abstract class ArmBlockEntityMixin implements ShaftWork {
 	@Inject(method = "read", at = @At("RETURN"))
 	private void differentialcreate$read(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
 		differentialcreate$published = chasedPointProgress;
-		differentialcreate$progress = tag.contains("DCArmProgress") ? tag.getDouble("DCArmProgress") : chasedPointProgress;
+		differentialcreate$progress = tag.getDouble("DCArmProgress");
 	}
 }

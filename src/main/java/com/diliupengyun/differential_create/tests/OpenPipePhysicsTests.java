@@ -161,7 +161,7 @@ public final class OpenPipePhysicsTests {
         var restored = OpenEndedPipe.fromNBT(saved, registries, h.absolutePos(PORT)); restored.manageSource(h.getLevel(), null);
         var actual = handler(restored);
         h.assertTrue(actual.getFluidInTank(0).getAmount() == 900 && !restored.serializeNBT(registries).contains("DifferentialIntakeHeight"),
-            "migration preserves actual liquid and discards the rejected cache-head metadata");
+            "reload preserves actual liquid and ignores unknown cache-head metadata");
         h.assertTrue(((com.diliupengyun.differential_create.kinetics.OpenPipeDischarge.Placement) actual)
             .differentialcreate$discharge(new FluidStack(Fluids.WATER, 1), .025, FluidAction.EXECUTE) == .025
             && actual.getFluidInTank(0).getAmount() == 900 && h.getBlockState(OUTPUT).isAir(),
@@ -618,17 +618,12 @@ public final class OpenPipePhysicsTests {
 
     @GameTest(template = TEMPLATE, batch = "open_pipe_savedLavaBodyRoundoffDoesNotBlockWater", timeoutTicks = 240)
     public static void savedLavaBodyRoundoffDoesNotBlockWater(GameTestHelper h) {
-        switchAfterLavaBody(h, 2.220446049250313e-16, false);
-    }
-
-    @GameTest(template = TEMPLATE, batch = "open_pipe_legacyLavaIntervalsDoNotBlockWater", timeoutTicks = 240)
-    public static void legacyLavaIntervalsDoNotBlockWater(GameTestHelper h) {
-        switchAfterLavaBody(h, 2.220446049250313e-16, true);
+        switchAfterLavaBody(h, 2.220446049250313e-16);
     }
 
     @GameTest(template = TEMPLATE, batch = "open_pipe_realLavaBodyIsNotErasedToAdmitWater", timeoutTicks = 240)
     public static void realLavaBodyIsNotErasedToAdmitWater(GameTestHelper h) {
-        switchAfterLavaBody(h, .025, false);
+        switchAfterLavaBody(h, .025);
     }
 
     @GameTest(template = TEMPLATE, batch = "open_pipe_waterAndLavaBucketsCanAlternateThroughADrainedPump", timeoutTicks = 1460)
@@ -641,7 +636,7 @@ public final class OpenPipePhysicsTests {
         bucketThroughPump(h, false, 1, 374.59006376000457);
     }
 
-    private static void switchAfterLavaBody(GameTestHelper h, double residual, boolean legacy) {
+    private static void switchAfterLavaBody(GameTestHelper h, double residual) {
         actualPipe(h, Direction.Axis.Y); h.setBlock(PORT.below(), AllBlocks.FLUID_TANK.getDefaultState());
         h.setBlock(PORT.above(), Blocks.AIR);
         boolean realLava = residual > 1e-10;
@@ -655,9 +650,7 @@ public final class OpenPipePhysicsTests {
                 var contents = new net.minecraft.nbt.ListTag(); contents.add(net.minecraft.nbt.DoubleTag.valueOf(0));
                 contents.add(net.minecraft.nbt.DoubleTag.valueOf(residual / 100));
                 var port = body.getCompound(side.getName()); port.put("Contents", contents);
-                if (legacy) port.remove("RenderContents");
             }
-            if (legacy) { body.remove("MacroVersion"); body.remove("MacroLiquid"); }
             saved.read(parent, h.getLevel().registryAccess());
             h.setBlock(PORT.above(), Blocks.WATER); FluidKinetics.invalidate(h.getLevel());
         });

@@ -10,7 +10,7 @@ public final class PhysicsTuning {
 	public static final double STEAM_RATED_RPM = 256;
 	/** Governor target on the engine's own shaft, independent of the power threshold. */
 	public static final double STEAM_GOVERNOR_RPM = 512;
-	/** Admission tapers over the last 64 RPM; unused supply leaves through the bypass. */
+	/** Admission and water demand taper together over the last 64 RPM. */
 	public static final double STEAM_GOVERNOR_RANGE = 64;
 	/** Cylinder torque per capacity unit; the default engine capacity gives 1024 su/RPM. */
 	public static final double STEAM_TORQUE_PER_CAPACITY = 1;

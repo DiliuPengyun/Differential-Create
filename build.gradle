@@ -123,7 +123,7 @@ neoForge {
             gameDirectory = project.file('build/virtual-air/runs/' + UUID.randomUUID())
             systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_air'
             systemProperty 'differentialcreate.air.select', providers.gradleProperty('virtualAirSelect').getOrElse('.*')
-            systemProperty 'differentialcreate.air.legacy', providers.gradleProperty('virtualAirLegacy').getOrElse('false')
+            systemProperty 'differentialcreate.air.referenceTests', providers.gradleProperty('virtualAirReferenceTests').getOrElse('false')
             systemProperty 'differentialcreate.coverage.audit', 'true'
             systemProperty 'differentialcreate.structureAudit', providers.gradleProperty('virtualAirAudit').getOrElse('false')
             logLevel = org.slf4j.event.Level.INFO
@@ -139,9 +139,13 @@ neoForge {
 
         trainCoverageServer {
             type = "gameTestServer"
-            gameDirectory = project.file('build/train-coverage/runs/' + UUID.randomUUID())
+            def trainRunId = providers.gradleProperty('trainRunId').getOrElse(UUID.randomUUID().toString())
+            if (!(trainRunId ==~ /[a-zA-Z0-9_-]{1,64}/))
+                throw new GradleException('trainRunId must be a simple owned run name')
+            gameDirectory = project.file('build/train-coverage/runs/' + trainRunId)
             systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_trains'
             systemProperty 'differentialcreate.trains.select', providers.gradleProperty('trainSelect').getOrElse('.*')
+            systemProperty 'differentialcreate.trains.restart', providers.gradleProperty('trainRestart').getOrElse('')
             logLevel = org.slf4j.event.Level.INFO
         }
 
@@ -208,7 +212,7 @@ tasks.named('runMotionCoverageServer') {
 }
 
 tasks.named('runTrainCoverageServer') {
-    notCompatibleWithConfigurationCache('Each train integration run requires a fresh disposable world.')
+    notCompatibleWithConfigurationCache('Train integration uses disposable worlds, with an explicit owned restart pair.')
     doLast {
         def directory = neoForge.runs.getByName('trainCoverageServer').gameDirectory.get().asFile
         def log = new File(directory, 'logs/latest.log')

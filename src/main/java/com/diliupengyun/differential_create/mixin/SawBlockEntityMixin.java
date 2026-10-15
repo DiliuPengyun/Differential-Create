@@ -75,6 +75,6 @@ public abstract class SawBlockEntityMixin implements ShaftWork {
 	private void differentialcreate$read(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
 		SawBlockEntity self = (SawBlockEntity) (Object) this;
 		differentialcreate$published = self.inventory.remainingTime;
-		differentialcreate$remaining = tag.contains("DCProcessingRemaining") ? tag.getDouble("DCProcessingRemaining") : differentialcreate$published;
+		differentialcreate$remaining = tag.contains("DCProcessingRemaining") ? tag.getDouble("DCProcessingRemaining") : Double.NaN;
 	}
 }

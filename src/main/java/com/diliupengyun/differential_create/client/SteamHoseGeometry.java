@@ -3,9 +3,8 @@ package com.diliupengyun.differential_create.client;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.UnaryOperator;
-import com.simibubi.create.AllBlocks;
+import com.diliupengyun.differential_create.trains.SteamHosePort;
 import com.simibubi.create.content.trains.bogey.AbstractBogeyBlock;
-import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -13,42 +12,35 @@ import net.minecraft.world.phys.Vec3;
 /** Shared endpoints for the installed hose and the placement preview. */
 public final class SteamHoseGeometry {
     public static final double RADIUS = 3 / 32d;
-    public record Port(Vec3 point, Vec3 normal) {}
+    public record Port(Vec3 point, Vec3 normal) {
+        public Port transform(UnaryOperator<Vec3> transform) {
+            Vec3 at = transform.apply(point);
+            return new Port(at, transform.apply(point.add(normal)).subtract(at).normalize());
+        }
+    }
     public record Connection(Port engine, Port tank, List<Vec3> points) {
         public Connection transform(UnaryOperator<Vec3> transform) {
-            return new Connection(transformPort(engine, transform), transformPort(tank, transform),
+            return new Connection(engine.transform(transform), tank.transform(transform),
                 points.stream().map(transform).toList());
-        }
-        private static Port transformPort(Port port, UnaryOperator<Vec3> transform) {
-            Vec3 point = transform.apply(port.point);
-            return new Port(point, transform.apply(port.point.add(port.normal)).subtract(point).normalize());
         }
     }
     private SteamHoseGeometry() {}
 
-    public static Connection connect(BlockState state, Vec3 centre, AABB tank, Vec3 selected) {
-        Vec3 side;
-        double height = 0, reach = .3;
+    public static Connection connect(BlockState state, Vec3 centre, AABB tank, Vec3 selected, SteamHosePort port) {
+        java.util.Objects.requireNonNull(port, "Hose geometry requires the saved surface attachment");
+        Port from;
         if (state.getBlock() instanceof AbstractBogeyBlock<?>) {
-            boolean alongZ = state.getValue(AbstractBogeyBlock.AXIS) == Direction.Axis.Z;
-            side = alongZ ? new Vec3(1, 0, 0) : new Vec3(0, 0, -1);
-            if (tank.getCenter().subtract(centre).dot(side) < 0) side = side.scale(-1);
-            // BogeyStyle lowers the native frame by 1.5 blocks. These sockets
-            // coincide with the internal engine model's x=+/-9, y=13 ports.
-            height = 13 / 16d - 1.5 - 1 / 128d + (AllBlocks.LARGE_BOGEY.has(state) ? .25 : 0);
-            reach = 9 / 16d;
+            // Both native bogey sizes share the static core model: its lid is
+            // at block Y=1, independent of the animated frame below it.
+            from = new Port(centre.add(0, .5 + .015, 0), new Vec3(0, 1, 0));
         } else {
             Vec3 diff = centre.subtract(tank.getCenter());
-            side = Math.abs(diff.x) >= Math.abs(diff.z) ? new Vec3(diff.x > 0 ? 1 : -1, 0, 0)
+            Vec3 side = Math.abs(diff.x) >= Math.abs(diff.z) ? new Vec3(diff.x > 0 ? 1 : -1, 0, 0)
                 : new Vec3(0, 0, diff.z > 0 ? 1 : -1);
+            from = new Port(centre.add(side.scale(.3)), side);
         }
-        Port from = new Port(centre.add(side.scale(reach)).add(0, height, 0), side);
-        double y = Math.clamp(selected.y, tank.minY + .3, tank.maxY - .3);
-        Vec3 end = side.x != 0 ? new Vec3(side.x > 0 ? tank.maxX + .015 : tank.minX - .015, y,
-                Math.clamp(selected.z, tank.minZ + .3, tank.maxZ - .3))
-            : new Vec3(Math.clamp(selected.x, tank.minX + .3, tank.maxX - .3), y,
-                side.z > 0 ? tank.maxZ + .015 : tank.minZ - .015);
-        return between(from, new Port(end, side));
+        Vec3 normal = port.normal();
+        return between(from, new Port(selected.subtract(.5, .5, .5).add(port.point()).add(normal.scale(.015)), normal));
     }
 
     public static Connection between(Port from, Port to) {

@@ -5,7 +5,7 @@ import java.util.function.DoublePredicate;
 /** Locate the first machine boundary on a shared physical clock. */
 public final class ShaftClock {
 	private ShaftClock() {}
-	/** Legacy helper for a predicate that is monotone on the supplied interval. */
+	/** Reference helper for a predicate that is monotone on the supplied interval. */
 	public static double firstBoundary(double minutes, DoublePredicate reached) {
 		return firstBoundary(0, minutes, reached);
 	}

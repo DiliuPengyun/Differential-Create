@@ -37,7 +37,7 @@ public final class SequencerIntegrationTests {
                 add(tests, name, h -> runCase(h, axis, sign, ratio, program, "normal", false));
             }
         for (var axis : Direction.Axis.values()) for (int sign : new int[]{-1, 1})
-            for (String lifecycle : new String[]{"reload", "legacy", "power", "source_reverse", "load", "remove_output", "restart", "redstone", "probe", "held_await", "unpowered_start", "mirror_unpowered"}) {
+            for (String lifecycle : new String[]{"reload", "power", "source_reverse", "load", "remove_output", "restart", "redstone", "probe", "held_await", "unpowered_start", "mirror_unpowered"}) {
                 String name = "lifecycle_" + axis.name().toLowerCase() + "_" + (sign > 0 ? "positive" : "negative") + "_" + lifecycle;
                 add(tests, name, h -> runCase(h, axis, sign, 1, lifecycle.equals("held_await") ? "await" : "blend", lifecycle, false));
             }
@@ -371,21 +371,13 @@ public final class SequencerIntegrationTests {
         void mutate() {
             changed = true;
             switch (lifecycle) {
-                case "reload", "legacy" -> {
+                case "reload" -> {
                     var before = m(); double a = before.angle, w = before.speed, target = before.target, progress = before.progress();
                     var tag = seq.saveWithFullMetadata(h.getLevel().registryAccess());
-                    if (lifecycle.equals("legacy")) tag.remove("DCServo");
                     NetworkTopology.mark(seq);
                     seq = (SequencedGearshiftBlockEntity) BlockEntity.loadStatic(seq.getBlockPos(), seq.getBlockState(), tag, h.getLevel().registryAccess());
                     h.getLevel().setBlockEntity(seq); NetworkTopology.mark(seq); NetworkTopology.flush();
-                    if (lifecycle.equals("reload")) {
-                        h.assertTrue(m().angle == a && m().speed == w && m().target == target && m().progress() == progress, "NBT replacement preserves rotor and program coordinates exactly");
-                    } else {
-                        // Old NBT has no spindle coordinate. Its remaining instruction,
-                        // not an invented absolute phase, is the migration contract.
-                        h.assertTrue(Math.abs(m().progress() - progress) < 1e-10, "legacy NBT preserves signed fractional progress");
-                        goal -= a; previousAngle = 0; previousHeat = 0;
-                    }
+                    h.assertTrue(m().angle == a && m().speed == w && m().target == target && m().progress() == progress, "NBT replacement preserves rotor and program coordinates exactly");
                 }
                 case "power" -> { motor.generatedSpeed.setValue(0); NetworkTopology.mark(motor); }
                 case "source_reverse" -> { motor.generatedSpeed.setValue(-sign * 32); NetworkTopology.mark(motor); }

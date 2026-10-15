@@ -137,7 +137,6 @@ public abstract class MechanicalBearingBlockEntityMixin implements IBearingMotio
 			// speed; the ordinary elastic contact handles acceleration and fracture.
 			var member = ElasticKinetics.state(self);
 			member.physicalSpeed = 0;
-			member.pendingBearingInertia = Float.NaN;
 			member.lastInertia = InertiaRegistry.getInertia(self);
 		}
 		InertiaRegistry.checkAttachments(self);
@@ -169,16 +168,9 @@ public abstract class MechanicalBearingBlockEntityMixin implements IBearingMotio
 		if (!self.isRunning()) self.assemble();
 	}
 
-	@Inject(method = "write", at = @At("RETURN"))
-	private void differentialcreate$saveAttachedInertia(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
-		var self = (MechanicalBearingBlockEntity) (Object) this;
-		if (!packet && !isWindmill() && self.isRunning()) tag.putFloat("DCBearingInertia", InertiaRegistry.getInertia(self));
-	}
-
 	@Inject(method = "disassemble", at = @At("RETURN"))
 	private void differentialcreate$clearAttachedInertia(CallbackInfo ci) {
 		var self = (MechanicalBearingBlockEntity) (Object) this;
-		ElasticKinetics.state(self).pendingBearingInertia = Float.NaN;
 		if (!self.getLevel().isClientSide && !isWindmill()) {
 			InertiaRegistry.checkAttachments(self);
 			ElasticKinetics.state(self).lastInertia = InertiaRegistry.getInertia(self);
@@ -205,11 +197,6 @@ public abstract class MechanicalBearingBlockEntityMixin implements IBearingMotio
 	private void differentialcreate$restoredSequence(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
 		var self = (MechanicalBearingBlockEntity) (Object) this;
 		differentialcreate$lastSequence = self.sequenceContext;
-		if (!packet && !isWindmill()) {
-			float inertia = com.diliupengyun.differential_create.kinetics.ContraptionPhysics.readSavedInertia(self, tag, "DCBearingInertia");
-			ElasticKinetics.state(self).pendingBearingInertia = self.isRunning() && Float.isFinite(inertia) && inertia >= 0
-				? inertia : Float.NaN;
-		}
 	}
 	@Redirect(method = "getAngularSpeed", at = @At(value = "INVOKE",
 		target = "Lcom/simibubi/create/content/contraptions/bearing/MechanicalBearingBlockEntity;getGeneratedSpeed()F"))

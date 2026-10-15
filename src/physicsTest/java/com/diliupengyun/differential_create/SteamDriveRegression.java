@@ -4,7 +4,6 @@ import java.util.List;
 import com.diliupengyun.differential_create.kinetics.DriveTorque;
 import com.diliupengyun.differential_create.kinetics.PhysicsTuning;
 import com.diliupengyun.differential_create.kinetics.SteamGovernor;
-import com.diliupengyun.differential_create.client.SteamExhaustAnimation;
 import com.diliupengyun.differential_create.kinetics.TorsionSolver;
 import com.diliupengyun.differential_create.kinetics.TorsionSolver.Body;
 import com.diliupengyun.differential_create.kinetics.TorsionSolver.Link;
@@ -73,7 +72,6 @@ public final class SteamDriveRegression {
             check(result.speed()[0] > initial[0], "coupled steam drive accelerates above its rated speed");
         }
         governor();
-        exhaust();
         System.out.println("Steam drive regression: " + checks + " checks passed");
     }
 
@@ -132,26 +130,6 @@ public final class SteamDriveRegression {
     private static double governedTorque(double torque, double power, double speed) {
         return DriveTorque.torque(torque, power, speed, PhysicsTuning.STEAM_GOVERNOR_RPM, PhysicsTuning.STEAM_GOVERNOR_RANGE);
     }
-    private static void exhaust() {
-        int previous = -1;
-        for (double flow : new double[]{0, .125, .25, .5, .75, 1}) {
-            var animation = new SteamExhaustAnimation();
-            int total = 0;
-            for (int tick = 0; tick < 20; tick++) total += animation.advance(flow);
-            check(total > previous, "stronger bypass produces more exhaust particles over time");
-            near(40 * flow, total, 0, "particle budget follows actual steam flow, including passive heat");
-            previous = total;
-        }
-        var weak = new SteamExhaustAnimation();
-        int total = 0;
-        for (int tick = 0; tick < 1000; tick++) total += weak.advance(.001);
-        check(total >= 1 && total <= 2, "tiny bypass flow accumulates instead of emitting a whole puff every tick");
-        near(0, weak.advance(0), 0, "cutting steam immediately stops the added exhaust");
-        near(0, weak.advance(Double.NaN), 0, "missing or invalid flow produces no particles");
-        near(0, weak.advance(-1), 0, "negative flow produces no particles");
-        near(2, weak.advance(1), 0, "full bypass restarts cleanly after a supply interruption");
-    }
-
     private static TorsionSolver.Result isolated(List<Body> bodies, double speed, double duration, double step) {
         return TorsionSolver.advance(bodies, List.of(), new double[]{speed}, new double[0], duration, step);
     }

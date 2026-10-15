@@ -44,4 +44,17 @@ public abstract class SteamEngineBlockEntityMixin {
 	private void differentialcreate$loadedShaft(CallbackInfoReturnable<PoweredShaftBlockEntity> cir) {
 		cir.setReturnValue(SteamEnginePhysics.shaft((SteamEngineBlockEntity) (Object) this));
 	}
+	@Inject(method = "isValid", at = @At("HEAD"), cancellable = true)
+	private void differentialcreate$validHoseSupply(CallbackInfoReturnable<Boolean> cir) {
+		var engine = (SteamEngineBlockEntity) (Object) this;
+		if (engine.isRemoved() || engine.getLevel() == null) {
+			cir.setReturnValue(false); return;
+		}
+		if (((com.diliupengyun.differential_create.trains.SteamHoseLinks.EngineLink) engine).differentialcreate$hose() != null) {
+			cir.setReturnValue(!engine.isRemoved() && SteamEnginePhysics.tank(engine) != null);
+			return;
+		}
+		if (!engine.getLevel().isLoaded(engine.getBlockPos().relative(SteamEngineBlock.getFacing(engine.getBlockState()).getOpposite())))
+			cir.setReturnValue(false);
+	}
 }

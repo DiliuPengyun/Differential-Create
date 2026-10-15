@@ -114,9 +114,7 @@ public abstract class PressingBehaviourMixin implements ShaftWork {
 	@Inject(method = "read", at = @At("RETURN"))
 	private void differentialcreate$read(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
 		differentialcreate$work.restore(tag.getDouble("DCWorkFraction"));
-		PressingBehaviour self = (PressingBehaviour) (Object) this;
-		differentialcreate$position = tag.contains("DCPressPosition") ? tag.getDouble("DCPressPosition")
-			: Math.clamp(self.runningTicks + differentialcreate$work.remainder(), 0, 240);
-		differentialcreate$contact = tag.contains("DCPressContact") ? tag.getBoolean("DCPressContact") : self.runningTicks > 120;
+		differentialcreate$position = tag.getDouble("DCPressPosition");
+		differentialcreate$contact = tag.getBoolean("DCPressContact");
 	}
 }

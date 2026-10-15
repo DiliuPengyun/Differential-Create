@@ -124,12 +124,7 @@ final class ContraptionPhysicsTests {
 				clone.setLevel(h.getLevel()); clone.loadWithComponents(tag, h.getLevel().registryAccess());
 				near(h, expected, InertiaRegistry.getInertia(clone), 1e-7, "late entity loading preserves actuator inertia");
 				near(h, drag, ContraptionPhysics.airDrag(clone), 1e-12, "late entity loading preserves air drag");
-				var legacy = tag.copy(); legacy.remove("DCStructureCalibration");
-				legacy.putFloat("DCStructureInertia", (float) (.01 + (expected - .01) * 100));
-				legacy.putDouble("DCStructureDrag", drag * 100);
-				clone.loadWithComponents(legacy, h.getLevel().registryAccess());
-				near(h, expected, InertiaRegistry.getInertia(clone), 1e-7, "legacy translating structures retain the fixed machine rotor during migration");
-				near(h, drag, ContraptionPhysics.airDrag(clone), 1e-12, "legacy actuator air summaries use the trial coefficient");
+				selfShadow(h, be, be.movedContraption, pos.equals(piston) ? 0 : 1);
 				be.disassemble(); ContraptionPhysics.checkAttachments(be);
 				near(h, .01, InertiaRegistry.getInertia(be), 1e-8, "native disassembly releases attached mass");
 				near(h, 0, ContraptionPhysics.airDrag(be), 0, "native disassembly releases air load");
@@ -138,8 +133,76 @@ final class ContraptionPhysicsTests {
 			h.assertTrue(((ClockworkBearingAccessor) be).differentialcreate$hour() != null, "clock keeps native hand assembly");
 			ContraptionPhysics.checkAttachments(be);
 			near(h, .0102, InertiaRegistry.getInertia(be), 1e-8, "hour hand's half-speed gearing folds trial inertia by one quarter");
+			for (var drive : ContraptionPhysics.drives(be)) {
+				int axis = drive.axis().ordinal();
+				var shell = new java.util.HashSet<ContraptionGeometry.Cell>(); var filled = new java.util.HashSet<ContraptionGeometry.Cell>();
+				for (int x = -1; x <= 1; x++) for (int y = -1; y <= 1; y++) for (int z = -1; z <= 1; z++) {
+					var cell = new ContraptionGeometry.Cell(x + (axis == 0 ? 2 : 0), y + (axis == 1 ? 2 : 0), z + (axis == 2 ? 2 : 0));
+					filled.add(cell); if (x != 0 || y != 0 || z != 0) shell.add(cell);
+				}
+				cells(drive.entity(), shell);
+				near(h, ContraptionGeometry.measure(filled).rotationDrag()[axis],
+					ContraptionPhysics.shape(drive.entity().getContraption()).rotationDrag()[axis], 1e-15,
+					"native clock hand excludes its sealed internal cavity independently of other hands");
+			}
 			be.disassemble(); near(h, .01, InertiaRegistry.getInertia(be), 1e-8, "clock disassembly removes hand inertia");
 			h.succeed();
+		});
+	}
+	/** Replace a native moving body's cells through its real block-update path. */
+	static void cells(com.simibubi.create.content.contraptions.AbstractContraptionEntity entity, java.util.Set<ContraptionGeometry.Cell> cells) {
+		for (var pos : java.util.List.copyOf(entity.getContraption().getBlocks().keySet()))
+			entity.setBlock(pos, new StructureBlockInfo(pos, Blocks.AIR.defaultBlockState(), null));
+		for (var cell : cells) {
+			var pos = new BlockPos(cell.x(), cell.y(), cell.z());
+			entity.setBlock(pos, new StructureBlockInfo(pos, Blocks.OAK_PLANKS.defaultBlockState(), null));
+		}
+	}
+	private static void selfShadow(GameTestHelper h, KineticBlockEntity be,
+		com.simibubi.create.content.contraptions.AbstractContraptionEntity entity, int axis) {
+		var origin = new ContraptionGeometry.Cell(0, 0, 0);
+		cells(entity, java.util.Set.of(origin));
+		double single = ContraptionPhysics.airDrag(be);
+		h.assertTrue(single > 0, "native actuator supplies actual motion for the shadow fixture");
+		var hidden = new ContraptionGeometry.Cell(axis == 0 ? 3 : 0, axis == 1 ? 3 : 0, axis == 2 ? 3 : 0);
+		cells(entity, java.util.Set.of(origin, hidden));
+		near(h, single, ContraptionPhysics.airDrag(be), 1e-15, "native actuator excludes a separated trailing cube");
+		double inertia = InertiaRegistry.getInertia(be);
+		var side = new ContraptionGeometry.Cell(axis == 0 ? 0 : 3, axis == 1 ? 0 : 3, 0);
+		cells(entity, java.util.Set.of(origin, side));
+		near(h, 2 * single, ContraptionPhysics.airDrag(be), 1e-15, "moving a cube out of the shadow invalidates native geometry caches");
+		near(h, inertia, InertiaRegistry.getInertia(be), 1e-7, "translation keeps the same mass when shadowing changes");
+		cells(entity, java.util.Set.of(origin, hidden));
+		var saved = entity.getContraption().writeNBT(h.getLevel().registryAccess(), false);
+		var restored = com.simibubi.create.content.contraptions.Contraption.fromNBT(h.getLevel(), saved, false);
+		near(h, ContraptionPhysics.shape(entity.getContraption()).linearDrag(axis), ContraptionPhysics.shape(restored).linearDrag(axis),
+			1e-15, "native moving structure NBT restores its shadow geometry");
+	}
+	static void rotationalShadow(GameTestHelper h) {
+		var pos = new BlockPos(8, 8, 8);
+		h.setBlock(pos, AllBlocks.MECHANICAL_BEARING.getDefaultState().setValue(BlockStateProperties.FACING, Direction.UP));
+		h.setBlock(pos.above(), Blocks.SLIME_BLOCK);
+		h.runAfterDelay(5, () -> {
+			MechanicalBearingBlockEntity be = h.getBlockEntity(pos); be.assemble();
+			NetworkTopology.mark(be); NetworkTopology.flush(); ContraptionPhysics.checkAttachments(be);
+			var entity = be.getMovedContraption();
+			var first = new ContraptionGeometry.Cell(0, 0, 2); var second = new ContraptionGeometry.Cell(2, 0, 2);
+			cells(entity, java.util.Set.of(first, second));
+			double isolated = ContraptionGeometry.measure(java.util.Set.of(first)).rotationDrag()[1]
+				+ ContraptionGeometry.measure(java.util.Set.of(second)).rotationDrag()[1];
+			h.assertTrue(ContraptionPhysics.airDrag(be) < isolated && ContraptionPhysics.airDrag(be) > 0,
+				"native bearing's tangent rays exclude a non-adjacent shielded surface");
+			var shell = new java.util.HashSet<ContraptionGeometry.Cell>(); var solid = new java.util.HashSet<ContraptionGeometry.Cell>();
+			for (int x = -1; x <= 1; x++) for (int y = -1; y <= 1; y++) for (int z = -1; z <= 1; z++) {
+				var cell = new ContraptionGeometry.Cell(x, y + 2, z); solid.add(cell); if (x != 0 || y != 0 || z != 0) shell.add(cell);
+			}
+			cells(entity, shell); double hollow = ContraptionPhysics.airDrag(be); double inertia = InertiaRegistry.getInertia(be);
+			cells(entity, solid); near(h, hollow, ContraptionPhysics.airDrag(be), 1e-15, "native bearing excludes the sealed inner cavity");
+			h.assertTrue(InertiaRegistry.getInertia(be) > inertia, "filling the cavity still adds rotational inertia");
+			var saved = entity.getContraption().writeNBT(h.getLevel().registryAccess(), false);
+			var restored = com.simibubi.create.content.contraptions.Contraption.fromNBT(h.getLevel(), saved, false);
+			near(h, hollow, ContraptionPhysics.shape(restored).rotationDrag()[1], 1e-15, "native bearing geometry survives NBT readback");
+			be.disassemble(); h.succeed();
 		});
 	}
 	static void actors(GameTestHelper h) {
@@ -243,6 +306,8 @@ final class ContraptionPhysicsTests {
 			entity.tick(); next.setRemoved();
 			near(h, -64, entity.saveWithoutId(new CompoundTag()).getDouble("DCGantrySpeed"), 0, "unloading the supporting shaft first retains carriage momentum");
 			next.clearRemoved();
+			ContraptionPhysics.bindGantry(entity, Double.NaN);
+			selfShadow(h, next, entity, 0);
 			entity.disassemble();
 			near(h, 0, InertiaRegistry.getInertia(next), 0, "native carriage disassembly releases mass");
 			h.succeed();

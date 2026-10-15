@@ -8,7 +8,6 @@ import com.simibubi.create.content.contraptions.AbstractContraptionEntity;
 import com.simibubi.create.content.contraptions.actors.psi.PortableStorageInterfaceMovement;
 import com.simibubi.create.content.contraptions.behaviour.MovementContext;
 import com.simibubi.create.content.kinetics.KineticNetwork;
-import com.simibubi.create.content.trains.entity.CarriageContraption;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
@@ -46,7 +45,7 @@ public final class PortableDocking {
     public static boolean isPortable(MovementContext context) { return adapter(context) != null; }
     public static boolean managed(MovementContext context) {
         return isPortable(context) && adapter(context).facing(context.state) != null
-            && !(context.contraption instanceof CarriageContraption) && ActorDrive.of(context) != null;
+            && ActorDrive.of(context) != null;
     }
     public static void register(DockingState state) {
         if (state.owner.getLevel() == null || state.owner.isVirtual()) return;

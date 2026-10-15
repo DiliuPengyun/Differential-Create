@@ -145,11 +145,6 @@ public abstract class SequencedGearshiftBlockEntityMixin implements ISequencerDy
         servo.putBoolean("Holding", m.command.holding());
         servo.putBoolean("AwaitPulse", differentialcreate$awaitPulse);
         tag.put("DCServo", servo);
-        Instruction instruction = getInstruction(currentInstruction);
-        double progress = instruction instanceof InstructionAccessor a && a.differentialcreate$type().needsPropagation()
-            ? m.progress() * (a.differentialcreate$type() == com.simibubi.create.content.kinetics.transmission.sequencer.SequencerInstructions.TURN_ANGLE ? 360 : 1200d / 512)
-            : currentInstructionProgress;
-        tag.putDouble("DCInstructionProgress", progress);
     }
     @Inject(method = "read", at = @At("RETURN"))
     private void differentialcreate$read(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
@@ -168,19 +163,6 @@ public abstract class SequencedGearshiftBlockEntityMixin implements ISequencerDy
             m.boundarySpeed = s.getDouble("BoundarySpeed"); m.boundaryAngle = s.getDouble("BoundaryAngle"); m.transitions = s.getInt("Transitions");
             m.command = new SequencerMotion.Command(s.getDouble("Gear"), s.getDouble("Coupling"), s.getDouble("Brake"), 0, 0, 0, s.getBoolean("Holding"));
             differentialcreate$awaitPulse = s.getBoolean("AwaitPulse");
-        } else {
-            // Old worlds have progress but no independent output spindle. Recover
-            // the remaining target once; neighbouring rotors are untouched.
-            double input = com.diliupengyun.differential_create.kinetics.ElasticKinetics.state((SequencedGearshiftBlockEntity) (Object) this).physicalSpeed;
-            m.begin(differentialcreate$program(), currentInstruction, Double.isFinite(input) && input != 0 ? input : 1, false);
-            Instruction instruction = getInstruction(currentInstruction);
-            if (instruction instanceof InstructionAccessor a && a.differentialcreate$type().needsPropagation()) {
-                double progress = tag.contains("DCInstructionProgress") ? tag.getDouble("DCInstructionProgress") : currentInstructionProgress;
-                double turns = a.differentialcreate$type() == com.simibubi.create.content.kinetics.transmission.sequencer.SequencerInstructions.TURN_ANGLE
-                    ? progress / 360 : progress * 512 / 1200;
-                m.start = -m.direction * turns;
-                m.target += m.start;
-            }
         }
         ((SequencedGearshiftBlockEntity) (Object) this).sequenceContext = null;
     }

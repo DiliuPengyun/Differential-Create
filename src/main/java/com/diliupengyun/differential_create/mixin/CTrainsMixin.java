@@ -1,6 +1,6 @@
 package com.diliupengyun.differential_create.mixin;
 
-import com.diliupengyun.differential_create.trains.LegacyTrainConfig;
+import com.diliupengyun.differential_create.trains.FixedTrainConfig;
 import com.simibubi.create.infrastructure.config.CTrains;
 import net.createmod.catnip.config.ConfigBase;
 import org.spongepowered.asm.mixin.*;
@@ -26,6 +26,6 @@ public abstract class CTrainsMixin extends ConfigBase {
         poweredTrainAcceleration = differentialcreate$constant("poweredTrainAcceleration", 3);
     }
     @Unique private ConfigFloat differentialcreate$constant(String name, float value) {
-        var entry = new LegacyTrainConfig(this, name, value); allValues.remove(entry); return entry;
+        var entry = new FixedTrainConfig(this, name, value); allValues.remove(entry); return entry;
     }
 }

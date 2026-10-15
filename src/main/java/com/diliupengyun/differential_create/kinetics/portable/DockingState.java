@@ -53,7 +53,7 @@ public final class DockingState {
     }
     public boolean permission() {
         if (!loaded() || owner.isPowered() || owner.getLevel().hasNeighborSignal(owner.getBlockPos())) return false;
-        if (!managed) return bridge().differentialcreate$legacyPermission();
+        if (!managed) return bridge().differentialcreate$nativePermission();
         return phase == Phase.TRANSFER && context != null && live() && contact
             && (releaseMode == 1 || PortableDocking.time(owner.getLevel()) < deadline) && PortableDocking.validGeometry(this);
     }
@@ -186,7 +186,7 @@ public final class DockingState {
         release("missing");
     }
     public void invalidate() { suspend(); }
-    public void legacyConnection() { if (context == null) { managed = false; phase = Phase.IDLE; contact = false; torque = 0; } }
+    public void nativeConnection() { if (context == null) { managed = false; phase = Phase.IDLE; contact = false; torque = 0; } }
     public void changed() {
         var level = owner.getLevel();
         if (level == null || level.isClientSide || owner.isRemoved()) return;

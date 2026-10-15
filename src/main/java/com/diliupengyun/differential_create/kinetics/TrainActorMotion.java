@@ -56,6 +56,8 @@ public final class TrainActorMotion {
         double speed, travel;
         Frame(Train train, double distance) {
             this.train = train; maxTravel = Math.abs(distance) * 512; speed = Math.abs(train.speed) * 512;
+            var state = TrainPhysics.state(train);
+            if (distance != 0) state.travelDirection = distance < 0 ? -1 : 1;
             for (var carriage : train.carriages) carriage.forEachPresentEntity(entity -> {
                 if (entity.getContraption() == null) return;
                 Vec3 direction;
@@ -63,13 +65,19 @@ public final class TrainActorMotion {
                 if (train.graph != null && a.edge != null && b.edge != null && !a.edge.isInterDimensional() && !b.edge.isInterDimensional())
                     direction = a.getPosition(train.graph).subtract(b.getPosition(train.graph)).normalize();
                 else direction = entity.applyRotation(new Vec3(0, 0, 1), 1);
-                Vec3 translation = direction.scale(Math.signum(distance) / 512);
+                // Direction-sensitive tools retain their intended contact path
+                // at rest; maxTravel still forbids unpaid progress.
+                Vec3 translation = direction.scale(state.travelDirection / 512d);
                 for (var actor : entity.getContraption().getActors()) {
                     var ctx = actor.getRight(); if (ctx == null || !supported(ctx) || entity.getContraption().isHiddenInPortal(ctx.localPos)) continue;
                     var behaviour = MovementBehaviour.REGISTRY.get(ctx.state);
-                    var start = entity.toGlobalVector(Vec3.atCenterOf(ctx.localPos).add(behaviour.getActiveAreaOffset(ctx)), 1);
+                    boolean portable = com.diliupengyun.differential_create.kinetics.portable.PortableDocking.isPortable(ctx);
+                    // Docking geometry measures from the block centre, whereas
+                    // native discovery uses a point 1.85 blocks along its head.
+                    var offset = portable ? Vec3.ZERO : behaviour.getActiveAreaOffset(ctx);
+                    var start = entity.toGlobalVector(Vec3.atCenterOf(ctx.localPos).add(offset), 1);
                     paths.put(ctx, ActorContactPath.linear(point(start), point(translation)));
-                    if (com.diliupengyun.differential_create.kinetics.portable.PortableDocking.isPortable(ctx)) ports.add(ctx);
+                    if (portable) ports.add(ctx);
                     else if (MovingDeployerWork.isHand(ctx)) hands.add(ctx);
                     else work.add(ContraptionActorWork.of(ctx));
                 }
@@ -87,6 +95,11 @@ public final class TrainActorMotion {
         double inertia = equivalentMass * Math.pow(20d / 512, 2) / JOULES_PER_WORK;
         try {
             frame.work.forEach(ContraptionActorWork::manageMotion);
+            // Discovery and target invalidation also run at zero travel. Storage
+            // docking must be able to progress after the train has parked.
+            frame.work.forEach(work -> work.torque(ActorDrive.of(work.context())));
+            com.diliupengyun.differential_create.kinetics.portable.PortableDocking.prepareCart(frame.ports);
+            for (var ctx : frame.hands) ContraptionActorWork.of(ctx).hand().prepare();
             double remaining = RotationMath.TICK_MINUTES; int events = 0;
             while (remaining > 1e-14 && frame.travel < frame.maxTravel - MachineWork.EPSILON) {
                 if (++events > 4096) throw new IllegalStateException("Train cutting events did not converge");

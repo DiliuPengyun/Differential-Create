@@ -15,7 +15,7 @@ import com.simibubi.create.content.kinetics.KineticNetwork;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 
 /**
- * Attaches the continuous-rotation state (current speed, target speed,
+ * Attaches the continuous-rotation state (current speed,
  * per-member ratios) to Create's {@link KineticNetwork}, and marks the
  * structure sync dirty on membership changes.
  */
@@ -32,8 +32,6 @@ public abstract class KineticNetworkMixin implements INetworkDynamics {
 
 	@Unique
 	private double differentialcreate$speed;
-	@Unique
-	private float differentialcreate$targetSpeed;
 	@Unique
 	private final Map<KineticBlockEntity, Float> differentialcreate$ratios = new HashMap<>();
 	@Unique
@@ -97,16 +95,6 @@ public abstract class KineticNetworkMixin implements INetworkDynamics {
 		if (!differentialcreate$data.publishingReference)
 			differentialcreate$ratios.forEach((be, ratio) ->
 				((com.diliupengyun.differential_create.kinetics.IMemberDynamics) be).differentialcreate$member().physicalSpeed = ratio * speed);
-	}
-
-	@Override
-	public float differentialcreate$getTargetSpeed() {
-		return differentialcreate$targetSpeed;
-	}
-
-	@Override
-	public void differentialcreate$setTargetSpeed(float targetSpeed) {
-		this.differentialcreate$targetSpeed = targetSpeed;
 	}
 
 	@Override

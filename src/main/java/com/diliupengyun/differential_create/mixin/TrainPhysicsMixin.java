@@ -98,7 +98,11 @@ public abstract class TrainPhysicsMixin implements TrainPhysics.Holder {
     @Inject(method = "read", at = @At("RETURN"))
     private static void differentialcreate$read(CompoundTag tag, HolderLookup.Provider registries, Map<UUID, TrackGraph> graphs,
         DimensionPalette dimensions, CallbackInfoReturnable<Train> cir) {
-        if (tag.contains("DCTrain")) TrainPhysics.state(cir.getReturnValue()).read(tag.getCompound("DCTrain"));
+        if (tag.contains("DCTrain")) {
+            var saved = tag.getCompound("DCTrain"); var train = cir.getReturnValue();
+            TrainPhysics.state(train).read(saved);
+            if (saved.getBoolean("StationAssist")) train.navigation.cancelNavigation();
+        }
         cir.getReturnValue().speedBeforeStall = null;
     }
 }

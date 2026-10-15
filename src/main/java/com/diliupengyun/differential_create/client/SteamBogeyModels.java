@@ -11,21 +11,17 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.Blocks;
 
 public final class SteamBogeyModels {
-    public static final PartialModel CYLINDERS=PartialModel.of(ResourceLocation.fromNamespaceAndPath("differentialcreate","block/steam_bogey/cylinders"));
-    public static final PartialModel PISTONS=PartialModel.of(ResourceLocation.fromNamespaceAndPath("differentialcreate","block/steam_bogey/pistons"));
+    public static final PartialModel ENGINE_COVER=PartialModel.of(ResourceLocation.fromNamespaceAndPath("differentialcreate","block/steam_bogey/engine_cover"));
+    // Keep a thin surface gap after the native bogey pose's 1/128-block offset.
+    public static final float COVER_Y=1+1/64f, COVER_SCALE=1+1/512f;
     private SteamBogeyModels() {}
     public static void init() {}
-    public static double offset(CompoundTag data) {
-        double angle=data.getDouble(SteamBogey.TURNS)*2*Math.PI;
-        if(data.contains(SteamBogey.SAMPLE))angle+=Math.clamp(ClientKineticAngles.renderTick()-data.getDouble(SteamBogey.SAMPLE),0,10)
-            *data.getDouble(SteamBogey.RPM)*Math.PI/600;
-        return Math.sin(angle)/16;
-    }
-    public static void render(CompoundTag data,PoseStack pose,MultiBufferSource source,int light,int overlay,boolean large) {
+    public static void render(CompoundTag data,PoseStack pose,MultiBufferSource source,int light,int overlay) {
         if(!data.getBoolean(SteamBogey.ENGINE))return;
         var buffer=source.getBuffer(RenderType.cutoutMipped());
-        double y=large?.25:0;
-        CachedBuffers.partial(CYLINDERS,Blocks.AIR.defaultBlockState()).translate(-.5,y,-.5).light(light).overlay(overlay).renderInto(pose,buffer);
-        CachedBuffers.partial(PISTONS,Blocks.AIR.defaultBlockState()).translate(-.5,y,-.5+offset(data)).light(light).overlay(overlay).renderInto(pose,buffer);
+        // The engine cover occupies only the lid and upper wood panels. All
+        // native brass edging, casing, adhesive faces and wheel parts remain visible.
+        CachedBuffers.partial(ENGINE_COVER,Blocks.AIR.defaultBlockState()).translate(-.5,COVER_Y,-.5).center().scale(COVER_SCALE,1,COVER_SCALE).uncenter()
+            .light(light).overlay(overlay).renderInto(pose,buffer);
     }
 }

@@ -1,7 +1,9 @@
 package com.diliupengyun.differential_create.trains;
 
 import java.util.*;
+import com.diliupengyun.differential_create.kinetics.BoilerAdmission;
 import com.diliupengyun.differential_create.kinetics.SourcePhysics;
+import com.simibubi.create.content.fluids.tank.BoilerData;
 import com.simibubi.create.content.trains.entity.Carriage;
 import com.simibubi.create.content.trains.entity.CarriageContraption;
 import com.simibubi.create.content.trains.entity.Train;
@@ -17,17 +19,21 @@ import net.neoforged.neoforge.items.ItemHandlerHelper;
 public final class TrainPhysics {
     public interface Holder { State differentialcreate$physics(); }
     public static final class State {
-        public int gear = 1, direction;
-        public boolean brake, manualCommand, navigationCommand, gearInitialized, emergencyStop;
+        public int gear = 1, direction, travelDirection = 1, cabDirection = 1;
+        public boolean brake, manualCommand, navigationCommand, gearInitialized, emergencyStop, neutralRev, stationAssist;
         public double navigationDistance = Double.POSITIVE_INFINITY;
         public double distance, mass = 1000, grade, engineRpm;
+        public double controlsAdmission;
+        public boolean controlsBraking;
         public String failure = "no_engine";
         public int ticks, lastShift;
         public Level level;
         public CompoundTag write() {
-            var tag = new CompoundTag(); tag.putInt("Gear", gear); tag.putInt("Ticks", ticks); tag.putInt("LastShift", lastShift); tag.putBoolean("EmergencyStop", emergencyStop); return tag;
+            var tag = new CompoundTag(); tag.putInt("Gear", gear); tag.putInt("Ticks", ticks); tag.putInt("LastShift", lastShift); tag.putInt("TravelDirection", travelDirection); tag.putBoolean("EmergencyStop", emergencyStop);
+            // This marks the saved navigation as player-held, never as an input to replay.
+            tag.putBoolean("StationAssist", stationAssist); return tag;
         }
-        public void read(CompoundTag tag) { gear = Math.clamp(tag.getInt("Gear"), 0, 3); gearInitialized = true; ticks = Math.max(0, tag.getInt("Ticks")); lastShift = Math.min(ticks, tag.getInt("LastShift")); emergencyStop = tag.getBoolean("EmergencyStop"); }
+        public void read(CompoundTag tag) { gear = TrainMechanics.clampGear(tag.getInt("Gear")); gearInitialized = true; ticks = Math.max(0, tag.getInt("Ticks")); lastShift = Math.min(ticks, tag.getInt("LastShift")); travelDirection = tag.getInt("TravelDirection") < 0 ? -1 : 1; emergencyStop = tag.getBoolean("EmergencyStop"); }
     }
     private TrainPhysics() {}
     public static State state(Train train) { return ((Holder) train).differentialcreate$physics(); }
@@ -46,11 +52,17 @@ public final class TrainPhysics {
     }
     public static void shift(Train train, int gear) {
         if (!hasLever(train)) return;
-        var s = state(train); s.gear = Math.clamp(gear, 0, 3); s.gearInitialized = true; s.lastShift = s.ticks;
+        var s = state(train); s.gear = TrainMechanics.clampGear(gear); s.gearInitialized = true; s.lastShift = s.ticks;
         for (var c : train.carriages) carriage(c).apply(c, s.gear);
     }
     public static void manual(Train train, int direction, boolean brake) {
+        manual(train, direction, brake, false);
+    }
+    public static void manual(Train train, int direction, boolean brake, boolean neutralRev) {
+        boolean neutral = hasLever(train) && state(train).gear == 0;
         var s = state(train); s.emergencyStop = false; s.direction = Integer.signum(direction); s.brake = brake; s.manualCommand = true;
+        s.neutralRev = neutral && !brake && (neutralRev || direction != 0);
+        if (neutral) s.direction = 0;
         train.manualTick = true; train.targetSpeed = s.direction;
     }
     public static void navigate(Train train) {
@@ -59,6 +71,12 @@ public final class TrainPhysics {
         s.navigationCommand = true; s.direction = nav.destinationBehindTrain ? -1 : 1;
         s.navigationDistance = nav.waitingForSignal != null ? nav.distanceToSignal : nav.distanceToDestination;
         if (s.navigationDistance < -10) { nav.cancelNavigation(); s.direction = 0; s.brake = true; }
+    }
+    public static void endStationAssist(Train train) {
+        var s = state(train);
+        if (!s.stationAssist) return;
+        s.stationAssist = false;
+        if (train.navigation.destination != null) train.navigation.cancelNavigation();
     }
     public static void overrun(Train train) {
         state(train).emergencyStop = true;
@@ -91,10 +109,22 @@ public final class TrainPhysics {
         }
         return best;
     }
+    /** All carriages in this train share one silhouette; other trains never cast a shadow here. */
+    public static double frontalArea(Train train) {
+        var silhouette = new HashSet<Long>();
+        double unknown = 0;
+        for (var c : train.carriages) {
+            var layout = carriage(c).layout;
+            if (layout == null) { unknown += 2; continue; }
+            TrainAerodynamics.include(silhouette, layout.frontalProjection, c.leadingBogey().isUpsideDown());
+        }
+        return Math.max(1, silhouette.size() + unknown);
+    }
     public static void advance(Train train) {
         var s = state(train); Level level = s.level;
         if (level == null || level.isClientSide) return;
-        s.ticks++; s.mass = 0; double area = 0, gradeMass = 0;
+        var steam = TrainSteamConnections.resolve(train);
+        s.ticks++; s.mass = 0; double gradeMass = 0;
         train.fuelTicks = 0;
         train.throttle = Double.isFinite(train.throttle) ? Math.clamp(train.throttle, 0, 1) : 0;
         boolean[] controlled = {s.manualCommand || train.manualTick};
@@ -107,7 +137,6 @@ public final class TrainPhysics {
         for (var c : train.carriages) {
             var cs = carriage(c); var l = cs.layout;
             double mass = TrainMechanics.BLOCK_MASS * (l == null ? 4 : Math.max(4, l.blocks)); s.mass += mass;
-            area += l == null ? 2 : Math.max(1, l.frontalArea);
             var front = c.getLeadingPoint(); var rear = c.getTrailingPoint();
             if (train.graph != null && front.edge != null && rear.edge != null && !front.edge.isInterDimensional() && !rear.edge.isInterDimensional()) {
                 var delta = front.getPosition(train.graph).subtract(rear.getPosition(train.graph));
@@ -127,17 +156,69 @@ public final class TrainPhysics {
             // without assigning a minimum speed or teleporting the train.
             if (forward < .1 && s.navigationDistance > 1e-6) brake = 0;
         }
+        // The cab shows service/navigation braking, not the automatic stationary hold.
+        s.controlsBraking = brake > 0;
         if (command == 0 && (train.getCurrentStation() != null || Math.abs(train.speed) < 1e-4)) brake = 1;
-        if (!human && !train.runtime.paused && s.navigationCommand && hasLever(train) && (s.gear == 0 || s.ticks - s.lastShift > 40)) {
-            if (s.gear == 0) shift(train, 1);
-            else if (s.engineRpm > 430 && s.gear < 3) shift(train, s.gear + 1);
-            else if (s.engineRpm < 170 && s.gear > 1) shift(train, s.gear - 1);
+        if (!human && !train.runtime.paused && s.navigationCommand && hasLever(train)) {
+            if (command < 0 && s.gear != TrainMechanics.REVERSE_GEAR) shift(train, TrainMechanics.REVERSE_GEAR);
+            else if (command > 0 && (s.gear == 0 || s.gear == TrainMechanics.REVERSE_GEAR)) shift(train, 1);
+            else if (command > 0 && s.ticks - s.lastShift > 40) {
+                if (s.engineRpm > 430 && s.gear < TrainMechanics.FORWARD_GEARS) shift(train, s.gear + 1);
+                else if (s.engineRpm < 170 && s.gear > 1) shift(train, s.gear - 1);
+            }
         }
-        double throttle = command == 0 || brake > 0 || reversing ? 0 : Math.clamp(train.throttle, 0, 1);
-        if (s.navigationCommand) throttle *= Math.clamp(s.navigationDistance / 2, 0, 1);
+        // Neutral opens the steam valve without transmitting torque to the wheels.
+        // Automatic stationary brakes may hold the carriage while the input spins.
         boolean lever = hasLever(train);
+        boolean neutral = lever && s.gear == 0;
+        boolean neutralRev = neutral && human && s.neutralRev && !s.brake && !train.derailed && !s.emergencyStop;
+        int gearedDirection = s.cabDirection * (s.gear == TrainMechanics.REVERSE_GEAR ? -1 : 1);
+        boolean wrongGear = s.stationAssist && !neutral && command != 0 && command != gearedDirection;
+        double throttle = neutral ? neutralRev ? train.throttle : 0 : command == 0 || brake > 0 || reversing ? 0 : train.throttle;
+        if (wrongGear) throttle = 0;
+        if (s.navigationCommand) throttle *= Math.clamp(s.navigationDistance / 2, 0, 1);
+        throttle = Double.isFinite(throttle) ? Math.clamp(throttle, 0, 1) : 0;
+        s.controlsAdmission = throttle;
         var active = new ArrayList<TrainMechanics.Engine>();
         double rpmSum = 0; int rpmCount = 0;
+        // A shared boiler pays and distributes steam once, across every connected carriage.
+        for (var supply : steam.supplies) {
+            var cs = supply.carriage; var b = supply.boiler;
+            int consumers = supply.connections.size();
+            int heat = 0; boolean passive = false;
+            for (var heater : b.heaters()) {
+                var burner = cs.burners.get(heater.pos());
+                float score = heater.fixedHeat();
+                if (burner != null) {
+                    burner.tick();
+                    if (consumers > 0 && throttle > 0) feedFuel(train, burner);
+                    score = burner.heatScore();
+                }
+                if (score == 0) passive = true; else if (score > 0) heat += score;
+            }
+            var boiler = cs.boilers.computeIfAbsent(b.pos(), at -> new BoilerData());
+            boiler.attachedEngines = consumers;
+            boiler.activeHeat = heat;
+            boiler.passiveHeat = passive && heat == 0;
+            BoilerAdmission.set(boiler, throttle);
+            double target = SourcePhysics.thermalSteamLevel(boiler, b.size());
+            double demand = 0;
+            for (var connection : supply.connections) {
+                var drive = connection.drive();
+                var engine = connection.carriage().engines.get(drive.motor().pos());
+                double ratio = drive.ratio() * (lever ? TrainMechanics.GEARS[s.gear] : drive.dial());
+                int direction = inputDirection(engine, drive.ratio(), ratio, command, neutralRev);
+                demand += SourcePhysics.steamDemand(drive.motor().capacity(), target, consumers, direction, throttle, engine.rpm());
+            }
+            double available = cs.water.getOrDefault(b.pos(), 0d);
+            available += drainWater(train, Math.max(0, (int) Math.ceil(demand - available)));
+            double consumed = Math.min(available, demand);
+            cs.water.put(b.pos(), available - consumed);
+            BoilerAdmission.supply(boiler, demand, consumed);
+            double supplied = SourcePhysics.steamLevel(boiler, b.size());
+            if (target == 0 && consumers > 0) s.failure = "no_heat";
+            else if (demand > 0 && supplied == 0 && consumers > 0) s.failure = "no_water";
+        }
         for (var c : train.carriages) {
             var cs = carriage(c); var l = cs.layout; if (l == null) continue;
             if (c.storage != null) {
@@ -146,46 +227,17 @@ public final class TrainPhysics {
                     if (left.isEmpty()) iterator.remove(); else iterator.set(left);
                 }
             }
-            var levels = new HashMap<BlockPos, Double>();
-            for (var b : l.boilers.values()) {
-                int consumers = (int) l.drives.stream().filter(d -> d.motor().boiler().equals(b.pos())
-                    && (lever ? s.gear != 0 : d.dial() != 0)).count();
-                double heat = 0; boolean passive = false;
-                for (var heater : b.heaters()) {
-                    var burner = cs.burners.get(heater.pos());
-                    float score = heater.fixedHeat();
-                    if (burner != null) {
-                        burner.tick();
-                        if (consumers > 0 && throttle > 0 && (!lever || s.gear != 0)) feedFuel(train, burner);
-                        score = burner.heatScore();
-                    }
-                    if (score == 0) passive = true; else if (score > 0) heat += score;
-                }
-                double potential = b.size() < 4 ? 0 : Math.min(18, Math.min(b.size() / 4, heat > 0 ? heat : passive ? .125 : 0));
-                double desired = Math.min(consumers, potential);
-                double demand = desired * 10 * throttle;
-                if (lever && s.gear == 0) demand = 0;
-                // Fractional flow is represented by an actual small reservoir,
-                // so even a narrowly opened valve cannot create free steam.
-                double available = cs.water.getOrDefault(b.pos(), 0d);
-                available += drainWater(train, Math.max(0, (int) Math.ceil(demand - available)));
-                double consumed = Math.min(available, demand);
-                cs.water.put(b.pos(), available - consumed);
-                double supplied = consumed / 10;
-                levels.put(b.pos(), supplied);
-                if (potential == 0 && consumers > 0) s.failure = "no_heat";
-                else if (demand > 0 && available == 0 && !l.drives.isEmpty()) s.failure = "no_water";
-            }
             var connected = new HashSet<BlockPos>();
             for (var drive : l.drives) {
                 var motor = drive.motor(); var e = cs.engines.get(motor.pos()); connected.add(motor.pos());
                 e.shift(drive.ratio() * (lever ? TrainMechanics.GEARS[s.gear] : drive.dial()));
-                int count = (int) l.drives.stream().filter(d -> d.motor().boiler().equals(motor.boiler())
-                    && (lever ? s.gear != 0 : d.dial() != 0)).count();
-                var curve = SourcePhysics.steamCurve(motor.capacity(), levels.getOrDefault(motor.boiler(), 0d), count,
-                    command == 0 || e.ratio == 0 ? 0 : (int) Math.signum(command * e.ratio));
+                int inputDirection = inputDirection(e, drive.ratio(), e.ratio, command, neutralRev);
+                var source = steam.source(cs, motor.pos());
+                var curve = SourcePhysics.admittedCurve(motor.capacity(), source.carriage.boilers.get(source.boiler.pos()),
+                    source.boiler.size(), inputDirection);
                 e.stallTorque = curve.stallTorque() * TrainMechanics.TORQUE_SCALE;
                 e.power = curve.powerLimit() * TrainMechanics.TORQUE_SCALE * (2 * Math.PI / 60);
+                e.governor = curve.governorSpeed(); e.governorRange = curve.governorRange();
                 if (!Double.isFinite(e.power)) e.power = 0;
                 rpmSum += Math.abs(e.rpm()); rpmCount++;
             }
@@ -210,7 +262,8 @@ public final class TrainPhysics {
                 var e = cs.engines.get(motor.pos()); e.shift(0); e.stallTorque = e.power = 0; active.add(e);
             }
         }
-        var motion = TrainMechanics.advance(train.speed * 20, s.mass, .55 * area, s.grade, brake, active, TrainMechanics.TICK_SECONDS);
+        var motion = TrainMechanics.advance(train.speed * 20, s.mass, TrainAerodynamics.AIR_COEFFICIENT * frontalArea(train),
+            s.grade, brake, active, TrainMechanics.TICK_SECONDS);
         train.speed = motion.speed() / 20;
         s.distance = com.diliupengyun.differential_create.kinetics.TrainActorMotion.feed(train, motion.distance(), active);
         rpmSum = 0; rpmCount = 0;
@@ -229,19 +282,19 @@ public final class TrainPhysics {
         }
         for (var c : train.carriages) { var cs = carriage(c); cs.wheelTurns += s.distance / (2 * Math.PI * TrainMechanics.WHEEL_RADIUS); cs.apply(c, s.gear); }
         train.speedBeforeStall = null; train.manualTick = false;
-        s.direction = 0; s.brake = false; s.manualCommand = false; s.navigationCommand = false; s.navigationDistance = Double.POSITIVE_INFINITY;
+        s.direction = 0; s.brake = false; s.manualCommand = false; s.navigationCommand = false; s.neutralRev = false; s.navigationDistance = Double.POSITIVE_INFINITY;
         TrainStatePayload.send(train);
+    }
+    private static int inputDirection(TrainMechanics.Engine engine, double driveRatio, double ratio, int command, boolean neutralRev) {
+        return neutralRev ? engine.omega == 0 ? (int) Math.signum(driveRatio) : (int) Math.signum(engine.omega)
+            : command == 0 || ratio == 0 ? 0 : (int) Math.signum(command * ratio);
     }
     private static int drainWater(Train train, int amount) {
         if (amount <= 0) return 0; int collected = 0;
         for (var c : train.carriages) {
-            var l = carriage(c).layout;
             if (c.storage == null) continue;
-            for (var entry : c.storage.getFluids().storages.entrySet()) {
-                if (l != null && l.boilers.containsKey(entry.getKey())) continue;
-                var fluid = entry.getValue().drain(new FluidStack(Fluids.WATER, amount - collected), FluidAction.EXECUTE);
-                collected += fluid.getAmount(); if (collected >= amount) return collected;
-            }
+            var fluid = c.storage.getFluids().drain(new FluidStack(Fluids.WATER, amount - collected), FluidAction.EXECUTE);
+            collected += fluid.getAmount(); if (collected >= amount) return collected;
         }
         return collected;
     }

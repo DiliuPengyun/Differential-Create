@@ -19,6 +19,7 @@ public abstract class SteamHoseTankMixin implements SteamHoseLinks.TankLinks {
     @Unique private double differentialcreate$feedWater;
     @Override public Set<BlockPos> differentialcreate$engines() { return differentialcreate$engines; }
     @Override public double differentialcreate$feedWater() { return differentialcreate$feedWater; }
+    @Override public void differentialcreate$feedWater(double amount) { differentialcreate$feedWater = amount; }
     @Inject(method = "write", at = @At("RETURN"))
     private void differentialcreate$writeLinks(CompoundTag tag, HolderLookup.Provider registries, boolean client, CallbackInfo ci) {
         if (!differentialcreate$engines.isEmpty()) tag.putLongArray(SteamHoseLinks.TANK_KEY,

@@ -6,6 +6,8 @@ import com.diliupengyun.differential_create.kinetics.ElasticKinetics;
 import com.diliupengyun.differential_create.kinetics.INetworkDynamics;
 import com.diliupengyun.differential_create.kinetics.NetworkTopology;
 import com.diliupengyun.differential_create.kinetics.SourcePhysics;
+import com.diliupengyun.differential_create.kinetics.BoilerAdmission;
+import com.diliupengyun.differential_create.kinetics.SteamBoilerWater;
 import com.diliupengyun.differential_create.kinetics.KineticGoggleInfo;
 import com.diliupengyun.differential_create.kinetics.NetworkDynamics;
 import com.diliupengyun.differential_create.kinetics.PhysicsTuning;
@@ -29,7 +31,8 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
-/** Real boiler/engine/shaft integration, with heat and water inputs held independently of pumps. */
+/** Real boiler/engine/shaft integration with a creative hose-fed boiler;
+ * stationary demand tests and pump tests separately verify paid ordinary supply. */
 @GameTestHolder(DifferentialCreate.MODID)
 @PrefixGameTestTemplate(false)
 public final class SteamEngineTests {
@@ -48,13 +51,11 @@ public final class SteamEngineTests {
 			var tank = tank();
 			if (tank == null) return;
 			tank.boiler.activeHeat = heat;
-			tank.boiler.waterSupply = water;
-			// Populate Create's rolling samples as well as its current reading.
-			if (water > 0) tank.boiler.createHandler().fill(new net.neoforged.neoforge.fluids.FluidStack(
-				net.minecraft.world.level.material.Fluids.WATER, (int) water),
-				net.neoforged.neoforge.fluids.capability.IFluidHandler.FluidAction.EXECUTE);
 			tank.boiler.passiveHeat = passive;
 			tank.boiler.needsHeatLevelUpdate = false;
+			SteamBoilerWater.begin(tank);
+			// Controlled supply isolates the rotor curve from actual pump delivery.
+			BoilerAdmission.supply(tank.boiler, water, water);
 		}
 	}
 
@@ -64,7 +65,7 @@ public final class SteamEngineTests {
 			for (int z = ((int) bounds.minZ >> 4) - 1; z <= ((int) bounds.maxZ >> 4) + 1; z++)
 				h.getLevel().setChunkForced(x, z, true);
 		for (int x = 0; x < 2; x++) for (int z = 0; z < 2; z++) for (int y = 0; y < 2; y++)
-			h.setBlock(TANK.offset(x, y, z), AllBlocks.FLUID_TANK.getDefaultState());
+			h.setBlock(TANK.offset(x, y, z), AllBlocks.CREATIVE_FLUID_TANK.getDefaultState());
 		Fixture fixture = new Fixture(count);
 		Direction facing = positive ? Direction.SOUTH : Direction.NORTH;
 		BlockPos base = positive ? TANK.south(2) : TANK.north();
@@ -75,6 +76,7 @@ public final class SteamEngineTests {
 			h.setBlock(shaft, AllBlocks.POWERED_SHAFT.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
 			fixture.engines[i] = h.getBlockEntity(engine);
 			fixture.shafts[i] = h.getBlockEntity(shaft);
+			com.diliupengyun.differential_create.trains.SteamHoseLinks.connect(fixture.engines[i], h.getBlockEntity(positive ? TANK.south() : TANK));
 			if (geared) h.setBlock(shaft.east(), AllBlocks.COGWHEEL.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
 		}
 		h.onEachTick(fixture::supply);
@@ -177,7 +179,8 @@ public final class SteamEngineTests {
 			h.getLevel().setBlock(engine.getBlockPos(), state.setValue(SteamEngineBlock.FACING, Direction.EAST), 3);
 			engine.source = new WeakReference<>(tank);
 			inactive(h, shaft, "stale boiler link after rotation");
-			h.assertTrue(engine.getTank() == null && engine.getShaft() == null, "rotated engine cannot use old tank/shaft caches");
+			h.assertTrue(engine.getTank() == tank && engine.getShaft() == null,
+				"An explicit hose retains its selected boiler while rotation invalidates the old shaft cache");
 			h.getLevel().setBlock(engine.getBlockPos(), state, 3);
 			near(h, torque, SourcePhysics.steamCurve(shaft).stallTorque(), 0, "restored orientation reconnects supply");
 			h.succeed();
@@ -198,21 +201,21 @@ public final class SteamEngineTests {
 				near(h, 0, curve.damping(), 0, "steam has no internal damping " + count);
 				near(h, 1024, Math.abs(curve.stallTorque()), 0, "fixed cylinder pressure and displacement " + count);
 				near(h, 512, Math.abs(curve.noLoadSpeed()), 0, "governor target independent of shared steam volume " + count);
-				near(h, Math.min(1, 2.0 / count), curve.steamVent(-8192), 1e-8, "bypass animation follows actual available supply " + count);
+				near(h, 0, SourcePhysics.steamIntake(shaft, -8192), 0, "closed regulator does not vent unpaid steam " + count);
 				near(h, 262144 * Math.min(2, count), SourcePhysics.steamPeakPower(1024, tank.boiler, 8), 1e-6, "linear combined power " + count);
 			}
 			tank.boiler.attachedEngines = 0;
 			inactive(h, shaft, "boiler without attached engines");
 			tank.boiler.attachedEngines = 1;
-			tank.boiler.waterSupply = 0;
+			BoilerAdmission.supply(tank.boiler, 20, 0);
 			inactive(h, shaft, "no water");
-			tank.boiler.waterSupply = 20;
+			BoilerAdmission.supply(tank.boiler, 20, 20);
 			tank.boiler.activeHeat = 0;
 			inactive(h, shaft, "no heat");
 			tank.boiler.passiveHeat = true;
 			near(h, 32, SourcePhysics.steamCurve(shaft).powerThresholdSpeed(), 0, "passive heat power threshold");
 			near(h, 32768, SourcePhysics.steamPeakPower(1024, tank.boiler, 8), 0, "passive heat power budget");
-			near(h, .125, SourcePhysics.steamCurve(shaft).steamVent(-8192), 0, "passive heat produces only one eighth of full exhaust");
+			near(h, 0, SourcePhysics.steamIntake(shaft, -8192), 0, "passive heat does not emit bypass steam");
 			near(h, 0, SourcePhysics.steamPeakPower(0, tank.boiler, 8), 0, "disabled capacity contributes no power");
 			f.heat = 0;
 			f.supply();
@@ -241,7 +244,7 @@ public final class SteamEngineTests {
 			for (int z = ((int) bounds.minZ >> 4) - 1; z <= ((int) bounds.maxZ >> 4) + 1; z++)
 				h.getLevel().setChunkForced(x, z, true);
 		for (int x = 0; x < 3; x++) for (int z = 0; z < 3; z++) for (int y = 0; y < 8; y++)
-			h.setBlock(TANK.offset(x, y, z), AllBlocks.FLUID_TANK.getDefaultState());
+			h.setBlock(TANK.offset(x, y, z), AllBlocks.CREATIVE_FLUID_TANK.getDefaultState());
 		Fixture f = new Fixture(18);
 		f.heat = 18; f.water = 180;
 		for (int i = 0; i < 18; i++) {
@@ -250,6 +253,7 @@ public final class SteamEngineTests {
 				.setValue(SteamEngineBlock.FACE, AttachFace.WALL).setValue(SteamEngineBlock.FACING, Direction.NORTH));
 			h.setBlock(shaft, AllBlocks.POWERED_SHAFT.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
 			f.engines[i] = h.getBlockEntity(engine); f.shafts[i] = h.getBlockEntity(shaft);
+			com.diliupengyun.differential_create.trains.SteamHoseLinks.connect(f.engines[i], h.getBlockEntity(TANK.offset(i % 3, i / 3, 0)));
 		}
 		h.onEachTick(f::supply);
 		h.runAfterDelay(12, () -> {
@@ -260,7 +264,7 @@ public final class SteamEngineTests {
 			near(h, 256, single.powerThresholdSpeed(), 0, "a single engine retains its own intake rating");
 			near(h, 262144, single.torque(384) * 384, 1e-6, "a single engine cannot consume eighteen engines' steam allocation");
 			near(h, 0, single.torque(73728), 0, "governor closes at externally imposed overspeed");
-			near(h, 262144, single.ventedPower(73728), 0, "unused engine allocation leaves through the bypass");
+			near(h, 262144, single.withheldPower(73728), 0, "unused engine allocation leaves through the bypass");
 			for (var shaft : f.shafts) {
 				near(h, 256, SourcePhysics.steamCurve(shaft).powerThresholdSpeed(), 0, "full boiler power threshold");
 				near(h, -1024, SourcePhysics.steamCurve(shaft).stallTorque(), 0, "finite cylinder torque");
@@ -271,13 +275,14 @@ public final class SteamEngineTests {
 					h.assertTrue(shaft.getSpeed() < -260, "actual rotor continues accelerating beyond the rated speed");
 					h.assertTrue(Math.abs(shaft.getSpeed()) < 512, "each engine approaches its own governor target");
 					var curve = SourcePhysics.steamCurve(shaft);
-					near(h, 262144, curve.torque(shaft.getSpeed()) * shaft.getSpeed() + curve.ventedPower(shaft.getSpeed()), 1e-6,
+					near(h, 262144, curve.torque(shaft.getSpeed()) * shaft.getSpeed() + curve.withheldPower(shaft.getSpeed()), 1e-6,
 						"shaft output plus bypass loss equals one allocated share");
 				}
 				for (int i = 1; i < f.engines.length; i++)
 					h.getLevel().setBlock(f.engines[i].getBlockPos(), Blocks.AIR.defaultBlockState(), 3);
 				h.runAfterDelay(30, () -> {
 					h.assertTrue(tank.boiler.attachedEngines == 1, "removing seventeen real engines updates the boiler allocation");
+					f.supply();
 					near(h, 262144, SourcePhysics.steamPeakPower(1024, tank.boiler, 72), 1e-6,
 						"a full boiler with one installed engine exposes only one engine's power");
 					h.assertTrue(f.shafts[0].getSpeed() < -256, "removing engines preserves existing rotor motion");
@@ -340,7 +345,7 @@ public final class SteamEngineTests {
 						"removing the fan restores acceleration towards the governor target");
 					ElasticKinetics.state(shaft).physicalSpeed = 8192;
 					readouts(h, shaft, "steam_governing", true);
-					near(h, 1, SourcePhysics.steamCurve(shaft).steamVent(8192), 0, "full supply vents fully above target");
+					near(h, 0, SourcePhysics.steamIntake(shaft, 8192), 0, "overspeed closes intake without bypass flow");
 					LoadFactorTests.fraction(h, shaft, 0, "removing the fan removes sustained demand");
 					f.heat = 0; f.passive = true; f.supply();
 					near(h, 32768, SourcePhysics.steamCurve(shaft).maximumPower(), 0, "passive heat reduces the shared power budget");
@@ -348,7 +353,7 @@ public final class SteamEngineTests {
 					h.runAfterDelay(40, () -> {
 						near(h, 8192, NetworkDynamics.preciseSpeed(shaft), 1e-6,
 							"closed admission preserves overspeed without adding work or braking");
-						near(h, .125, SourcePhysics.steamCurve(shaft).steamVent(8192), 0, "weak supply yields a weaker bypass plume");
+						near(h, 0, SourcePhysics.steamIntake(shaft, 8192), 0, "weak supply has no bypass plume");
 						f.passive = false; f.supply();
 						readouts(h, shaft, "no_steam", true);
 						LoadFactorTests.tooltip(h, shaft, "gui.differentialcreate.goggles.load_no_power", net.minecraft.ChatFormatting.GRAY);
@@ -377,7 +382,7 @@ public final class SteamEngineTests {
 				double expected = PhysicsTuning.STEAM_GOVERNOR_RPM;
 				near(h, expected, NetworkDynamics.preciseSpeed(shaft), 1e-6, "natural acceleration settles at the governor target");
 				readouts(h, shaft, "steam_governing", true);
-				near(h, 1, SourcePhysics.steamCurve(shaft).steamVent(shaft.getSpeed()), 1e-8, "unloaded equilibrium bypasses the full steam allocation");
+				near(h, 0, SourcePhysics.steamIntake(shaft, shaft.getSpeed()), 1e-6, "unloaded equilibrium saves steam instead of venting it");
 				DifferentialCreate.LOGGER.info("STEAM_NATURAL ticks=1200 speed={} expected={} power={}",
 					NetworkDynamics.preciseSpeed(shaft), expected, SourcePhysics.steamCurve(shaft).torque(shaft.getSpeed()) * shaft.getSpeed());
 				f.heat = 0; f.supply();
@@ -401,7 +406,7 @@ public final class SteamEngineTests {
 		h.assertTrue(!hasKey(tooltip, "gui.differentialcreate.goggles.no_load_speed")
 			&& hasKey(tooltip, "gui.differentialcreate.goggles.load_factor"), "steam shows network demand/supply without a fictitious no-load speed");
 		h.assertTrue(hasKey(tooltip, "gui.differentialcreate.goggles.steam_governor_speed")
-			&& hasKey(tooltip, "gui.differentialcreate.goggles.steam_venting"), "governor target and bypass fraction are visible");
+			&& hasKey(tooltip, "gui.differentialcreate.goggles.steam_regulating"), "governor target and admission reduction are visible");
 		tooltip.clear();
 		KineticGoggleInfo.append(shaft, tooltip, true);
 		if (energy) {
@@ -410,7 +415,7 @@ public final class SteamEngineTests {
 				&& hasKey(tooltip, "gui.differentialcreate.goggles.local_elastic_energy")
 				&& hasKey(tooltip, "gui.differentialcreate.goggles.elastic_energy"), "steam uses all four shared energy fields");
 			h.assertTrue(hasKey(tooltip, "gui.differentialcreate.goggles.output_power"), "high-speed steam never becomes fictitious braking");
-			h.assertTrue(hasKey(tooltip, "gui.differentialcreate.goggles.steam_vent_power"), "energy view reports bypass loss separately");
+			h.assertTrue(hasKey(tooltip, "gui.differentialcreate.goggles.steam_withheld_power"), "energy view reports regulator-withheld potential power");
 		}
 	}
 	private static boolean hasKey(java.util.List<Component> lines, String key) {

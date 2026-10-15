@@ -15,7 +15,7 @@ public final class GearLeverInteraction extends MovingInteractionBehaviour {
         if (!player.mayBuild() || entity.toGlobalVector(Vec3.atCenterOf(localPos), 1).distanceToSqr(player.position()) > 64) return false;
         if (!entity.level().isClientSide) {
             var train = cce.getCarriage().train;
-            int gear = Math.floorMod(TrainPhysics.state(train).gear + (player.isShiftKeyDown() ? -1 : 1), 4);
+            int gear = TrainMechanics.stepGear(TrainPhysics.state(train).gear, player.isShiftKeyDown() ? -1 : 1, true);
             TrainPhysics.shift(train, gear);
             player.displayClientMessage(Component.translatable("gui.differentialcreate.train.gear", GearLeverBlock.label(gear)), true);
         }

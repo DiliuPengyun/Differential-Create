@@ -11,6 +11,15 @@
     },
     "gear=3": {
       "model": "differentialcreate:block/gear_lever_3"
+    },
+    "gear=4": {
+      "model": "differentialcreate:block/gear_lever_4"
+    },
+    "gear=5": {
+      "model": "differentialcreate:block/gear_lever_5"
+    },
+    "gear=6": {
+      "model": "differentialcreate:block/gear_lever_6"
     }
   }
 }

@@ -22,7 +22,7 @@ import net.neoforged.neoforge.fluids.capability.IFluidHandler.FluidAction;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
-/** Native inventory restrictions and legacy geometry must preserve real flow. */
+/** Native inventory restrictions and geometry changes must preserve real flow. */
 @GameTestHolder(DifferentialCreate.MODID)
 @PrefixGameTestTemplate(false)
 public final class FluidInventoryPhysicsTests {
@@ -87,7 +87,7 @@ public final class FluidInventoryPhysicsTests {
                 received[attempt % 2] = Math.max(received[attempt % 2], delivered);
             }
             h.assertTrue(received[0] > .1, "horizontal flow does not wait for a retired vertical arm: " + received[0]);
-            h.assertTrue(received[1] > .1, "retained excess legacy liquid still permits horizontal flow: " + received[1]);
+            h.assertTrue(received[1] > .1, "retained excess liquid still permits horizontal flow: " + received[1]);
             h.succeed();
         });
     }

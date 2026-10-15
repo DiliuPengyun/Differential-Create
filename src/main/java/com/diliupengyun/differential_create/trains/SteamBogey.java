@@ -25,7 +25,7 @@ public final class SteamBogey {
     }
     public static boolean install(AbstractBogeyBlockEntity bogey) {
         if(powered(bogey))return false;
-        var data=bogey.getBogeyData().copy(); data.putBoolean(ENGINE,true);data.putBoolean("DCGeared",true);
+        var data=bogey.getBogeyData().copy(); data.putBoolean(ENGINE,true);
         bogey.setBogeyData(data);bogey.notifyUpdate();loaded(bogey);return true;
     }
     public static void loaded(AbstractBogeyBlockEntity bogey) {
@@ -44,7 +44,7 @@ public final class SteamBogey {
         if(!player.mayBuild()||!(level.getBlockEntity(event.getPos()) instanceof AbstractBogeyBlockEntity bogey))return;
         var stack=player.getItemInHand(event.getHand());
         boolean install=AllBlocks.STEAM_ENGINE.isIn(stack);
-        boolean remove=stack.isEmpty()&&player.isShiftKeyDown()&&powered(bogey);
+        boolean remove=player.getMainHandItem().isEmpty()&&player.getOffhandItem().isEmpty()&&player.isShiftKeyDown()&&powered(bogey);
         if(!install&&!remove)return;
         event.setCanceled(true);event.setCancellationResult(InteractionResult.sidedSuccess(level.isClientSide));
         if(level.isClientSide)return;
@@ -56,7 +56,7 @@ public final class SteamBogey {
         } else {
             SteamHoseLinks.unlink(bogey);
             var data=bogey.getBogeyData().copy();
-            for(String key:List.of(ENGINE,MOTOR_POS,RPM,TURNS,SAMPLE,"DCGeared"))data.remove(key);
+            for(String key:List.of(ENGINE,MOTOR_POS,RPM,TURNS,SAMPLE))data.remove(key);
             bogey.setBogeyData(data);bogey.notifyUpdate();
             var returned=AllBlocks.STEAM_ENGINE.asStack();
             if(!player.getInventory().add(returned))player.drop(returned,false);

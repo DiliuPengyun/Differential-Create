@@ -82,7 +82,6 @@ public final class NetworkDynamics {
 		INetworkDynamics dynamics = (INetworkDynamics) be.getOrCreateNetwork();
 		CompoundTag network = tag.getCompound("Network");
 		network.putDouble("DCSpeed", dynamics.differentialcreate$getSpeed());
-		network.putFloat("DCTargetSpeed", dynamics.differentialcreate$getTargetSpeed());
 		network.putFloat("DCNominal", dynamics.differentialcreate$getLastNonZeroTarget());
 		network.putFloat("DCRatio", dynamics.differentialcreate$getRatios().getOrDefault(be, 1f));
 		BlockPos anchor = dynamics.differentialcreate$data().anchor;
@@ -117,11 +116,10 @@ public final class NetworkDynamics {
 		}
 		CompoundTag network = tag.getCompound("Network");
 		IMemberDynamics member = (IMemberDynamics) be;
-		member.differentialcreate$setPendingNetworkSpeed(network.contains("DCSpeed") ? network.getDouble("DCSpeed")
-			: network.getFloat("DCTargetSpeed"));
+		member.differentialcreate$setPendingNetworkSpeed(network.contains("DCSpeed") ? network.getDouble("DCSpeed") : Double.NaN);
 		MemberState saved = member.differentialcreate$member();
 		saved.savedRatio = network.contains("DCRatio") ? network.getFloat("DCRatio") : Float.NaN;
-		saved.savedNominal = network.contains("DCNominal") ? network.getFloat("DCNominal") : network.getFloat("DCTargetSpeed");
+		saved.savedNominal = network.getFloat("DCNominal");
 		saved.savedAnchor = network.contains("DCAnchor") ? BlockPos.of(network.getLong("DCAnchor")) : null;
 	}
 

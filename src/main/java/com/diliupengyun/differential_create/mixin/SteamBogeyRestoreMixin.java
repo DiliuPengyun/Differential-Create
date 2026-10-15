@@ -2,6 +2,7 @@ package com.diliupengyun.differential_create.mixin;
 
 import com.diliupengyun.differential_create.trains.SteamBogey;
 import com.diliupengyun.differential_create.trains.SteamHoseLinks;
+import com.diliupengyun.differential_create.trains.SteamHosePort;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.simibubi.create.content.trains.bogey.AbstractBogeyBlockEntity;
@@ -17,6 +18,7 @@ public abstract class SteamBogeyRestoreMixin {
         var placed=be.getBogeyData();
         if(data.getBoolean(SteamBogey.ENGINE)&&placed.contains(SteamHoseLinks.ENGINE_KEY)) {
             data=data.copy();data.putLong(SteamHoseLinks.ENGINE_KEY,placed.getLong(SteamHoseLinks.ENGINE_KEY));
+            SteamHosePort.write(data,SteamHosePort.read(placed));
         }
         original.call(be,data);
     }

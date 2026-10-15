@@ -113,7 +113,6 @@ public final class MachiningClock {
             ElasticKinetics.publishReference(network);
             ClutchPhysics.accumulateCoupling(network, level);
             var dynamics = (INetworkDynamics) network;
-            dynamics.differentialcreate$setTargetSpeed(NetworkDynamics.computeTargetSpeed(network));
             ClientSpeedSync.syncNetwork(network, level, dynamics, dynamics.differentialcreate$data().balance);
         }
     }

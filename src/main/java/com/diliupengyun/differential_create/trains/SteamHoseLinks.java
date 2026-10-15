@@ -11,19 +11,23 @@ public final class SteamHoseLinks {
     public static final String ENGINE_KEY = "DCSteamHose";
     public static final String TANK_KEY = "DCSteamEngines";
     public static final String WATER_KEY = "DCFeedWater";
-    public static final int MAX_LENGTH = 16;
+    public static final int MAX_LENGTH = 48;
     public interface EngineLink {
         BlockPos differentialcreate$hose();
         void differentialcreate$hose(BlockPos offset);
+        SteamHosePort differentialcreate$port();
+        void differentialcreate$port(SteamHosePort port);
     }
     public interface TankLinks {
         Set<BlockPos> differentialcreate$engines();
         double differentialcreate$feedWater();
+        void differentialcreate$feedWater(double amount);
     }
     private SteamHoseLinks() {}
 
     public static FluidTankBlockEntity tank(BlockEntity engine) {
-        if (!(engine instanceof EngineLink) || !(engine instanceof SteamEngineBlockEntity) && !SteamBogey.powered(engine)) return null;
+        if (!(engine instanceof EngineLink link) || link.differentialcreate$port() == null
+            || !(engine instanceof SteamEngineBlockEntity) && !SteamBogey.powered(engine)) return null;
         BlockPos offset = ((EngineLink) engine).differentialcreate$hose();
         if (offset == null || offset.distSqr(BlockPos.ZERO) > MAX_LENGTH * MAX_LENGTH) return null;
         var level = engine.getLevel();
@@ -60,11 +64,16 @@ public final class SteamHoseLinks {
     }
 
     public static void connect(BlockEntity engine, FluidTankBlockEntity part) {
+        connect(engine, part, new SteamHosePort(net.minecraft.core.Direction.UP, new net.minecraft.world.phys.Vec3(.5, 1, .5)));
+    }
+    public static void connect(BlockEntity engine, FluidTankBlockEntity part, SteamHosePort port) {
         if (!(engine instanceof EngineLink) || !(engine instanceof SteamEngineBlockEntity) && !SteamBogey.powered(engine))
             throw new IllegalArgumentException("Steam hoses require an engine or upgraded bogey");
+        java.util.Objects.requireNonNull(port, "Steam hoses require a boiler surface attachment");
         unlink(engine);
         BlockPos offset = part.getBlockPos().subtract(engine.getBlockPos());
         ((EngineLink) engine).differentialcreate$hose(offset);
+        ((EngineLink) engine).differentialcreate$port(port);
         ((TankLinks) part).differentialcreate$engines().add(offset.multiply(-1));
         changed(engine);
         changed(part);

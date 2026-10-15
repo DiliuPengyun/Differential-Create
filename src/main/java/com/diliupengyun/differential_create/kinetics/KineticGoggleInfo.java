@@ -65,12 +65,12 @@ public final class KineticGoggleInfo {
 			SourcePhysics.Curve curve = SourcePhysics.curve(kbe);
 			double torque = curve.torque(local);
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.speed", fmtSigned(local, 1)));
-			double vent = curve.ventFraction(local);
+			double vent = curve.regulatorClosure(local);
 			String mode = curve.stallTorque() == 0 ? "no_steam" : torque * local < 0 ? "steam_reversing"
 				: vent > 1e-6 ? "steam_governing" : "steam_driven";
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles." + mode).withStyle(ChatFormatting.GRAY));
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.steam_governor_speed", fmt(PhysicsTuning.STEAM_GOVERNOR_RPM)));
-			tooltip.add(Component.translatable("gui.differentialcreate.goggles.steam_venting", fmt1(100 * vent)));
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.steam_regulating", fmt1(100 * vent)));
 			appendLoadFactor(kbe, tooltip);
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.torque", fmtSigned(torque, 2)));
 			return;
@@ -223,7 +223,7 @@ public final class KineticGoggleInfo {
 				? "gui.differentialcreate.goggles.absorbed_power" : "gui.differentialcreate.goggles.output_power",
 				fmt(Math.abs(power))));
 			if (kbe instanceof PoweredShaftBlockEntity)
-				tooltip.add(Component.translatable("gui.differentialcreate.goggles.steam_vent_power", fmt(curve.ventedPower(local))));
+				tooltip.add(Component.translatable("gui.differentialcreate.goggles.steam_withheld_power", fmt(curve.withheldPower(local))));
 			return;
 		}
 

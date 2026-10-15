@@ -12,43 +12,46 @@ import net.minecraft.world.item.ItemStack;
 /** The native burner acceptance/expiry rules, with storage as its authoritative
  * state instead of a server world block entity that disappears on assembly. */
 public final class MountedBurner {
-    // Create 6.0.x still accepts these old datapack tags after consulting data
-    // maps. Keep that compatibility without depending on its deprecated enum.
-    private static final TagKey<Item> LEGACY_SPECIAL = TagKey.create(Registries.ITEM,
+    // Match Create 6.0.x's current data-map and fuel-tag acceptance rules.
+    private static final TagKey<Item> SPECIAL_FUEL_TAG = TagKey.create(Registries.ITEM,
         ResourceLocation.fromNamespaceAndPath("create", "blaze_burner_fuel/special"));
-    private static final TagKey<Item> LEGACY_REGULAR = TagKey.create(Registries.ITEM,
+    private static final TagKey<Item> REGULAR_FUEL_TAG = TagKey.create(Registries.ITEM,
         ResourceLocation.fromNamespaceAndPath("create", "blaze_burner_fuel/regular"));
     public int fuel, remaining;
     public boolean creative;
-    private HeatLevel creativeHeat;
+    private final HeatLevel creativeHeat;
     public MountedBurner(CompoundTag tag, HeatLevel heat) {
         fuel = Math.clamp(tag.getInt("fuelLevel"), 0, 2);
         remaining = Math.max(0, tag.getInt("burnTimeRemaining"));
         creative = tag.getBoolean("isCreative"); creativeHeat = heat;
     }
     public void tick() {
-        if (creative) return;
+        if (creative || creativeHeat == HeatLevel.NONE) return;
         if (remaining > 0) remaining--;
         if (remaining > 0) return;
         if (fuel == 2) { fuel = 1; remaining = 5000; } else fuel = 0;
     }
     public HeatLevel heat() {
+        if (creativeHeat == HeatLevel.NONE) return HeatLevel.NONE;
         if (creative) return creativeHeat;
         return switch (fuel) { case 2 -> HeatLevel.SEETHING; case 1 -> remaining < 125 ? HeatLevel.FADING : HeatLevel.KINDLED; default -> HeatLevel.SMOULDERING; };
     }
-    public float heatScore() { return heat() == HeatLevel.SEETHING ? 2 : heat() == HeatLevel.KINDLED ? 1 : 0; }
+    public float heatScore() {
+        var heat = heat();
+        return heat == HeatLevel.NONE ? -1 : heat == HeatLevel.SEETHING ? 2 : heat.isAtLeast(HeatLevel.FADING) ? 1 : 0;
+    }
     public boolean accepts(ItemStack stack, boolean execute) {
-        if (creative || stack.isEmpty()) return false;
+        if (creative || creativeHeat == HeatLevel.NONE || stack.isEmpty()) return false;
         var holder = stack.getItemHolder();
         var special = holder.getData(CreateDataMaps.SUPERHEATED_BLAZE_BURNER_FUELS);
         var normal = holder.getData(CreateDataMaps.REGULAR_BLAZE_BURNER_FUELS);
         int nextFuel, time;
         if (special != null) { nextFuel = 2; time = special.burnTime(); }
         else if (normal != null) { nextFuel = 1; time = normal.burnTime(); }
-        else if (stack.is(LEGACY_SPECIAL)) { nextFuel = 2; time = 3200; }
+        else if (stack.is(SPECIAL_FUEL_TAG)) { nextFuel = 2; time = 3200; }
         else {
             time = stack.getBurnTime(null);
-            if (time <= 0 && stack.is(LEGACY_REGULAR)) time = 1600;
+            if (time <= 0 && stack.is(REGULAR_FUEL_TAG)) time = 1600;
             nextFuel = time > 0 ? 1 : 0;
         }
         if (nextFuel == 0 || nextFuel < fuel) return false;

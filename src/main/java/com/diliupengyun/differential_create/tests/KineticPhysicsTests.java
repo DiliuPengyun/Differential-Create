@@ -81,6 +81,8 @@ public final class KineticPhysicsTests {
 	public static void machineMaterialStrength(GameTestHelper helper) { forceImpactChunks(helper); ContraptionPhysicsTests.strength(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "contraption_mass", timeoutTicks = 100)
 	public static void contraptionMassAndDrag(GameTestHelper helper) { forceImpactChunks(helper); ContraptionPhysicsTests.mass(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "contraption_self_shadow", timeoutTicks = 100)
+	public static void contraptionRotationalSelfShadow(GameTestHelper helper) { forceImpactChunks(helper); ContraptionPhysicsTests.rotationalShadow(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "contraption_actors", timeoutTicks = 100)
 	public static void contraptionActorWork(GameTestHelper helper) { forceImpactChunks(helper); ContraptionPhysicsTests.actors(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_drill", timeoutTicks = 100)
@@ -303,7 +305,7 @@ public final class KineticPhysicsTests {
         ElasticKineticsTests.strength(helper);
 	}
 
-	private static void forceImpactChunks(GameTestHelper helper) {
+	static void forceImpactChunks(GameTestHelper helper) {
 		var bounds = helper.getBounds();
 		for (int x = ((int) bounds.minX >> 4) - 1; x <= ((int) bounds.maxX >> 4) + 1; x++)
 			for (int z = ((int) bounds.minZ >> 4) - 1; z <= ((int) bounds.maxZ >> 4) + 1; z++)

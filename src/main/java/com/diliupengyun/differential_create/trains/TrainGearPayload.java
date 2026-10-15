@@ -22,7 +22,7 @@ public record TrainGearPayload(UUID train, int step) implements CustomPacketPayl
             for (var c : train.carriages) c.forEachPresentEntity(entity -> {
                 if (entity.level() == player.level() && entity.getControllingPlayer().filter(player.getUUID()::equals).isPresent()) authorized[0] = true;
             });
-            if (authorized[0]) TrainPhysics.shift(train, Math.clamp(TrainPhysics.state(train).gear + p.step, 0, 3));
+            if (authorized[0]) TrainPhysics.shift(train, TrainMechanics.stepGear(TrainPhysics.state(train).gear, p.step, false));
         });
     }
 }

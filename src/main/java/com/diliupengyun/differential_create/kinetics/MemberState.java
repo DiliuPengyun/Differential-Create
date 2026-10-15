@@ -9,8 +9,7 @@ public final class MemberState {
 	public double angle;
 	public double lastInertia = Double.NaN;
 	public final ActorFeed actorFeed = new ActorFeed();
-	/** Saved total bearing inertia while its contraption entity is still loading. */
-	public float pendingBearingInertia = Float.NaN;
+	/** Saved total inertia while attached contraption entities are still loading. */
 	public float pendingStructureInertia = Float.NaN;
 	public int pendingStructureCount;
 	public double pendingStructureDrag = Double.NaN;

@@ -6,7 +6,7 @@
 
 | 入口 | 场景数 | 检查范围 |
 | --- | ---: | --- |
-| [MinecartIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartIntegrationTests.java) | 115 | 原版速度/位移、惯量、双车支撑、基本切削、停转、落沙、碰撞与旧存档 |
+| [MinecartIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartIntegrationTests.java) | 115 | 原版速度/位移、惯量、双车支撑、基本切削、停转、落沙、碰撞、原生暂停与当前格式读档 |
 | [MinecartOperationTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartOperationTests.java) | 188 | 作业途中操作、控制按钮、拾取重放、收割、耕地、铺路及材料退款 |
 | [MinecartLifecycleTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartLifecycleTests.java) | 36 | 自然世界 tick、连续目标、离轨再上轨、补煤、玩家联结和拆开 |
 | [MinecartRailTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartRailTests.java) | 60 | 全部十种轨道形态、坡道上的短钻头、弯道三种旋转模式、裸车地面/空中运动 |

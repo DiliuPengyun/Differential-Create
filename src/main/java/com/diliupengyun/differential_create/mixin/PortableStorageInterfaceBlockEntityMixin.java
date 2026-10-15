@@ -32,13 +32,13 @@ public abstract class PortableStorageInterfaceBlockEntityMixin implements Portab
     @Override public void differentialcreate$closeStorage() { stopTransferring(); }
     @Override public void differentialcreate$attachStorage(Contraption contraption, float span) {
         var state = differentialcreate$docking();
-        if (!state.opening) state.legacyConnection();
+        if (!state.opening) state.nativeConnection();
         state.nativeStarted(contraption);
         distance = Math.clamp(span, 0, 2); connectedEntity = contraption.entity;
         if (!state.managed) transferTimer = 14;
     }
     @Override public int differentialcreate$timeout() { return Math.max(1, getTransferTimeout()); }
-    @Override public boolean differentialcreate$legacyPermission() {
+    @Override public boolean differentialcreate$nativePermission() {
         return !powered && connectedEntity != null && connectedEntity.isAlive() && transferTimer >= 4 && transferTimer <= getTransferTimeout() + 4;
     }
     @Override public void differentialcreate$animate(float progress, float span) {
@@ -74,7 +74,7 @@ public abstract class PortableStorageInterfaceBlockEntityMixin implements Portab
     private void differentialcreate$session(Contraption contraption, float distance, CallbackInfo ci) {
         var state = differentialcreate$docking();
         if (!state.accepts(contraption)) { ci.cancel(); return; }
-        if (!state.opening) state.legacyConnection();
+        if (!state.opening) state.nativeConnection();
         state.nativeStarted(contraption);
     }
     @Inject(method = "startConnecting", at = @At("HEAD"), cancellable = true)

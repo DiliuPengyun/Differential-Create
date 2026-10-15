@@ -191,7 +191,7 @@ public final class ContraptionActorWork implements ShaftWork {
 		}
 		if (pending()) {
 			var job = context.data.getCompound(JOB);
-			var pos = BlockPos.of(job.getLong(job.contains("TargetPos") ? "TargetPos" : "Pos"));
+			var pos = BlockPos.of(job.getLong("TargetPos"));
 			ActorTargets.watch(this, pos);
 			if (!context.world.isLoaded(pos)) return Double.POSITIVE_INFINITY;
 			if (!context.world.getBlockState(pos).toString().equals(job.getString("Target"))) {
@@ -209,12 +209,11 @@ public final class ContraptionActorWork implements ShaftWork {
 		String target = pos.asLong() + ":" + state;
 		double cost = Math.max(.1, state.getDestroySpeed(context.world, pos)) * CYCLE_TRAVEL;
 		if (!context.data.getString(TARGET).equals(target)) {
-			boolean legacy = !context.data.contains(TARGET);
 			context.data.putString(TARGET, target);
 			context.data.remove(FEED);
 			context.data.remove(FEED_SCALE);
-			context.data.putDouble(TRAVEL, legacy ? context.data.getInt("Progress") * cost / 10 : 0);
-			if (!legacy) { context.data.remove("Progress"); context.data.remove("TicksUntilNextProgress"); }
+			context.data.putDouble(TRAVEL, 0);
+			context.data.remove("Progress"); context.data.remove("TicksUntilNextProgress");
 		}
 		if (!context.data.contains(FEED)) {
 			context.data.putDouble(FEED, stroke(cost));
@@ -238,8 +237,8 @@ public final class ContraptionActorWork implements ShaftWork {
 			scale = 0;
 		}
 		// Preserve the physical stroke when a new cart turn uses a different
-		// angle per RPM-tick (speed, radius or yaw/pitch stage). Old saves acquire
-		// their metric once without changing already-paid work.
+		// angle per RPM-tick (speed, radius or yaw/pitch stage). A stationary
+		// contact acquires its metric on the first actual motion.
 		if (!(scale > 0)) {
 			scale = metric > 0 ? metric : 1;
 			if (pending()) context.data.getCompound(JOB).putDouble("FeedScale", scale); else context.data.putDouble(FEED_SCALE, scale);

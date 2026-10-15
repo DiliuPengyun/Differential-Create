@@ -196,7 +196,7 @@ final class ContinuousMachineTests {
 		SequencerIntegrationTests.runCase(helper, Direction.Axis.X, 1, 1, "blend", "reload", true);
 	}
 	static void masslessSequence(GameTestHelper helper) {
-		SequencerIntegrationTests.runCase(helper, Direction.Axis.Z, 1, 1, "stop", "legacy", true);
+		SequencerIntegrationTests.runCase(helper, Direction.Axis.Z, 1, 1, "stop", "reload", true);
 	}
 	private static void sequenceLimits(GameTestHelper helper) {
 		BlockPos bearingPos = new BlockPos(15, 3, 15), pulleyPos = new BlockPos(21, 3, 15);

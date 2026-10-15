@@ -312,31 +312,19 @@ final class BearingPhysicsTests {
 			original.setAngle(123);
 			var entity = original.getMovedContraption();
 			var tag = original.saveWithFullMetadata(h.getLevel().registryAccess());
-			near(h, .0133, tag.getFloat("DCBearingInertia"), 1e-8, "running assembly saves its trial radial inertia");
-			h.assertTrue(tag.getInt("DCStructureCalibration") == 1, "new saves identify the lighter structure calibration");
-			var legacy = tag.copy(); legacy.remove("DCStructureCalibration");
-			legacy.putFloat("DCStructureInertia", .34f); legacy.putFloat("DCBearingInertia", .34f);
-			legacy.putDouble("DCStructureDrag", tag.getDouble("DCStructureDrag") * 100);
-			var bearingOnly = legacy.copy();
-			for (var key : new String[]{"DCStructureInertia", "DCStructureCount", "DCStructureDrag", "DCStructureLoad"}) bearingOnly.remove(key);
-			for (var saved : new CompoundTag[]{tag, legacy, bearingOnly}) {
+			near(h, .0133, tag.getFloat("DCStructureInertia"), 1e-8, "running assembly saves its radial inertia");
+			for (var saved : new CompoundTag[]{tag}) {
 				var candidate = (MechanicalBearingBlockEntity) BlockEntity.loadStatic(pos, original.getBlockState(), saved, h.getLevel().registryAccess());
 				candidate.setLevel(h.getLevel());
-				near(h, .0133, InertiaRegistry.getInertia(candidate), 1e-8, "current and both legacy formats keep only the lighter structure contribution");
-				near(h, 7, ElasticKinetics.state(candidate).physicalSpeed, 0, "calibration migration preserves saved RPM");
-				near(h, 123, candidate.getInterpolatedAngle(0), 1e-6, "calibration migration preserves the assembly angle");
+				near(h, .0133, InertiaRegistry.getInertia(candidate), 1e-8, "current save restores the structure contribution");
+				near(h, 7, ElasticKinetics.state(candidate).physicalSpeed, 0, "reload preserves saved RPM");
+				near(h, 123, candidate.getInterpolatedAngle(0), 1e-6, "reload preserves the assembly angle");
 				if (saved.contains("DCStructureDrag"))
-					near(h, tag.getDouble("DCStructureDrag"), ContraptionPhysics.airDrag(candidate), 1e-12, "legacy drag is converted independently of inertia");
+					near(h, tag.getDouble("DCStructureDrag"), ContraptionPhysics.airDrag(candidate), 1e-12, "reload preserves drag independently of inertia");
 				var rewritten = new CompoundTag(); ContraptionPhysics.write(candidate, rewritten);
-				h.assertTrue(rewritten.getInt("DCStructureCalibration") == 1, "migrated summaries save their new calibration");
 				ContraptionPhysics.read(candidate, rewritten, false);
 				near(h, .0133, ElasticKinetics.state(candidate).pendingStructureInertia, 1e-8, "resaving and reading cannot apply the reduction twice");
 			}
-			var windState = AllBlocks.WINDMILL_BEARING.getDefaultState();
-			var wind = (KineticBlockEntity) AllBlocks.WINDMILL_BEARING.get().newBlockEntity(pos, windState);
-			var legacyWind = new CompoundTag(); legacyWind.putFloat("DCStructureInertia", .70f);
-			near(h, .0268, ContraptionPhysics.readSavedInertia(wind, legacyWind, "DCStructureInertia"), 1e-8,
-				"windmill migration retains its distinct fixed 0.02 rotor inertia");
 			NetworkTopology.mark(original);
 			var restored = (MechanicalBearingBlockEntity) BlockEntity.loadStatic(original.getBlockPos(), original.getBlockState(), tag,
 				h.getLevel().registryAccess());

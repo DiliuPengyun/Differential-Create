@@ -7,10 +7,13 @@ import com.diliupengyun.differential_create.client.SteamHoseRenderer;
 import com.diliupengyun.differential_create.trains.GearLeverBlock;
 import com.diliupengyun.differential_create.trains.SteamHoseLinks;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.simibubi.create.AllBlocks;
 import com.simibubi.create.content.fluids.tank.FluidTankBlockEntity;
 import com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlockEntity;
 import com.simibubi.create.content.trains.bogey.StandardBogeyRenderer;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -34,7 +37,8 @@ public final class TrainClientSmokeTests {
     private static final BlockPos ENGINE = new BlockPos(0, -59, 0), TANK = ENGINE.south(10);
     private static int frames;
     private static int renderedFrames;
-    private static boolean done, worldRequested, fixtureRequested, changesRequested;
+    private static boolean done, worldRequested, fixtureRequested, changesRequested, interactionsComplete, portsComplete, motionChecked;
+    private static int verifiedEngines;
     private static long deadline;
     private static CompletableFuture<?> fixture, changes;
     private TrainClientSmokeTests() {}
@@ -46,8 +50,9 @@ public final class TrainClientSmokeTests {
                 if (mc.getOverlay() != null || mc.screen == null || ++frames < 30) return;
                 resources(mc);
                 worldRequested = true;
-                deadline = System.nanoTime() + 120_000_000_000L;
+                deadline = System.nanoTime() + 240_000_000_000L;
                 // These settings and this save live only in build/train-client/runs/.
+                mc.options.pauseOnLostFocus = false;
                 mc.options.renderDistance().set(2);
                 mc.options.simulationDistance().set(5);
                 var rules = new GameRules(); rules.getRule(GameRules.RULE_DOMOBSPAWNING).set(false, null);
@@ -57,8 +62,23 @@ public final class TrainClientSmokeTests {
                     registry -> registry.registryOrThrow(Registries.WORLD_PRESET).getHolderOrThrow(WorldPresets.FLAT).value().createWorldDimensions(), mc.screen);
                 return;
             }
-            if (System.nanoTime() > deadline) throw new AssertionError("Timed out waiting for integrated-server hose rendering");
+            if (System.nanoTime() > deadline) throw new AssertionError("Timed out waiting for integrated-server hose rendering: paused="
+                + mc.isPaused() + ", screen=" + (mc.screen == null ? "none" : mc.screen.getClass().getSimpleName())
+                + ", fixture=" + (fixture == null ? "none" : fixture.isDone()) + ", frames=" + renderedFrames
+                + ", engines=" + observations().snapshot(entry -> false).size());
             if (mc.level == null || mc.player == null || mc.getSingleplayerServer() == null) return;
+            if (!motionChecked) {
+                TrainClientHoseRenderTests.verify(mc);
+                TrainClientBoilerRenderTests.verify(mc);
+                TrainClientFluidTests.verify(mc);
+                motionChecked = true;
+            }
+            if (portsComplete) {
+                if (!TrainClientDrivingTests.tick(mc)) return;
+                DifferentialCreate.LOGGER.info("DC_TRAIN_CLIENT_SMOKE_PASS: models/BER/HUD loaded; {} world frames, {} client-only engines after concurrent server additions/removals",
+                    renderedFrames, verifiedEngines);
+                done = true; mc.stop(); return;
+            }
             if (!fixtureRequested) {
                 fixtureRequested = true;
                 mc.setScreen(null);
@@ -93,9 +113,9 @@ public final class TrainClientSmokeTests {
             if (live.size() < 97) return;
             for (var observed : live) if (observed.getLevel() != mc.level || observed.isRemoved())
                 throw new AssertionError("Hose cache retained a removed or server-world engine");
-            DifferentialCreate.LOGGER.info("DC_TRAIN_CLIENT_SMOKE_PASS: models/BER/HUD loaded; {} world frames, {} client-only engines after concurrent server additions/removals",
-                renderedFrames, live.size());
-            done = true; mc.stop();
+            if (!interactionsComplete) interactionsComplete = TrainClientInteractionTests.tick(mc);
+            if (!interactionsComplete || !TrainClientHosePortTests.tick(mc)) return;
+            verifiedEngines = live.size(); portsComplete = true;
         } catch (Throwable error) {
             done = true;
             DifferentialCreate.LOGGER.error("DC_TRAIN_CLIENT_SMOKE_FAIL", error);
@@ -136,23 +156,105 @@ public final class TrainClientSmokeTests {
             "com.simibubi.create.content.kinetics.steamEngine.SteamEngineVisual",
             "com.simibubi.create.content.trains.TrainHUD"}) Class.forName(type);
         var missing = mc.getModelManager().getMissingModel();
-        if (com.diliupengyun.differential_create.client.SteamBogeyModels.CYLINDERS.get() == missing
-            || com.diliupengyun.differential_create.client.SteamBogeyModels.PISTONS.get() == missing)
-            throw new AssertionError("Steam bogey cylinder and piston models failed to bake");
-        for (int gear = 0; gear <= 3; gear++) {
+        if (com.diliupengyun.differential_create.client.SteamBogeyModels.ENGINE_COVER.get() == missing)
+            throw new AssertionError("Steam bogey engine cover model failed to bake");
+        for (int gear = 0; gear <= com.diliupengyun.differential_create.trains.TrainMechanics.REVERSE_GEAR; gear++) {
             var model = mc.getBlockRenderer().getBlockModel(ModContent.GEAR_LEVER.getDefaultState().setValue(GearLeverBlock.GEAR, gear));
             if (model == missing) throw new AssertionError("Missing gear lever model " + gear);
         }
+        var neutral = ModContent.GEAR_LEVER.getDefaultState().setValue(GearLeverBlock.GEAR, 0);
+        var neutralModel = mc.getBlockRenderer().getBlockModel(neutral);
+        int handleVertices = 0;
+        for (var quad : neutralModel.getQuads(neutral, null, net.minecraft.util.RandomSource.create(0),
+            net.neoforged.neoforge.client.model.data.ModelData.EMPTY, null)) {
+            var vertices = quad.getVertices(); int stride = vertices.length / 4;
+            for (int i = 0; i < 4; i++) {
+                float y = Float.intBitsToFloat(vertices[i * stride + 1]); if (y <= 3f / 16 + 1e-4) continue;
+                float x = Float.intBitsToFloat(vertices[i * stride]), z = Float.intBitsToFloat(vertices[i * stride + 2]);
+                if (x < 7f / 16 - 1e-4 || x > 9f / 16 + 1e-4 || z < 7f / 16 - 1e-4 || z > 9f / 16 + 1e-4)
+                    throw new AssertionError("Neutral gear handle must stand in the centre of its base");
+                handleVertices++;
+            }
+        }
+        if (handleVertices < 4) throw new AssertionError("Neutral gear handle is missing from its baked model");
+        double previousTip = -1;
+        for (int gear : new int[]{com.diliupengyun.differential_create.trains.TrainMechanics.REVERSE_GEAR, 0, 1, 2, 3, 4, 5}) {
+            var state = ModContent.GEAR_LEVER.getDefaultState().setValue(GearLeverBlock.GEAR, gear);
+            var model = mc.getBlockRenderer().getBlockModel(state);
+            double tip = 0; int tipVertices = 0;
+            for (var quad : model.getQuads(state, null, net.minecraft.util.RandomSource.create(0),
+                net.neoforged.neoforge.client.model.data.ModelData.EMPTY, null)) {
+                var vertices = quad.getVertices(); int stride = vertices.length / 4;
+                for (int i = 0; i < 4; i++) {
+                    if (Float.intBitsToFloat(vertices[i * stride + 1]) <= .5f) continue;
+                    tip += Float.intBitsToFloat(vertices[i * stride + 2]); tipVertices++;
+                }
+            }
+            if (tipVertices == 0) throw new AssertionError("Missing handle tip in gear " + gear);
+            tip /= tipVertices;
+            if (tip <= previousTip + .05 || gear == 0 && Math.abs(tip - .5) > 1e-4)
+                throw new AssertionError("Physical lever order must be R, centred N, 1 through 5: gear=" + gear + " tip=" + tip);
+            previousTip = tip;
+        }
         if (mc.getItemRenderer().getItemModelShaper().getItemModel(new ItemStack(ModContent.STEAM_HOSE.get())) == missing)
             throw new AssertionError("Missing hose model");
-        var renderer = new StandardBogeyRenderer.Large();
-        for (boolean geared : new boolean[]{false, true}) {
-            var data = new CompoundTag(); data.putBoolean("DCGeared", geared);
-            data.putBoolean(com.diliupengyun.differential_create.trains.SteamBogey.ENGINE, geared);
-            new StandardBogeyRenderer.Small().render(data, 30, .5f, new PoseStack(), mc.renderBuffers().bufferSource(), 0xf000f0, 0, true);
-            renderer.render(data, 30, .5f, new PoseStack(), mc.renderBuffers().bufferSource(), 0xf000f0, 0, true);
-        }
-        mc.renderBuffers().bufferSource().endBatch();
+        bogeyGeometry();
         DifferentialCreate.LOGGER.info("Train client resources loaded; starting integrated-server hose rendering check");
+    }
+
+    /** Covers stay within the upper wood; native brass, casing, wheels and rods keep every vertex and UV. */
+    private static void bogeyGeometry() {
+        int cases = 0;
+        for (var renderer : new StandardBogeyRenderer[]{new StandardBogeyRenderer.Small(), new StandardBogeyRenderer.Large()})
+            for (float angle : new float[]{0, 30, 90, 173}) for (boolean moving : new boolean[]{false, true}) {
+                var ordinary = bogeyVertices(renderer, new CompoundTag(), angle, moving);
+                var data = new CompoundTag(); data.putBoolean("DCGeared", true);
+                if (!ordinary.equals(bogeyVertices(renderer, data, angle, moving)))
+                    throw new AssertionError("Legacy geared flag changed the native bogey geometry");
+                data.putBoolean(com.diliupengyun.differential_create.trains.SteamBogey.ENGINE, true);
+                var installed = bogeyVertices(renderer, data, angle, moving);
+                for (var entry : ordinary.entrySet()) {
+                    int remaining = installed.getOrDefault(entry.getKey(), 0) - entry.getValue();
+                    if (remaining < 0) throw new AssertionError("Installed engine removed or changed a native wheel/frame/rod vertex");
+                    if (remaining == 0) installed.remove(entry.getKey()); else installed.put(entry.getKey(), remaining);
+                }
+                if (installed.values().stream().mapToInt(Integer::intValue).sum() != 48)
+                    throw new AssertionError("Installed engine must add only the flat lid, upper panels, inlet and bolts");
+                for (var point : installed.keySet()) {
+                    if (Math.abs(point.x()) > .502 || Math.abs(point.z()) > .502 || point.y() < 1.765 || point.y() > 2.02)
+                        throw new AssertionError("Installed engine added a part outside the upper core: " + point);
+                    if (Math.abs(point.z()) > .377 || point.y() > com.diliupengyun.differential_create.client.SteamBogeyModels.COVER_Y + 1 && Math.abs(point.x()) > .377)
+                        throw new AssertionError("Cover overlaps the native brass edging or adhesive face: " + point);
+                    if (point.y() <= com.diliupengyun.differential_create.client.SteamBogeyModels.COVER_Y + 1 && Math.abs(point.x()) < .499)
+                        throw new AssertionError("Cover added an interior mesh instead of a flush side panel: " + point);
+                }
+                cases++;
+            }
+        DifferentialCreate.LOGGER.info("DC_TRAIN_BOGEY_GEOMETRY_PASS: {} small/large angle and stationary/moving render cases preserve native vertices and UVs", cases);
+    }
+
+    private static Map<BogeyVertex, Integer> bogeyVertices(StandardBogeyRenderer renderer, CompoundTag data, float angle, boolean moving) {
+        var vertices = new BogeyVertices();
+        renderer.render(data, angle, .5f, new PoseStack(), type -> vertices, 0xf000f0, 0, moving);
+        vertices.flush(); return vertices.points;
+    }
+
+    private record BogeyVertex(float x, float y, float z, float u, float v) {}
+    private static final class BogeyVertices implements VertexConsumer {
+        private final Map<BogeyVertex, Integer> points = new HashMap<>();
+        private float x, y, z, u, v;
+        private boolean pending;
+        private void flush() {
+            if (pending) points.merge(new BogeyVertex(x, y, z, u, v), 1, Integer::sum);
+            pending = false;
+        }
+        @Override public VertexConsumer addVertex(float x, float y, float z) {
+            flush(); this.x = x; this.y = y; this.z = z; u = v = 0; pending = true; return this;
+        }
+        @Override public VertexConsumer setUv(float u, float v) { this.u = u; this.v = v; return this; }
+        @Override public VertexConsumer setColor(int r, int g, int b, int a) { return this; }
+        @Override public VertexConsumer setUv1(int u, int v) { return this; }
+        @Override public VertexConsumer setUv2(int u, int v) { return this; }
+        @Override public VertexConsumer setNormal(float x, float y, float z) { return this; }
     }
 }

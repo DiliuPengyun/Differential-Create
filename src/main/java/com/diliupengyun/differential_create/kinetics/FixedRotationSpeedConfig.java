@@ -3,10 +3,10 @@ package com.diliupengyun.differential_create.kinetics;
 import net.createmod.catnip.config.ConfigBase;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
-/** Binary-compatible constant for Create's old field; never added to the config specification. */
-public final class LegacyRotationSpeedConfig extends ConfigBase.ConfigInt {
+/** Supply Create's current API field without registering a rotation limit in the config GUI. */
+public final class FixedRotationSpeedConfig extends ConfigBase.ConfigInt {
 
-	public LegacyRotationSpeedConfig(ConfigBase owner) {
+	public FixedRotationSpeedConfig(ConfigBase owner) {
 		owner.super("maxRotationSpeed", 256, 64, Integer.MAX_VALUE);
 	}
 

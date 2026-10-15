@@ -10,7 +10,7 @@ import com.simibubi.create.content.fluids.tank.BoilerData;
 
 /** Shared source characteristics for simulation and goggles. */
 public final class SourcePhysics {
-	private static final Curve INACTIVE = new Curve(0, 0);
+	private static final Curve INACTIVE = new Curve(0, 0, 0, PhysicsTuning.STEAM_GOVERNOR_RPM, PhysicsTuning.STEAM_GOVERNOR_RANGE);
 	public record Curve(double stallTorque, double damping, double powerLimit, double governorSpeed, double governorRange) {
 		public Curve(double stallTorque, double damping, double powerLimit) {
 			this(stallTorque, damping, powerLimit, Double.POSITIVE_INFINITY, 0);
@@ -37,15 +37,12 @@ public final class SourcePhysics {
 		public double tangentDamping(double speed) {
 			return damping + DriveTorque.slope(stallTorque, powerLimit, speed, governorSpeed, governorRange);
 		}
-		public double ventFraction(double speed) {
+		public double regulatorClosure(double speed) {
 			return stallTorque == 0 || !Double.isFinite(governorSpeed) ? 0
 				: 1 - SteamGovernor.opening(stallTorque, speed, governorSpeed, governorRange);
 		}
-		public double ventedPower(double speed) { return powerLimited() ? powerLimit * ventFraction(speed) : 0; }
-		/** Actual bypass flow relative to one engine's full supply, including boiler scarcity. */
-		public double steamVent(double speed) {
-			return stallTorque == 0 ? 0 : ventedPower(speed) / (Math.abs(stallTorque) * PhysicsTuning.STEAM_RATED_RPM);
-		}
+		/** Potential power withheld by the regulator, not steam consumed or vented. */
+		public double withheldPower(double speed) { return powerLimited() ? powerLimit * regulatorClosure(speed) : 0; }
 	}
 	private SourcePhysics() {}
 
@@ -66,23 +63,56 @@ public final class SourcePhysics {
 		var pos = shaft.getBlockPos().subtract(shaft.enginePos);
 		if (!world.isLoaded(pos) || !(world.getBlockEntity(pos) instanceof SteamEngineBlockEntity engine)
 			|| engine.isRemoved() || !(engine.getBlockState().getBlock() instanceof SteamEngineBlock)
+			|| !engine.isValid()
 			|| !SteamEngineBlock.getShaftPos(engine.getBlockState(), pos).equals(shaft.getBlockPos())
 			|| !SteamEngineBlock.isShaftValid(engine.getBlockState(), shaft.getBlockState())) return INACTIVE;
 		var tank = engine.getTank();
 		if (tank == null) return INACTIVE;
 		// Resolve current supply and capacity from the live engine, never a saved efficiency.
-		return steamCurve(BlockStressValues.getCapacity(engine.getBlockState().getBlock()),
-			steamLevel(tank.boiler, tank.getTotalTankSize()), tank.boiler.attachedEngines, shaft.movementDirection);
+		return admittedCurve(BlockStressValues.getCapacity(engine.getBlockState().getBlock()), tank.boiler,
+			tank.getTotalTankSize(), shaft.movementDirection);
 	}
 
 	public static double steamLevel(BoilerData boiler, int size) {
-		return boiler.isPassive(size) ? 0.125 : Math.max(0, Math.min(boiler.activeHeat,
-			Math.min(boiler.getMaxHeatLevelForBoilerSize(size), boiler.getMaxHeatLevelForWaterSupply())));
+		return thermalSteamLevel(boiler, size) * BoilerAdmission.fraction(boiler);
+	}
+
+	/** Boiler production ceiling, independent of current RPM and water demand. */
+	public static double thermalSteamLevel(BoilerData boiler, int size) {
+		if (!boiler.isActive() || boiler.getMaxHeatLevelForBoilerSize(size) == 0) return 0;
+		return boiler.passiveHeat && boiler.activeHeat == 0 ? .125
+			: Math.max(0, Math.min(boiler.activeHeat, boiler.getMaxHeatLevelForBoilerSize(size)));
+	}
+
+	public static Curve admittedCurve(double capacity, BoilerData boiler, int size, int direction) {
+		return admission(steamCurve(capacity, thermalSteamLevel(boiler, size), boiler.attachedEngines, direction),
+			BoilerAdmission.opening(boiler) * BoilerAdmission.fraction(boiler));
+	}
+
+	public static Curve admission(Curve curve, double opening) {
+		if (!(opening > 0) || !Double.isFinite(opening) || curve.stallTorque() == 0) return INACTIVE;
+		return new Curve(curve.stallTorque() * opening, curve.damping(), curve.powerLimit() * opening,
+			curve.governorSpeed(), curve.governorRange());
+	}
+
+	public static double steamDemand(double capacity, double level, int engines, int direction, double opening, double rpm) {
+		var curve = admission(steamCurve(capacity, level, engines, direction), opening);
+		return SteamDemand.flow(curve.stallTorque(), curve.powerLimit(), rpm, curve.governorSpeed(),
+			curve.governorRange(), PhysicsTuning.STEAM_TORQUE_PER_CAPACITY * capacity * PhysicsTuning.STEAM_RATED_RPM);
+	}
+	public static float steamIntake(PoweredShaftBlockEntity shaft, double rpm) {
+		var curve = steamCurve(shaft);
+		if (curve.stallTorque() == 0 || !curve.powerLimited()) return 0;
+		var engine = (SteamEngineBlockEntity) shaft.getLevel().getBlockEntity(shaft.getBlockPos().subtract(shaft.enginePos));
+		double rated = BlockStressValues.getCapacity(engine.getBlockState().getBlock())
+			* PhysicsTuning.STEAM_TORQUE_PER_CAPACITY * PhysicsTuning.STEAM_RATED_RPM;
+		return rated > 0 ? (float) Math.clamp(curve.powerLimit() / rated * SteamGovernor.opening(curve.stallTorque(),
+			rpm, curve.governorSpeed(), curve.governorRange()), 0, 1) : 0;
 	}
 
 	/** Available continuous shaft power, limited by boiler supply and installed engine intake capacity. */
 	public static double steamPeakPower(double capacity, BoilerData boiler, int size) {
-		Curve curve = steamCurve(capacity, steamLevel(boiler, size), boiler.attachedEngines, 1);
+		Curve curve = admittedCurve(capacity, boiler, size, 1);
 		return boiler.attachedEngines * curve.maximumPower();
 	}
 

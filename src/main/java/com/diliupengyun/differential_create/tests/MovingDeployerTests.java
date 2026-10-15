@@ -37,7 +37,7 @@ public final class MovingDeployerTests {
                 cases.add(new TestFunction(name, name, "differentialcreate_motion:kineticphysicstests.physics_test", 6000, 0, true,
                     h -> special(h, special)));
         }
-        for (String kind : new String[]{"plant", "place", "hoe", "heavy", "unpowered", "overspeed", "mixed", "reload", "reload_legacy", "mode_change", "attack"}) {
+        for (String kind : new String[]{"plant", "place", "hoe", "heavy", "unpowered", "overspeed", "mixed", "reload", "mode_change", "attack"}) {
             String name = "hand_use_" + kind;
             if (name.matches(System.getProperty("differentialcreate.motion.select", ".*")))
                 cases.add(new TestFunction(name, name, "differentialcreate_motion:kineticphysicstests.physics_test", 1200, 0, true,
@@ -49,7 +49,7 @@ public final class MovingDeployerTests {
     private static void use(GameTestHelper h, String kind) {
         boolean mixed = kind.equals("mixed"), reload = kind.startsWith("reload"), unpowered = kind.equals("unpowered"),
             overspeed = kind.equals("overspeed"), modeChange = kind.equals("mode_change"), attack = kind.equals("attack"),
-            legacy = kind.equals("reload_legacy"), heavy = kind.equals("heavy");
+            heavy = kind.equals("heavy");
         setup(h, !reload, unpowered || overspeed || reload || modeChange ? 1 : 32);
         var anchor = new BlockPos(8, 8, 12).east();
         if (!reload) {
@@ -96,12 +96,6 @@ public final class MovingDeployerTests {
                 var victim = attack ? net.minecraft.world.entity.EntityType.COW.create(h.getLevel()) : null;
                 if (victim != null) {
                     victim.setPos(Vec3.atCenterOf(target)); victim.setNoAi(true); victim.setNoGravity(true); h.getLevel().addFreshEntity(victim);
-                }
-                if (legacy) {
-                    // Use the old firmware's long use stroke from the start,
-                    // paid by the real motor before serializing an old save.
-                    var hand = ContraptionActorWork.of(ctx).hand(); hand.prepare();
-                    ctx.data.getCompound(MovingDeployerWork.TAG).putDouble("Stroke", MovingDeployerWork.STROKE);
                 }
                 MovingDeployerWork miner = null; BlockPos miningTarget = null;
                 if (mixed) {
@@ -201,10 +195,6 @@ public final class MovingDeployerTests {
                         if (reload && hand.phase() == 2 && !restored) {
                             double pose = hand.extension(); behaviour.writeExtraData(current);
                             var saved = current.writeToNBT(new net.minecraft.nbt.CompoundTag()); hand.player().discard();
-                            if (legacy) {
-                                var old = saved.getCompound("Data").getCompound(MovingDeployerWork.TAG);
-                                old.remove("Stroke"); old.remove("Completed"); old.remove("Mode"); old.putString("Failure", "no_power");
-                            }
                             current = MovementContext.readNBT(h.getLevel(), pair.getLeft(), saved, f.root.getContraption()); pair.setRight(current);
                             h.assertTrue(Math.abs(ContraptionActorWork.of(current).hand().extension() - pose) < 1e-10,
                                 "reload preserves a moving-use retraction and the completed action");

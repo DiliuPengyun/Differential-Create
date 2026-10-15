@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(StandardBogeyRenderer.class)
 public abstract class SteamBogeyRendererMixin {
     @Inject(method="render",at=@At("RETURN"))
-    private void differentialcreate$cylinders(CompoundTag data,float angle,float partial,PoseStack pose,MultiBufferSource source,int light,int overlay,boolean moving,CallbackInfo ci) {
-        SteamBogeyModels.render(data,pose,source,light,overlay,(Object)this instanceof StandardBogeyRenderer.Large);
+    private void differentialcreate$core(CompoundTag data,float angle,float partial,PoseStack pose,MultiBufferSource source,int light,int overlay,boolean moving,CallbackInfo ci) {
+        SteamBogeyModels.render(data,pose,source,light,overlay);
     }
 }

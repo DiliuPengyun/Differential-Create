@@ -8,7 +8,7 @@ public interface PortableEndpoint {
     void differentialcreate$openStorage(Contraption contraption, float distance);
     void differentialcreate$closeStorage();
     void differentialcreate$attachStorage(Contraption contraption, float distance);
-    boolean differentialcreate$legacyPermission();
+    boolean differentialcreate$nativePermission();
     void differentialcreate$animate(float progress, float distance);
     int differentialcreate$timeout();
 }

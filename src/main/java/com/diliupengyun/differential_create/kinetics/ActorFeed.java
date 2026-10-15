@@ -37,7 +37,7 @@ public final class ActorFeed {
                 next = Math.max(next, saved.pendingStructureInertia - InertiaRegistry.getBaseInertia(be) - INPUT_INERTIA);
         }
         if (!feed.initialized) {
-            // A legacy already-moving assembly transfers its existing share of
+            // An already-moving assembly transfers its existing share of
             // inertia; a newly attached body starts at rest without minting energy.
             var member = ElasticKinetics.state(be);
             double body = next - rotors, previous = InertiaRegistry.getBaseInertia(be) + body;

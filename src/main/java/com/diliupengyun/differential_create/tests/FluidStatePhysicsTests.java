@@ -342,48 +342,31 @@ public final class FluidStatePhysicsTests {
             "macro NBT retains authoritative inventory independently of its rendering");
         for (var side : Direction.values()) h.assertTrue(Arrays.equals(saved.content(side).data(), loaded.content(side).data()),
             "modern NBT restores the approximate water presentation");
-        tag.getCompound("DCIdealFluid").remove("MacroVersion");
-        var compatible = new PipeHydraulics(); compatible.read(tag, h.getLevel().registryAccess());
-        h.assertTrue(Math.abs(compatible.volume() - 67) < 1e-10,
-            "legacy liquid fields also encode the same water amount");
         h.succeed();
     }
-    @GameTest(template = TEMPLATE, batch = "pump_legacyAirIsDiscardedWithoutChangingWaterAndMotion", timeoutTicks = 30)
-    public static void legacyAirIsDiscardedWithoutChangingWaterAndMotion(GameTestHelper h) {
+    @GameTest(template = TEMPLATE, batch = "pump_ownedIntervalsAndMotionSurviveNbt", timeoutTicks = 30)
+    public static void ownedIntervalsAndMotionSurviveNbt(GameTestHelper h) {
         pipe(h, new BlockPos(8, 3, 8), Direction.WEST, Direction.EAST);
         h.runAfterDelay(5, () -> {
             var saved = new PipeHydraulics(); saved.fluid = new FluidStack(Fluids.WATER, 1);
             saved.motion(Direction.EAST, new PipeMotion(PipeContents.of(.1, .3, .7, .9), new double[]{3, -2}));
             saved.buffers.computeIfAbsent(Direction.WEST, side -> new PipeHydraulics.Buffer()).add(saved.fluid, .625);
             var tag = new CompoundTag(); saved.write(tag, h.getLevel().registryAccess());
-            CompoundTag retired = tag.getCompound("DCIdealFluid");
-            retired.remove("MotionVersion"); retired.putInt("AirVersion", 1);
-            // Retired gas fields, including malformed values, are irrelevant to
-            // liquid migration and must not be parsed into the runtime state.
-            retired.putDouble("MacroAirMass", Double.NaN); retired.putDouble("MacroAirEnergy", Double.POSITIVE_INFINITY);
-            retired.putString("CoreAir", "retired"); retired.getCompound("east").putString("Air", "retired");
             var loaded = new PipeHydraulics(); loaded.read(tag, h.getLevel().registryAccess());
             h.assertTrue(Arrays.equals(saved.content(Direction.EAST).data(), loaded.content(Direction.EAST).data())
                 && Arrays.equals(saved.motion(Direction.EAST).flow(), loaded.motion(Direction.EAST).flow()), "NBT preserves each liquid plug's position and signed velocity");
-            h.assertTrue(loaded.buffers.get(Direction.WEST).amount == .625, "migration retains owned fractional port inventory");
+            h.assertTrue(loaded.buffers.get(Direction.WEST).amount == .625, "reload retains owned fractional port inventory");
             var clean = new CompoundTag(); loaded.write(clean, h.getLevel().registryAccess());
             CompoundTag current = clean.getCompound("DCIdealFluid");
-            h.assertTrue(current.getInt("MotionVersion") == 1 && !current.contains("AirVersion")
-                && !current.contains("CoreAir") && !current.contains("MacroAirMass") && !current.contains("MacroAirEnergy")
-                && !current.getCompound("east").contains("Air"), "rewriting a legacy save drops all retired ambient-air state");
-            retired.remove("AirVersion");
-            var legacy = new PipeHydraulics(); legacy.read(tag, h.getLevel().registryAccess());
-            h.assertTrue(legacy.volume() == saved.volume(), "migration never adds or deletes real water");
-            h.assertTrue(legacy.motion(Direction.EAST).flow()[0] == 0, "older liquid saves retain their recorded port flow");
+            h.assertTrue(current.getInt("MotionVersion") == 1 && !current.contains("RenderCore")
+                && !current.getCompound("east").contains("RenderContents"), "current state stores one copy of rendered liquid geometry");
             saved.adoptMacro(67, false, java.util.EnumSet.of(Direction.DOWN, Direction.UP, Direction.EAST), .037);
             var macroTag = new CompoundTag(); saved.write(macroTag, h.getLevel().registryAccess());
-            CompoundTag oldMacro = macroTag.getCompound("DCIdealFluid"); oldMacro.putInt("MacroVersion", 1);
-            oldMacro.putDouble("MacroAirMass", .00003); oldMacro.putDouble("MacroAirEnergy", 2300000);
-            var migrated = new PipeHydraulics(); migrated.read(macroTag, h.getLevel().registryAccess());
-            h.assertTrue(migrated.volume() == 67 && migrated.buffers.get(Direction.WEST).amount == .625,
-                "MacroVersion=1 ignores compressed air and retains all actual water");
-            for (var side : Direction.values()) h.assertTrue(Arrays.equals(saved.content(side).data(), migrated.content(side).data()),
-                "old macro saves retain their rendered fluid geometry");
+            var macro = new PipeHydraulics(); macro.read(macroTag, h.getLevel().registryAccess());
+            h.assertTrue(macro.volume() == 67 && macro.buffers.get(Direction.WEST).amount == .625,
+                "aggregate inventory and owned fractional receipts survive reload together");
+            for (var side : Direction.values()) h.assertTrue(Arrays.equals(saved.content(side).data(), macro.content(side).data()),
+                "aggregate saves retain their rendered fluid geometry");
             h.succeed();
         });
     }

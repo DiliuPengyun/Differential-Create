@@ -82,36 +82,35 @@ final class PumpDirectionIntegrationTests {
             n.done("dry_top_air_only");
         });
     }
-    static void migration(GameTestHelper h, Direction facing, Fluid fluid) {
-        String name = "pump_direction_migration_" + facing.getName() + "_" + kind(fluid);
+    static void wetReload(GameTestHelper h, Direction facing, Fluid fluid) {
+        String name = "pump_direction_wet_reload_" + facing.getName() + "_" + kind(fluid);
         var n = new NativeFluidTestNetwork(h, name); var axis = positive(facing); var tanks = reservoirs(n, axis);
         int sign = facing.getAxisDirection() == Direction.AxisDirection.POSITIVE ? 1 : -1;
         var source = sign > 0 ? tanks.minus : tanks.plus; var sink = sign > 0 ? tanks.plus : tanks.minus;
-        n.pump(PUMP, facing); n.build(); n.timeout(1198); boolean[] migrated = {false}; int[] receipt = {0};
+        n.pump(PUMP, facing); n.build(); n.timeout(1198); boolean[] restored = {false}; int[] receipt = {0};
         n.after(20, () -> { n.fill(source, fluid, 8000); drive(n, 64); });
         n.watch(() -> {
             if (h.getTick() <= 20) return; n.audit();
-            if (!migrated[0]) {
+            if (!restored[0]) {
                 if (n.amount(sink, fluid) < 128) return;
                 var old = n.entity(PUMP); var saved = FluidKinetics.state(n.pipe(PUMP));
                 double worldFlow = .5 * (saved.outward.getOrDefault(axis, 0d) - saved.outward.getOrDefault(axis.getOpposite(), 0d));
-                var tag = old.saveWithFullMetadata(h.getLevel().registryAccess()); var hydraulic = tag.getCompound("DCIdealFluid");
-                hydraulic.remove("PumpAxisVersion"); hydraulic.putDouble("PumpFlow", sign * worldFlow); hydraulic.putDouble("AxisSign", -sign);
+                var tag = old.saveWithFullMetadata(h.getLevel().registryAccess());
                 h.getLevel().removeBlockEntity(n.absolute(PUMP));
                 var next = BlockEntity.loadStatic(n.absolute(PUMP), n.state(PUMP), tag, h.getLevel().registryAccess());
-                n.expect(next != null, "a wet legacy snapshot loads through the real block-entity path"); h.getLevel().setBlockEntity(next);
+                n.expect(next != null, "a wet snapshot loads through the real block-entity path"); h.getLevel().setBlockEntity(next);
                 ((SmartBlockEntity)next).initialize(); FluidKinetics.invalidate(h.getLevel());
                 n.expect(Math.abs(FluidKinetics.state(n.pipe(PUMP)).pumpFlow - worldFlow) < 1e-10,
-                    "legacy front-oriented cached flow migrates to the actual world axis");
+                    "wet reload preserves cached flow on the actual world axis");
                 n.audit(); n.reload(PUMP);
                 n.expect(Math.abs(FluidKinetics.state(n.pipe(PUMP)).pumpFlow - worldFlow) < 1e-10,
-                    "ordinary new-format reload does not apply the legacy sign conversion again");
+                    "repeated reload preserves the same signed flow");
                 var fresh = n.entity(PUMP).saveWithFullMetadata(h.getLevel().registryAccess()).getCompound("DCIdealFluid");
-                n.expect(fresh.getInt("PumpAxisVersion") == 1 && !fresh.contains("AxisSign"), "the new snapshot records its axis version and retires the old rotation memory");
-                n.audit(); receipt[0] = n.amount(sink, fluid); migrated[0] = true;
+                n.expect(!fresh.contains("PumpAxisVersion") && !fresh.contains("AxisSign"), "current snapshots need no flow migration flags");
+                n.audit(); receipt[0] = n.amount(sink, fluid); restored[0] = true;
             } else if (n.amount(sink, fluid) >= receipt[0] + 128) {
-                n.expect(((IPumpDynamics)n.entity(PUMP)).differentialcreate$flow() * sign > 0, "the wet native circuit makes new real receipts after migration");
-                n.done("legacy_face_flow, ignored_opposite_history, once_only_conversion, wet_resumed_receipts");
+                n.expect(((IPumpDynamics)n.entity(PUMP)).differentialcreate$flow() * sign > 0, "the wet native circuit makes new real receipts after reload");
+                n.done("wet_flow_reload, stable_axis_sign, resumed_receipts");
             }
         });
     }

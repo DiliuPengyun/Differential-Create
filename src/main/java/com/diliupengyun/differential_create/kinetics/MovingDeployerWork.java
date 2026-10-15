@@ -52,7 +52,7 @@ public final class MovingDeployerWork {
         double time = speed <= 1e-8 ? Double.POSITIVE_INFINITY : Math.max(0, stroke() - data().getDouble("Travel")) / speed;
         return needsContactBrake(drive, time);
     }
-    private double stroke() { return data().contains("Stroke") ? data().getDouble("Stroke") : STROKE; }
+    private double stroke() { return pending() ? data().getDouble("Stroke") : punch() ? STROKE : USE_STROKE; }
     public BlockPos target() { return BlockPos.of(data().getLong("Target")); }
     public double extension() {
         double travel = Math.clamp(data().getDouble("Travel"), 0, stroke());
@@ -83,21 +83,15 @@ public final class MovingDeployerWork {
         if (context.world.isClientSide || !supported(context)) return;
         MovingHandSync.track(context);
         context.stall = false; context.data.remove("Timer");
-        // Legacy queued work was paid, but never yet executed. Retire its native
-        // stall safely; no world interaction is replayed from a save.
-        context.data.remove("DCActorJob");
         var cell = pose(); if (cell == null || !context.world.isLoaded(cell)) return;
         var d = data();
-        if (pending() && !d.contains("Completed"))
-            d.putBoolean("Completed", phase() == 2 && (d.getString("Failure").isEmpty() || d.getString("Failure").equals("no_power")));
         String mode = punch() ? "PUNCH" : "USE";
         if (d.contains("Mode") && !mode.equals(d.getString("Mode"))) {
             if (pending()) cancel("changed_mode");
             d.putBoolean("Visited", false);
         }
         d.putString("Mode", mode);
-        // Old saves retain their already-paid long stroke, but ordinary use
-        // no longer requests a stop for the whole extension/retraction cycle.
+        // Use mode feeds continuously during extension and retraction.
         if (!punch()) d.putBoolean("Hold", false);
         if (pending()) ActorTargets.watch(ContraptionActorWork.of(context), target());
         if (context.data.getBoolean("DCActorInvalidated")) {

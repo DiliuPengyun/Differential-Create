@@ -56,7 +56,6 @@ public final class InertiaRegistry {
 			int count = ContraptionPhysics.drives(kbe).size();
 			if (Float.isFinite(state.pendingStructureInertia) && (count < state.pendingStructureCount || kbe.getLevel().isClientSide))
 				inertia = Math.max(inertia, state.pendingStructureInertia);
-			else if (count == 0 && Float.isFinite(state.pendingBearingInertia)) inertia = Math.max(inertia, state.pendingBearingInertia);
 		}
 		return (float) inertia;
 	}

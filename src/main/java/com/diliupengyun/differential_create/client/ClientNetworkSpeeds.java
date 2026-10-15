@@ -90,7 +90,7 @@ public final class ClientNetworkSpeeds {
 	}
 
 	private static final class Rotor {
-		float speed, torque, steamVent;
+		float speed, torque, steamIntake;
 		double elasticEnergy = Double.NaN;
 		final RotorPoseAnimation animation = new RotorPoseAnimation();
 		BearingAnimation bearing;
@@ -115,7 +115,7 @@ public final class ClientNetworkSpeeds {
 			}
 			Rotor rotor = entry.rotors.computeIfAbsent(update.pos(), $ -> new Rotor());
 			rotor.speed = update.speed(); rotor.torque = update.torque();
-			rotor.steamVent = update.steamVent();
+			rotor.steamIntake = update.steamIntake();
 			rotor.elasticEnergy = update.elasticEnergy();
 			rotor.animation.receive(update.angle(), update.output() == null ? null : update.output().angle());
 			if (update.bearing() == null) rotor.bearing = null;
@@ -257,11 +257,11 @@ public final class ClientNetworkSpeeds {
 		return ratio == null ? null : ratio * entry.speed;
 	}
 
-	/** Server-measured bypass flow; unavailable data must not invent an exhaust plume. */
-	public static Float steamVentOf(KineticBlockEntity be) {
+	/** Server-measured cylinder intake; unavailable data must not invent exhaust. */
+	public static Float steamIntakeOf(KineticBlockEntity be) {
 		Entry entry = entryOf(be);
 		Rotor rotor = entry == null ? null : entry.rotors.get(be.getBlockPos());
-		return rotor == null ? null : rotor.steamVent;
+		return rotor == null ? null : rotor.steamIntake;
 	}
 
 	/**

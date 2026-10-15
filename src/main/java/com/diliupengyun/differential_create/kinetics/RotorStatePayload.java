@@ -20,16 +20,16 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
     public record BearingPose(int entityId, double angle) {}
     public record OutputPose(double angle) {}
     public record FeedPose(float speed, double inertia, double brake, double heat) {}
-    public record Rotor(BlockPos pos, float speed, double angle, float torque, float steamVent, double elasticEnergy,
+    public record Rotor(BlockPos pos, float speed, double angle, float torque, float steamIntake, double elasticEnergy,
         BearingPose bearing, OutputPose output, FeedPose feed) {
-        public Rotor(BlockPos pos, float speed, double angle, float torque, float steamVent, double elasticEnergy, BearingPose bearing, OutputPose output) {
-            this(pos, speed, angle, torque, steamVent, elasticEnergy, bearing, output, null);
+        public Rotor(BlockPos pos, float speed, double angle, float torque, float steamIntake, double elasticEnergy, BearingPose bearing, OutputPose output) {
+            this(pos, speed, angle, torque, steamIntake, elasticEnergy, bearing, output, null);
         }
-        public Rotor(BlockPos pos, float speed, double angle, float torque, float steamVent, double elasticEnergy) {
-            this(pos, speed, angle, torque, steamVent, elasticEnergy, null, null);
+        public Rotor(BlockPos pos, float speed, double angle, float torque, float steamIntake, double elasticEnergy) {
+            this(pos, speed, angle, torque, steamIntake, elasticEnergy, null, null);
         }
-        public Rotor(BlockPos pos, float speed, double angle, float torque, float steamVent, double elasticEnergy, BearingPose bearing) {
-            this(pos, speed, angle, torque, steamVent, elasticEnergy, bearing, null);
+        public Rotor(BlockPos pos, float speed, double angle, float torque, float steamIntake, double elasticEnergy, BearingPose bearing) {
+            this(pos, speed, angle, torque, steamIntake, elasticEnergy, bearing, null);
         }
     }
     public static final Type<RotorStatePayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(DifferentialCreate.MODID, "rotor_state"));
@@ -40,7 +40,7 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
         buf.writeVarInt(p.rotors.size());
         for (Rotor r : p.rotors) {
             buf.writeBlockPos(r.pos); buf.writeFloat(r.speed); buf.writeDouble(r.angle); buf.writeFloat(r.torque);
-            buf.writeFloat(r.steamVent);
+            buf.writeFloat(r.steamIntake);
             buf.writeDouble(r.elasticEnergy);
             buf.writeVarInt(r.bearing == null ? 0 : r.bearing.entityId + 1);
             if (r.bearing != null) buf.writeDouble(r.bearing.angle);
@@ -58,7 +58,9 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
         List<Rotor> rotors = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             BlockPos pos = buf.readBlockPos(); float speed = buf.readFloat(); double angle = buf.readDouble();
-            float torque = buf.readFloat(), steamVent = buf.readFloat(); double localEnergy = buf.readDouble();
+            float torque = buf.readFloat(), steamIntake = buf.readFloat(); double localEnergy = buf.readDouble();
+            if (!Float.isFinite(steamIntake) || steamIntake < 0 || steamIntake > 1)
+                throw new IllegalArgumentException("Invalid steam intake");
             int entity = buf.readVarInt();
             if (entity < 0) throw new IllegalArgumentException("Invalid bearing entity id");
             BearingPose bearing = entity == 0 ? null : new BearingPose(entity - 1, buf.readDouble());
@@ -66,7 +68,7 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
             FeedPose feed = buf.readBoolean() ? new FeedPose(buf.readFloat(), buf.readDouble(), buf.readDouble(), buf.readDouble()) : null;
             if (feed != null && (!Float.isFinite(feed.speed) || !Double.isFinite(feed.inertia) || !Double.isFinite(feed.brake) || !Double.isFinite(feed.heat)))
                 throw new IllegalArgumentException("Invalid feed rotor state");
-            rotors.add(new Rotor(pos, speed, angle, torque, steamVent, localEnergy, bearing, output, feed));
+            rotors.add(new Rotor(pos, speed, angle, torque, steamIntake, localEnergy, bearing, output, feed));
         }
         return new RotorStatePayload(dimension, id, energy, elasticEnergy, load, rotors);
     });

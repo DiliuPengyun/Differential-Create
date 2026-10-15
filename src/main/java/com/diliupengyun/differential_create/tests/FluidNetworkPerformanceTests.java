@@ -273,8 +273,8 @@ public final class FluidNetworkPerformanceTests {
                 if (pipe.blockEntity instanceof com.simibubi.create.content.fluids.pump.PumpBlockEntity) {
                     state.core = PipeContents.FULL; state.pumpFlow = 0; state.pumpFacing = Direction.EAST;
                 }
-                // Seed the benchmark explicitly through the legacy migration
-                // entry, rather than changing a display field under a saved
+                // Seed the benchmark explicitly through state initialisation,
+                // rather than changing a display field under a saved
                 // conserved queue. Functional structure tests never seed stock.
                 boolean pump = pipeIsPump(h, entry.getKey());
                 double actual = state.contents.values().stream().mapToDouble(c -> c.fraction() * (pump ? 25 : 50)).sum()

@@ -22,6 +22,7 @@ public final class PhysicsRegression {
 		com.diliupengyun.differential_create.kinetics.TreeSolverRegression.run();
 		ShaftReplacementRegression.run();
 		SteamDriveRegression.run();
+		SteamDemandRegression.run();
 		TrainRegression.run();
 		IdealFluidRegression.run();
 		PipeFillingRegression.run();
@@ -35,6 +36,7 @@ public final class PhysicsRegression {
 		shaftTravel();
 		ActorContactRegression.run();
 		contraptionGeometry();
+		ContraptionShadowRegression.run();
 		near(0, FanProcessingRate.at(0), 0, "stopped fan grants no processing");
 		near(1, FanProcessingRate.at(64), 0, "fan reference throughput");
 		near(1.6, FanProcessingRate.at(128), 1e-12, "fan throughput has diminishing returns");

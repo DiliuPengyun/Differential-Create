@@ -165,7 +165,7 @@ public final class TorsionSolver {
                 }
             }
         }
-        /** Legacy monotone-predicate search; production uses explicit shaft limits below.
+        /** Reference monotone-predicate search; production uses explicit shaft limits below.
          * Keep all probes and the committed result on one algorithm if a branch guard fires.
          * The predicate observes only detached travel; it must not change world state. */
         public synchronized Result advanceToEvent(double duration, double maxStep, Predicate<Motion> reached) {

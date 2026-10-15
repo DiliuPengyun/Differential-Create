@@ -5,21 +5,30 @@ import net.minecraft.core.BlockPos;
 import com.diliupengyun.differential_create.trains.TrainStatePayload;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlockEntity;
+import com.simibubi.create.content.fluids.tank.FluidTankBlockEntity;
 import com.simibubi.create.content.trains.entity.CarriageContraptionEntity;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
 public final class ClientTrainKinetics {
     private record Sample(float rpm, double turns, double at) {}
+    public record CarriageSample(List<TrainStatePayload.Rotor> rotors, double at) {}
     private static final Map<BlockEntity, Sample> ROTORS = new WeakHashMap<>();
     private static final Map<UUID, TrainStatePayload> TRAINS = new HashMap<>();
+    private static final Map<CarriageContraptionEntity, CarriageSample> CARRIAGES = new WeakHashMap<>();
     private static final Map<SteamEngineBlockEntity, com.simibubi.create.content.kinetics.steamEngine.PoweredShaftBlockEntity> RENDER_SHAFTS = new WeakHashMap<>();
     private static Object lastLevel;
     private ClientTrainKinetics() {}
     public static TrainStatePayload state(UUID train) { checkLevel(); return TRAINS.get(train); }
+    public static TrainStatePayload freshState(CarriageContraptionEntity entity) {
+        checkLevel(); var sample = CARRIAGES.get(entity);
+        if (sample == null || ClientKineticAngles.renderTick() - sample.at > 10) return null;
+        return TRAINS.get(entity.trainId);
+    }
+    public static CarriageSample soundSample(CarriageContraptionEntity entity) { checkLevel(); return CARRIAGES.get(entity); }
     private static void checkLevel() {
         var level = Minecraft.getInstance().level;
-        if (level != lastLevel) { ROTORS.clear(); TRAINS.clear(); RENDER_SHAFTS.clear(); lastLevel = level; }
+        if (level != lastLevel) { ROTORS.clear(); TRAINS.clear(); CARRIAGES.clear(); RENDER_SHAFTS.clear(); lastLevel = level; }
     }
     public static void apply(TrainStatePayload p) {
         checkLevel(); var mc = Minecraft.getInstance();
@@ -27,6 +36,13 @@ public final class ClientTrainKinetics {
         TRAINS.put(p.train(), p);
         if (!(mc.level.getEntity(p.entity()) instanceof CarriageContraptionEntity entity) || entity.getContraption() == null) return;
         double at = ClientKineticAngles.renderTick();
+        CARRIAGES.put(entity, new CarriageSample(p.rotors(), at));
+        for (var boiler : p.boilers()) {
+            var block = entity.getContraption().getBlocks().get(boiler.pos());
+            if (block != null && block.nbt() != null) block.nbt().put("Boiler", boiler.data());
+            if (entity.getContraption().getBlockEntityClientSide(boiler.pos()) instanceof FluidTankBlockEntity tank)
+                tank.boiler.read(boiler.data(), tank.getTotalTankSize());
+        }
         for (var rotor : p.rotors()) {
             var carriage = entity.getCarriage();
             if (carriage != null) for (var bogey : carriage.bogeys) {

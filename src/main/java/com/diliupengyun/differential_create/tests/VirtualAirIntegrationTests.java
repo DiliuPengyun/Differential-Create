@@ -55,7 +55,7 @@ public final class VirtualAirIntegrationTests {
             for (var fluid : new Fluid[]{Fluids.WATER, Fluids.LAVA}) {
                 String kind = fluid.isSame(Fluids.WATER) ? "water" : "lava";
                 add(result, "pump_direction_dynamic_" + facing.getName() + "_" + kind, 6000, h -> PumpDirectionIntegrationTests.dynamic(h, facing, fluid));
-                add(result, "pump_direction_migration_" + facing.getName() + "_" + kind, 1200, h -> PumpDirectionIntegrationTests.migration(h, facing, fluid));
+                add(result, "pump_direction_wet_reload_" + facing.getName() + "_" + kind, 1200, h -> PumpDirectionIntegrationTests.wetReload(h, facing, fluid));
                 if (facing.getAxis() == Direction.Axis.Y) add(result, "pump_direction_dry_top_" + facing.getName() + "_" + kind,
                     500, h -> PumpDirectionIntegrationTests.dryTop(h, facing, fluid));
             }
@@ -147,9 +147,9 @@ public final class VirtualAirIntegrationTests {
         // Reuse the native machine acceptance scenarios with the current model
         // and the same required assertions; each runs in its own sequential batch.
         reflected(result, "machine_", FluidMachineIntegrationTests.class);
-        if (Boolean.getBoolean("differentialcreate.air.legacy"))
+        if (Boolean.getBoolean("differentialcreate.air.referenceTests"))
             for (var type : new Class<?>[]{PumpPhysicsTests.class, OpenPipePhysicsTests.class, FluidInventoryPhysicsTests.class,
-                FluidStatePhysicsTests.class, FluidTopologyIntegrationTests.class}) reflected(result, "legacy_", type);
+                FluidStatePhysicsTests.class, FluidTopologyIntegrationTests.class}) reflected(result, "reference_", type);
         return result;
     }
     private static void reflected(Collection<TestFunction> result, String prefix, Class<?> type) {
@@ -432,7 +432,7 @@ public final class VirtualAirIntegrationTests {
         var saved = new PipeHydraulics(); saved.fluid = new FluidStack(Fluids.WATER, 1);
         var sides = java.util.EnumSet.of(Direction.DOWN, Direction.UP); saved.adoptMacro(17.75, false, sides, 0);
         saved.prepareQueue(100, false, sides); saved.splitCursor = 17;
-        h.assertTrue(saved.volume() == 17.75 && saved.airVolume() == 82.25, "old finite stock initialises air only once");
+        h.assertTrue(saved.volume() == 17.75 && saved.airVolume() == 82.25, "initial finite stock initialises air only once");
         var a = new FluidStack(Fluids.WATER, 1); var b = new FluidStack(Fluids.WATER, 1);
         var tagA = new CompoundTag(); tagA.putString("queue_component", "A"); var tagB = new CompoundTag(); tagB.putString("queue_component", "B");
         a.set(DataComponents.CUSTOM_DATA, CustomData.of(tagA)); b.set(DataComponents.CUSTOM_DATA, CustomData.of(tagB));
@@ -440,18 +440,6 @@ public final class VirtualAirIntegrationTests {
         saved.phases.take(10, false); saved.phases.add(b, 10, false); saved.adoptQueue(false, sides);
         var buffer = new PipeHydraulics.Buffer(); buffer.add(new FluidStack(Fluids.WATER, 1), .25); buffer.add(new FluidStack(Fluids.LAVA, 1), .75); buffer.delivery = true;
         saved.buffers.put(Direction.DOWN, buffer);
-        var legacy=new CompoundTag(); saved.write(legacy,h.getLevel().registryAccess());
-        var oldQueue=legacy.getCompound("DCIdealFluid"); var oldParts=new net.minecraft.nbt.ListTag();
-        for(var p:saved.parcels()) {
-            var part=new CompoundTag(); part.putDouble("Amount",p.amount());
-            if(p.identity().isEmpty()) part.putBoolean("Air",true); else part.put("Fluid",p.identity().save(h.getLevel().registryAccess()));
-            oldParts.add(part);
-        }
-        oldQueue.putInt("QueueVersion",1); oldQueue.put("Parcels",oldParts);
-        oldQueue.remove("Palette"); oldQueue.remove("ParcelIds"); oldQueue.remove("ParcelAmounts");
-        var migrated=new PipeHydraulics(); migrated.read(legacy,h.getLevel().registryAccess());
-        h.assertTrue(migrated.volume()==27.75 && migrated.airVolume()==72.25 && migrated.parcels().size()==3,
-            "the first queue format migrates losslessly without adding air or mixing component identities");
         for (int reload = 0; reload < 12; reload++) {
             var tag = new CompoundTag(); saved.write(tag, h.getLevel().registryAccess());
             h.assertTrue(tag.getCompound("DCIdealFluid").getInt("QueueVersion")==2,

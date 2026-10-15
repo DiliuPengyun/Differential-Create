@@ -1,6 +1,7 @@
 package com.diliupengyun.differential_create.trains;
 
 import java.util.*;
+import com.simibubi.create.content.fluids.tank.BoilerData;
 import com.simibubi.create.content.processing.burner.BlazeBurnerBlock;
 import com.simibubi.create.content.processing.burner.BlazeBurnerBlock.HeatLevel;
 import com.simibubi.create.content.trains.entity.Carriage;
@@ -22,6 +23,7 @@ public final class CarriageSteamState {
     public final Map<BlockPos, TrainMechanics.Engine> engines = new LinkedHashMap<>();
     public final Map<BlockPos, TrainMechanics.Engine> driveRotors = new HashMap<>();
     public final Map<BlockPos, MountedBurner> burners = new LinkedHashMap<>();
+    public final Map<BlockPos, BoilerData> boilers = new LinkedHashMap<>();
     public final Map<BlockPos, Double> water = new HashMap<>();
     public final List<ItemStack> fuelReturns = new ArrayList<>();
     public double wheelTurns;
@@ -29,10 +31,13 @@ public final class CarriageSteamState {
         this.layout = layout;
         if (layout == null) return;
         for (var motor : layout.motors) engines.put(motor.pos(), new TrainMechanics.Engine());
-        for (var boiler : layout.boilers.values()) water.put(boiler.pos(), boiler.feedWater());
+        for (var boiler : layout.boilers.values()) {
+            water.put(boiler.pos(), boiler.feedWater()); boilers.put(boiler.pos(), new BoilerData());
+        }
         for (var boiler : layout.boilers.values()) for (var heater : boiler.heaters())
             if (heater.burner() != null) burners.putIfAbsent(heater.pos(), new MountedBurner(heater.burner(),
-                heater.burner().getBoolean("isCreative") && heater.fixedHeat() > 1 ? HeatLevel.SEETHING : HeatLevel.KINDLED));
+                heater.fixedHeat() < 0 ? HeatLevel.NONE : heater.fixedHeat() == 0 ? HeatLevel.SMOULDERING
+                    : heater.fixedHeat() > 1 ? HeatLevel.SEETHING : HeatLevel.KINDLED));
     }
     public void apply(CarriageContraption contraption, int gear, boolean sendChanges, boolean gearControlled) {
         if (layout == null) return;
@@ -47,6 +52,11 @@ public final class CarriageSteamState {
             var block = contraption.getBlocks().get(entry.getKey()); if (block == null) continue;
             var tag = block.nbt() == null ? new CompoundTag() : block.nbt();
             tag.putDouble(SteamHoseLinks.WATER_KEY, entry.getValue());
+            var boiler = boilers.get(entry.getKey());
+            if (boiler != null) {
+                boiler.attachedWhistles = tag.getCompound("Boiler").getInt("Whistles");
+                tag.put("Boiler", boiler.write());
+            }
             contraption.getBlocks().put(block.pos(), new StructureBlockInfo(block.pos(), block.state(), tag));
         }
         for (var entry : burners.entrySet()) {
@@ -61,7 +71,7 @@ public final class CarriageSteamState {
         for (BlockPos at : layout.levers) {
             var block = contraption.getBlocks().get(at);
             if (block == null || !block.state().hasProperty(GearLeverBlock.GEAR)) continue;
-            var state = block.state().setValue(GearLeverBlock.GEAR, Math.clamp(gear, 0, 3));
+            var state = block.state().setValue(GearLeverBlock.GEAR, TrainMechanics.clampGear(gear));
             if (state == block.state()) continue;
             var updated = new StructureBlockInfo(at, state, block.nbt());
             if (sendChanges && contraption.entity != null) contraption.entity.setBlock(at, updated);
@@ -96,6 +106,10 @@ public final class CarriageSteamState {
         tag.put("Burners", list); list = new ListTag();
         for (var entry : water.entrySet()) { var t = new CompoundTag(); t.putLong("Pos", entry.getKey().asLong()); t.putDouble("Water", entry.getValue()); list.add(t); }
         tag.put("FeedWater", list); list = new ListTag();
+        for (var entry : boilers.entrySet()) {
+            var t = entry.getValue().write(); t.putLong("Pos", entry.getKey().asLong()); list.add(t);
+        }
+        tag.put("Boilers", list); list = new ListTag();
         for (var stack : fuelReturns) if (!stack.isEmpty()) list.add(stack.save(registries));
         tag.put("FuelReturns", list); return tag;
     }
@@ -114,6 +128,11 @@ public final class CarriageSteamState {
         for (Tag raw : tag.getList("FeedWater", Tag.TAG_COMPOUND)) {
             var t = (CompoundTag) raw; BlockPos at = BlockPos.of(t.getLong("Pos"));
             if (state.layout != null && state.layout.boilers.containsKey(at)) state.water.put(at, Math.clamp(finite(t.getDouble("Water")), 0, 1));
+        }
+        for (Tag raw : tag.getList("Boilers", Tag.TAG_COMPOUND)) {
+            var t = (CompoundTag) raw; BlockPos at = BlockPos.of(t.getLong("Pos"));
+            var boiler = state.boilers.get(at);
+            if (boiler != null) boiler.read(t, state.layout.boilers.get(at).size());
         }
         for (Tag raw : tag.getList("FuelReturns", Tag.TAG_COMPOUND)) {
             var stack = ItemStack.parseOptional(registries, (CompoundTag) raw); if (!stack.isEmpty()) state.fuelReturns.add(stack);

@@ -247,7 +247,6 @@ public final class ContraptionPhysics {
 		state.structureAttachments = attached;
 		if (!drives.isEmpty() && drives.size() >= expectedCount(be, drives) || !awaitingEntity(be)) {
 			changed |= Float.isFinite(state.pendingStructureInertia);
-			state.pendingBearingInertia = Float.NaN;
 			state.pendingStructureInertia = Float.NaN;
 			state.pendingStructureDrag = Double.NaN;
 			state.pendingStructureCount = 0;
@@ -347,33 +346,25 @@ public final class ContraptionPhysics {
 	}
 	public static void write(KineticBlockEntity be, CompoundTag tag) {
 		if (!manages(be)) return;
-		tag.putInt("DCStructureCalibration", ContraptionGeometry.CALIBRATION);
 		tag.putFloat("DCStructureInertia", (float) (InertiaRegistry.getInertia(be) + (ActorFeed.enabled(be) ? ActorFeed.of(be).inertia : 0)));
 		var feed = new CompoundTag(); ActorFeed.of(be).write(feed); tag.put("DCActorFeedDrive", feed);
 		tag.putInt("DCStructureCount", expectedCount(be, drives(be)));
 		tag.putDouble("DCStructureDrag", airDrag(be));
 		tag.putDouble("DCStructureLoad", workTorque(be));
 	}
-	/** Legacy summaries contain the unchanged base rotor plus the old, heavier structure. */
-	public static float readSavedInertia(KineticBlockEntity be, CompoundTag tag, String key) {
+	public static float readSavedInertia(CompoundTag tag, String key) {
 		float inertia = tag.getFloat(key);
 		if (!tag.contains(key) || !Float.isFinite(inertia) || inertia < 0) return Float.NaN;
-		if (tag.getInt("DCStructureCalibration") == 0) {
-			double base = InertiaRegistry.getBaseInertia(be);
-			inertia = (float) (base + Math.max(0, inertia - base) * (ContraptionGeometry.CUBE_INERTIA / .01));
-		}
 		return inertia;
 	}
 	public static void read(KineticBlockEntity be, CompoundTag tag, boolean packet) {
 		if (!manages(be)) return;
 		var state = ElasticKinetics.state(be);
-		state.pendingStructureInertia = readSavedInertia(be, tag, "DCStructureInertia");
+		state.pendingStructureInertia = readSavedInertia(tag, "DCStructureInertia");
 		if (tag.contains("DCActorFeedDrive")) state.actorFeed.read(tag.getCompound("DCActorFeedDrive"));
 		state.pendingStructureCount = Math.max(0, tag.getInt("DCStructureCount"));
 		double drag = tag.getDouble("DCStructureDrag"), load = tag.getDouble("DCStructureLoad");
 		state.structureDrag = Double.isFinite(drag) && drag >= 0 ? drag : 0;
-		if (tag.getInt("DCStructureCalibration") == 0)
-			state.structureDrag *= ContraptionGeometry.AIR_COEFFICIENT * (64.0 * 64);
 		state.structureLoad = Double.isFinite(load) && load >= 0 ? load : 0;
 		state.pendingStructureDrag = tag.contains("DCStructureDrag") ? state.structureDrag : Double.NaN;
 	}

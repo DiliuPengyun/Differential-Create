@@ -1,0 +1,14 @@
+newmtl side
+Kd 1 1 1
+Ka 0 0 0
+map_Kd create:block/railway_casing_side
+
+newmtl end
+Kd 1 1 1
+Ka 0 0 0
+map_Kd create:block/railway_casing
+
+newmtl handle
+Kd 1 1 1
+Ka 0 0 0
+map_Kd minecraft:block/lever

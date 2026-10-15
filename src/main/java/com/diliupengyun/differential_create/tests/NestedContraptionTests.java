@@ -120,12 +120,6 @@ final class NestedContraptionTests {
 			near(h, expected, blockTag.getFloat("DCStructureInertia"), 1e-6, "controller saving after all entities unload preserves the complete mass");
 			near(h, drag, blockTag.getDouble("DCStructureDrag"), 1e-12, "controller saving after child unload preserves the complete air load");
 			h.assertTrue(blockTag.getInt("DCStructureCount") == 4, "unload order preserves the child count");
-			h.assertTrue(blockTag.getInt("DCStructureCalibration") == 1, "complete summaries carry their current calibration");
-			// Exercise upgrade of a full legacy summary while parent and children load separately.
-			blockTag.remove("DCStructureCalibration");
-			float legacyInertia = (float) (.01 + (expected - .01) * 100);
-			blockTag.putFloat("DCStructureInertia", legacyInertia); blockTag.putFloat("DCBearingInertia", legacyInertia);
-			blockTag.putDouble("DCStructureDrag", drag * 100);
 			var restored = (MechanicalBearingBlockEntity) BlockEntity.loadStatic(original.getBlockPos(), original.getBlockState(), blockTag, h.getLevel().registryAccess());
 			h.getLevel().setBlockEntity(restored); NetworkTopology.mark(restored); NetworkTopology.flush(); ElasticKinetics.refresh(restored.getOrCreateNetwork());
 			near(h, expected, InertiaRegistry.getInertia(restored), 1e-6, "controller alone preserves all saved moving mass");

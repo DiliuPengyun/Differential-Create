@@ -33,8 +33,6 @@ public abstract class CarriagePhysicsMixin implements CarriageSteamState.Holder 
             var state = TrainPhysics.state(carriage.train);
             if (!state.gearInitialized) { state.gear = layout.initialGear; state.gearInitialized = true; }
         }
-        for (var bogey : carriage.bogeys) if (bogey != null)
-            bogey.bogeyData.putBoolean("DCGeared", bogey.bogeyData.getBoolean(SteamBogey.ENGINE));
     }
     @Inject(method = "write", at = @At("RETURN"))
     private void differentialcreate$write(DimensionPalette dimensions, HolderLookup.Provider registries, CallbackInfoReturnable<CompoundTag> cir) {
@@ -44,6 +42,5 @@ public abstract class CarriagePhysicsMixin implements CarriageSteamState.Holder 
     private static void differentialcreate$read(CompoundTag tag, HolderLookup.Provider registries, TrackGraph graph,
         DimensionPalette dimensions, CallbackInfoReturnable<Carriage> cir) {
         if (tag.contains("DCSteam")) ((CarriageSteamState.Holder) cir.getReturnValue()).differentialcreate$steam(CarriageSteamState.read(tag.getCompound("DCSteam"), registries));
-        else ((CarriageSteamState.Holder) cir.getReturnValue()).differentialcreate$steam(new CarriageSteamState(TrainAssembly.legacy(tag.getCompound("Entity").getCompound("Contraption"))));
     }
 }

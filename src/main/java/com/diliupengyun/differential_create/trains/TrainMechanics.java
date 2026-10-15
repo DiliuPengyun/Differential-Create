@@ -16,7 +16,20 @@ public final class TrainMechanics {
     public static final double GRAVITY = 9.81;
     public static final double TICK_SECONDS = .05;
     public static final double RPM_PER_SPEED = 60 * 20 / (2 * Math.PI * WHEEL_RADIUS);
-    public static final double[] GEARS = {0, .5, 1, 2};
+    public static final int FORWARD_GEARS = 5;
+    public static final int REVERSE_GEAR = FORWARD_GEARS + 1;
+    public static final double[] GEARS = {0, .5, 1, 2, 4, 8, -.5};
+
+    public static int clampGear(int gear) { return Math.clamp(gear, 0, REVERSE_GEAR); }
+
+    /** Player order is R, N, 1 through 5, independently of the saved values. */
+    public static int stepGear(int gear, int step, boolean cycle) {
+        int valid = clampGear(gear);
+        int ordered = valid == REVERSE_GEAR ? -1 : valid;
+        int next = ordered + Integer.signum(step);
+        next = cycle ? Math.floorMod(next + 1, GEARS.length) - 1 : Math.clamp(next, -1, FORWARD_GEARS);
+        return next < 0 ? REVERSE_GEAR : next;
+    }
 
     /** Multiple cylinders on one input network obey one shaft constraint.
      * referenceRatio converts the source RPM to this shared rotor's RPM. */

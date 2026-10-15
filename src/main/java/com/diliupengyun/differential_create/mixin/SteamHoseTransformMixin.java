@@ -1,6 +1,7 @@
 package com.diliupengyun.differential_create.mixin;
 
 import com.diliupengyun.differential_create.trains.SteamHoseLinks;
+import com.diliupengyun.differential_create.trains.SteamHosePort;
 import com.simibubi.create.content.contraptions.Contraption;
 import com.simibubi.create.content.contraptions.StructureTransform;
 import net.minecraft.core.BlockPos;
@@ -26,6 +27,10 @@ public abstract class SteamHoseTransformMixin {
             transform.apply(BlockPos.of(bogey.getLong(SteamHoseLinks.ENGINE_KEY))).subtract(zero).asLong());
         if (tag.contains(SteamHoseLinks.ENGINE_KEY)) tag.putLong(SteamHoseLinks.ENGINE_KEY,
             transform.apply(BlockPos.of(tag.getLong(SteamHoseLinks.ENGINE_KEY))).subtract(zero).asLong());
+        var bogeyPort=SteamHosePort.read(bogey);
+        if(bogeyPort!=null)SteamHosePort.write(bogey,bogeyPort.transform(transform));
+        var enginePort=SteamHosePort.read(tag);
+        if(enginePort!=null)SteamHosePort.write(tag,enginePort.transform(transform));
         long[] links = tag.getLongArray(SteamHoseLinks.TANK_KEY);
         for (int i = 0; i < links.length; i++) links[i] = transform.apply(BlockPos.of(links[i])).subtract(zero).asLong();
         if (links.length > 0) tag.putLongArray(SteamHoseLinks.TANK_KEY, links);

@@ -69,7 +69,7 @@ public final class PipeHydraulics {
         if (Double.isFinite(macroLiquid)) { macroLiquid = actual; rememberMacroGeometry(); }
         return actual;
     }
-    /** Migrate once without creating liquid or copying external inventory. */
+    /** Initialise the aggregate volume without creating liquid or copying external inventory. */
     public void prepareMacro() {
         if (Double.isFinite(macroLiquid)) { volume(); return; }
         macroLiquid = volume();
@@ -78,9 +78,9 @@ public final class PipeHydraulics {
         rememberMacroGeometry();
     }
     public void adoptMacro(double volume, boolean pump, java.util.Set<Direction> sides, double surface) {
-        phases = null; // explicit old-format fixture/migration entry, not a live refill
+        phases = null; // explicit state initialisation, not a live refill
         // Body inventory and endpoint ownership share one numerical zero.
-        // Normalise at commit/read/migration so cached volume queries stay cheap.
+        // Normalise at commit/read so cached volume queries stay cheap.
         macroLiquid = FluidBudget.receiptSpace(volume, 0);
         double capacity = (pump ? .5 : 0) + sides.size() * (pump ? .25 : .5);
         double fraction = capacity == 0 ? 0 : Math.min(1, macroLiquid / (capacity * PipeFilling.MB_PER_METRE));
@@ -121,7 +121,7 @@ public final class PipeHydraulics {
             adoptQueue(pump, sides);
         } else if (queueCapacity - Math.max(capacity, volume()) > 64 * Math.ulp(Math.max(1, queueCapacity))) {
             // Removed geometry opens its air to the exterior. Real fluid is
-            // retained, including a legacy overfull cell until it can drain.
+            // retained, including an overfull cell until it can drain.
             double release = Math.min(airVolume(), queueCapacity - Math.max(capacity, volume()));
             double left = release; var remaining = new FluidQueue<FluidStack>(FluidMaterials::same);
             for (var part : phases.parts()) {
@@ -242,13 +242,8 @@ public final class PipeHydraulics {
         tag.putInt("ContentsVersion", 1);
         tag.putInt("MotionVersion", 1);
         boolean macro = Double.isFinite(macroLiquid);
-        double capacity = (pumpFacing == null ? 0 : .5) + contents.size() * (pumpFacing == null ? .5 : .25);
-        double fraction = capacity == 0 ? 0 : Math.min(1, volume() / (capacity * PipeFilling.MB_PER_METRE));
-        var compatible = fraction == 0 ? PipeContents.EMPTY : fraction == 1 ? PipeContents.FULL : PipeContents.of(0, fraction);
-        var legacyCore = macro ? pumpFacing == null ? PipeContents.EMPTY : compatible : core;
         if (macro) {
             tag.putInt("MacroVersion", 2); tag.putDouble("MacroLiquid", volume());
-            tag.put("RenderCore", saveContents(core));
         }
         if (phases != null) {
             tag.putInt("QueueVersion", 2); tag.putDouble("QueueCapacity", queueCapacity);
@@ -257,18 +252,15 @@ public final class PipeHydraulics {
             saveCompactParcels(tag, phases.parts(), registries);
         }
         tag.put("Fluid", fluid.saveOptional(registries));
-        tag.put("Core", saveContents(legacyCore));
-        tag.put("CoreFlows", saveFlows(macro ? PipeMotion.uniform(legacyCore, pumpFlow).flow() : coreMotion().flow()));
+        tag.put("Core", saveContents(core));
+        tag.put("CoreFlows", saveFlows(coreMotion().flow()));
         tag.putDouble("PumpFlow", pumpFlow);
-        tag.putInt("PumpAxisVersion", 1);
         if (pumpFacing != null) tag.putString("Facing", pumpFacing.getName());
         for (Direction side : Direction.values()) {
             CompoundTag port = new CompoundTag();
             port.putDouble("Flow", outward.getOrDefault(side, 0d));
-            var legacy = macro ? contents.containsKey(side) ? compatible : PipeContents.EMPTY : content(side);
-            port.put("Contents", saveContents(legacy));
-            port.put("IntervalFlows", saveFlows(macro ? PipeMotion.uniform(legacy, outward.getOrDefault(side, 0d)).flow() : motion(side).flow()));
-            if (macro) port.put("RenderContents", saveContents(content(side)));
+            port.put("Contents", saveContents(content(side)));
+            port.put("IntervalFlows", saveFlows(motion(side).flow()));
             Buffer buffer = buffers.get(side);
             if (buffer != null && buffer.amount > 0) {
                 port.putDouble("Owned", buffer.amount); port.put("Fluid", buffer.fluid.saveOptional(registries));
@@ -294,25 +286,16 @@ public final class PipeHydraulics {
         fluid = FluidStack.parseOptional(registries, tag.getCompound("Fluid"));
         boolean ownedContents = tag.getInt("ContentsVersion") == 1;
         if (ownedContents) { pumpFlow = finite(tag.getDouble("PumpFlow")); core = loadContents(tag.getList("Core", Tag.TAG_DOUBLE)); }
-        boolean macro = tag.getInt("MacroVersion") == 1 || tag.getInt("MacroVersion") == 2;
-        // AirVersion=1 also carried liquid velocities. Read those without
-        // parsing or retaining any of the retired ambient-air state.
-        boolean motion = tag.getInt("MotionVersion") == 1 || tag.getInt("AirVersion") == 1;
-        if (macro && tag.contains("RenderCore")) core = loadContents(tag.getList("RenderCore", Tag.TAG_DOUBLE));
+        boolean macro = tag.getInt("MacroVersion") == 2;
+        boolean motion = tag.getInt("MotionVersion") == 1;
         if (motion) {
             coreFlows = loadFlows(tag.getList("CoreFlows", Tag.TAG_DOUBLE), core, pumpFlow);
         }
         pumpFacing = Direction.byName(tag.getString("Facing"));
-        // Old pump flow used the block's front instead of the renderer's
-        // positive axis. Physical face velocities and phase stock are already
-        // world-oriented; migrate only this cached axial through-flow once.
-        if (tag.getInt("PumpAxisVersion") == 0 && pumpFacing != null
-            && pumpFacing.getAxisDirection() == Direction.AxisDirection.NEGATIVE) pumpFlow = -pumpFlow;
         for (Direction side : Direction.values()) if (tag.contains(side.getName())) {
             CompoundTag port = tag.getCompound(side.getName());
             outward.put(side, ownedContents ? finite(port.getDouble("Flow")) : 0d);
             if (ownedContents) contents.put(side, loadContents(port.getList("Contents", Tag.TAG_DOUBLE)));
-            if (macro && port.contains("RenderContents")) contents.put(side, loadContents(port.getList("RenderContents", Tag.TAG_DOUBLE)));
             if (motion) {
                 intervalFlows.put(side, loadFlows(port.getList("IntervalFlows", Tag.TAG_DOUBLE), content(side), outward.get(side)));
             }
@@ -321,18 +304,15 @@ public final class PipeHydraulics {
             if (amount > 0 && !identity.isEmpty()) {
                 Buffer buffer = new Buffer(); buffer.fluid = identity; buffer.amount = amount;
                 buffer.delivery = port.getBoolean("Delivery"); buffers.put(side, buffer);
-                if (port.contains("Parcels")) {
-                    buffer.queue = loadParcels(port.getList("Parcels", Tag.TAG_COMPOUND), registries, false); buffer.remember();
-                }
+                buffer.queue = loadParcels(port.getList("Parcels", Tag.TAG_COMPOUND), registries); buffer.remember();
             }
         }
         if (macro) {
             macroLiquid = FluidBudget.receiptSpace(Math.max(0, finite(tag.getDouble("MacroLiquid"))), 0);
             rememberMacroGeometry();
         }
-        if (tag.getInt("QueueVersion") == 1 || tag.getInt("QueueVersion") == 2) {
-            phases = tag.getInt("QueueVersion") == 2 ? loadCompactParcels(tag, registries)
-                : loadParcels(tag.getList("Parcels", Tag.TAG_COMPOUND), registries, true);
+        if (tag.getInt("QueueVersion") == 2) {
+            phases = loadCompactParcels(tag, registries);
             queueFront = Direction.byName(tag.getString("QueueFront"));
             splitCursor = tag.getInt("SplitCursor");
             queueCapacity = Math.max(phases.volume(), tag.getDouble("QueueCapacity"));
@@ -372,17 +352,17 @@ public final class PipeHydraulics {
         var result = new ListTag();
         for (var p : parcels) {
             var tag = new CompoundTag(); tag.putDouble("Amount", p.amount());
-            if (p.identity().isEmpty()) tag.putBoolean("Air", true); else tag.put("Fluid", p.identity().save(registries));
+            tag.put("Fluid", p.identity().save(registries));
             result.add(tag);
         }
         return result;
     }
-    private static FluidQueue<FluidStack> loadParcels(ListTag parcels, HolderLookup.Provider registries, boolean airAllowed) {
+    private static FluidQueue<FluidStack> loadParcels(ListTag parcels, HolderLookup.Provider registries) {
         var result = new FluidQueue<FluidStack>(FluidMaterials::same);
         for (int i = 0; i < parcels.size(); i++) {
             var tag = parcels.getCompound(i); double amount = tag.getDouble("Amount");
-            var identity = tag.getBoolean("Air") ? FluidStack.EMPTY : FluidStack.parseOptional(registries, tag.getCompound("Fluid"));
-            if (amount > 0 && Double.isFinite(amount) && (tag.getBoolean("Air") && airAllowed || !identity.isEmpty()))
+            var identity = FluidStack.parseOptional(registries, tag.getCompound("Fluid"));
+            if (amount > 0 && Double.isFinite(amount) && !identity.isEmpty())
                 result.add(identity, amount, false);
         }
         return result;

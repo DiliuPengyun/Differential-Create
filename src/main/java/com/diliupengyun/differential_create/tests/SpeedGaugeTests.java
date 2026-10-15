@@ -43,7 +43,7 @@ final class SpeedGaugeTests {
 		spec.correct(oldConfig);
 		helper.assertFalse(oldConfig.contains("kinetics.maxRotationSpeed"), "old speed limit must be removed on config migration");
 		helper.assertTrue((int) oldConfig.get("kinetics.maxBeltLength") == 23, "unrelated user settings survive config migration");
-		helper.assertTrue(AllConfigs.server().kinetics.maxRotationSpeed.get() == 256, "legacy advancement reference stays readable");
+		helper.assertTrue(AllConfigs.server().kinetics.maxRotationSpeed.get() == 256, "the current Create advancement reference stays readable");
 
 		BlockPos pos = new BlockPos(6, 2, 6), secondPos = new BlockPos(6, 2, 12);
 		SpeedGaugeBlockEntity gauge = place(helper, pos), second = place(helper, secondPos);

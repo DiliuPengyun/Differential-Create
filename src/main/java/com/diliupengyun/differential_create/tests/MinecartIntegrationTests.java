@@ -53,8 +53,9 @@ public final class MinecartIntegrationTests {
         add(cases, "minecart_two_supports", MinecartIntegrationTests::twoSupports);
         add(cases, "minecart_two_supports_tool", h -> twoSupports(h, true));
         add(cases, "minecart_native_reload", MinecartIntegrationTests::reload);
+        add(cases, "minecart_self_shadow", MinecartIntegrationTests::selfShadow);
         for (var axis : new Direction.Axis[]{Direction.Axis.X, Direction.Axis.Z}) for (int sign : new int[]{-1, 1})
-            for (String mode : new String[]{"drill", "saw", "weak", "disabled", "reverse", "replacement", "reload", "falling", "wall", "powered", "furnace", "legacy", "dwell"})
+            for (String mode : new String[]{"drill", "saw", "weak", "disabled", "reverse", "replacement", "reload", "falling", "wall", "powered", "furnace", "native_pause", "dwell"})
                 add(cases, "minecart_tool_" + axis.name().toLowerCase() + (sign > 0 ? "_positive_" : "_negative_") + mode,
                     h -> tool(h, axis, sign, mode));
         return cases;
@@ -201,6 +202,24 @@ public final class MinecartIntegrationTests {
             var root = MinecartPhysics.mounted(cart); root.disassemble(); cart.ejectPassengers(); cart.discard(); h.succeed();
         });
     }
+    private static void selfShadow(GameTestHelper h) {
+        rails(h, Direction.Axis.X, Blocks.RAIL.defaultBlockState().setValue(BlockStateProperties.RAIL_SHAPE, RailShape.EAST_WEST));
+        h.runAfterDelay(5, () -> {
+            var cart=spawn(h,"coast");fixture(h,cart);var root=MinecartPhysics.mounted(cart);
+            var origin=new ContraptionGeometry.Cell(0,0,0);
+            ContraptionPhysicsTests.cells(root,java.util.Set.of(origin,new ContraptionGeometry.Cell(3,0,0)));
+            double inertia=MinecartPhysics.refresh(cart);
+            var motion=root.applyRotation(new Vec3(.4,0,0),1);
+            cart.setDeltaMovement(motion);MinecartPhysics.slowdown(cart);double hidden=cart.getDeltaMovement().horizontalDistance();
+            ContraptionPhysicsTests.cells(root,java.util.Set.of(origin,new ContraptionGeometry.Cell(0,0,3)));
+            near(h,inertia,MinecartPhysics.refresh(cart),1e-15,"minecart mass is unchanged by rearranging a shielded cube");
+            cart.setDeltaMovement(motion);MinecartPhysics.slowdown(cart);double exposed=cart.getDeltaMovement().horizontalDistance();
+            h.assertTrue(hidden>exposed&&exposed>0,"native minecart slowdown uses the structure's own shadowed projection");
+            cart.setDeltaMovement(motion.scale(-1));MinecartPhysics.slowdown(cart);
+            near(h,exposed,cart.getDeltaMovement().horizontalDistance(),1e-15,"native minecart air loss is symmetric in reverse");
+            root.disassemble();cart.ejectPassengers();cart.discard();h.succeed();
+        });
+    }
     private static void coupling(GameTestHelper h) {
         rails(h, Direction.Axis.X, Blocks.RAIL.defaultBlockState().setValue(BlockStateProperties.RAIL_SHAPE, RailShape.EAST_WEST));
         h.runAfterDelay(5, () -> {
@@ -344,13 +363,13 @@ public final class MinecartIntegrationTests {
                 h.assertTrue(h.getLevel().getBlockState(target).isAir(), "releasing the other pause resumes physical feed");
                 root.discard(); cart.ejectPassengers(); cart.discard(); h.succeed(); return;
             }
-            if (mode.equals("legacy")) {
+            if (mode.equals("native_pause")) {
                 behaviour.visitNewPosition(context, target); context.data.putInt("Progress", 5);
                 root.getContraption().stalled = true;
                 cart.getData(AllAttachmentTypes.MINECART_CONTROLLER).setStalledExternally(true);
             }
             double initial = component(axis, cart.position()); double paid = 0;
-            for (int tick = 0; tick < (weak ? 8 : mode.equals("falling") || mode.equals("legacy") ? 3 : powered ? 7 : 1); tick++) {
+            for (int tick = 0; tick < (weak ? 8 : mode.equals("falling") || mode.equals("native_pause") ? 3 : powered ? 7 : 1); tick++) {
                 cart.tick(); cart.positionRider(root); root.tick();
                 paid += MinecartPhysics.state(cart).actorWork;
                 h.assertFalse(context.stall || root.isStalled() || root.getContraption().stalled

@@ -184,7 +184,7 @@ public final class NetworkTopology {
 			if (ORDER.compare(a.anchor, b.anchor) > 0) {
 				Group swap = a; a = b; b = swap; q = 1 / q;
 			}
-			// Reference speed is only a legacy summary; member velocities remain independent.
+			// Reference speed is only a network summary; member velocities remain independent.
 			a.speed = RotationMath.mergedSpeed(a.inertia, a.speed, b.inertia, b.speed, q);
 			a.inertia += b.inertia * q * q;
 			for (var member : b.ratios.entrySet()) {

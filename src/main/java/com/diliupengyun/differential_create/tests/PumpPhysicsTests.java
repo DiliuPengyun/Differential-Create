@@ -42,9 +42,9 @@ public final class PumpPhysicsTests {
     private static final BlockPos INLET = PUMP.west(5), BOILER = PUMP.east(5);
     private static final BlockPos DRIVE_SHAFT = PUMP.above().west();
 
-    /** These fixtures inject legacy snapshots through Contents/Flow. Discard
+    /** These fixtures seed initial liquid geometry through Contents/Flow. Discard
      * interval velocities from the prior, different physical initial state. */
-    private static void prepareLegacySnapshot(PipeHydraulics state) {
+    private static void setInitialContents(PipeHydraulics state) {
         state.phases = null;
         state.intervalFlows.clear(); state.coreFlows = new double[0];
         state.macroLiquid = Double.NaN;
@@ -79,6 +79,10 @@ public final class PumpPhysicsTests {
             h.setBlock(BOILER.offset(x, y, z), AllBlocks.FLUID_TANK.getDefaultState());
         if (boiler) h.setBlock(BOILER.south(2), AllBlocks.STEAM_ENGINE.getDefaultState()
             .setValue(SteamEngineBlock.FACE, AttachFace.WALL).setValue(SteamEngineBlock.FACING, Direction.SOUTH));
+        if (boiler) {
+            h.setBlock(BOILER.south(4), AllBlocks.POWERED_SHAFT.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.X));
+            h.setBlock(BOILER.south(4).east(), AllBlocks.ENCASED_FAN.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
+        }
         for (int x = -4; x <= 4; x++) if (x != 0)
             pipe(h, PUMP.east(x), bottomSource && x == -4 ? Direction.UP : Direction.WEST, Direction.EAST);
         h.setBlock(PUMP, AllBlocks.MECHANICAL_PUMP.getDefaultState().setValue(PumpBlock.FACING, Direction.EAST));
@@ -276,7 +280,7 @@ public final class PumpPhysicsTests {
     private static void coasting(GameTestHelper h, boolean flywheel) {
         Fixture f = fixture(h, flywheel);
         h.runAfterDelay(80, () -> {
-            h.assertTrue(f.boiler.boiler.waterSupply > 20, "powered pump supplies water to the real boiler");
+            h.assertTrue(f.boiler.boiler.waterSupply > 0 && f.boiler.boiler.waterSupply <= 10, "powered pump supplies only the real cylinder's bounded water demand");
             h.assertTrue(f.water() < 15000, "powered pump drains its input tank");
             h.setBlock(DRIVE_SHAFT, Blocks.AIR);
             NetworkTopology.flush();
@@ -289,9 +293,9 @@ public final class PumpPhysicsTests {
                     before, f.water(), speed, after, f.boiler.boiler.waterSupply,
                     f.pump.getBehaviour(FluidTransportBehaviour.TYPE).phase);
                 h.assertTrue(after > 90 && after < speed, "disconnected pump still rotates and spends stored rotational energy");
-                h.assertTrue(before - f.water() > 500, "coasting pump continues transporting water while its speed changes");
+                h.assertTrue(before > f.water(), "coasting pump continues paying real cylinder water demand while its speed changes");
                 h.runAfterDelay(70, () -> {
-                    h.assertTrue(f.boiler.boiler.waterSupply > 10, "boiler water survives beyond the previous supply sampling window");
+                    h.assertTrue(f.boiler.boiler.waterSupply > 0 && f.boiler.boiler.waterSupply <= 10, "current pump delivery supplies the loaded engine without a historical sampling window");
                     var network = f.pump.getOrCreateNetwork();
                     network.members.keySet().forEach(be -> ElasticKinetics.state(be).physicalSpeed = 0);
                     h.setBlock(PUMP.east(2), Blocks.STONE);
@@ -511,7 +515,7 @@ public final class PumpPhysicsTests {
             f.inlet.getTankInventory().fill(new FluidStack(Fluids.WATER, 4250), FluidAction.EXECUTE);
             for (int x = -4; x <= 4; x++) {
                 var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(PUMP.east(x)));
-                var saved = FluidKinetics.state(pipe); prepareLegacySnapshot(saved); saved.fluid = new FluidStack(Fluids.WATER, 1);
+                var saved = FluidKinetics.state(pipe); setInitialContents(saved); saved.fluid = new FluidStack(Fluids.WATER, 1);
                 if (pipe.blockEntity instanceof PumpBlockEntity p) {
                     saved.pumpFacing = p.getBlockState().getValue(PumpBlock.FACING);
                     saved.core = com.diliupengyun.differential_create.kinetics.PipeContents.FULL;
@@ -706,7 +710,7 @@ public final class PumpPhysicsTests {
             for (var pos : java.util.List.of(new BlockPos(7, 3, 8), new BlockPos(8, 3, 8),
                 new BlockPos(8, 4, 8), new BlockPos(8, 5, 8), pumpPos)) {
                 var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(pos));
-                var saved = FluidKinetics.state(pipe); prepareLegacySnapshot(saved); saved.fluid = new FluidStack(Fluids.WATER, 1);
+                var saved = FluidKinetics.state(pipe); setInitialContents(saved); saved.fluid = new FluidStack(Fluids.WATER, 1);
                 if (pipe.blockEntity instanceof PumpBlockEntity p) {
                     saved.pumpFacing = p.getBlockState().getValue(PumpBlock.FACING);
                     saved.core = com.diliupengyun.differential_create.kinetics.PipeContents.FULL;
@@ -794,7 +798,7 @@ public final class PumpPhysicsTests {
     }
 
     @GameTest(template = TEMPLATE, batch = "pump_matchingTankAndPipeLevelsRemainStill", timeoutTicks = 160)
-    public static void legacyFreeSurfaceMigratesWithoutLosingInventory(GameTestHelper h) {
+    public static void matchingTankAndPipeLevelsRemainStill(GameTestHelper h) {
         var fixture = passiveTankLoop(h);
         double[] total = {0}, initialFront = {0};
         h.runAfterDelay(10, () -> {
@@ -803,7 +807,7 @@ public final class PumpPhysicsTests {
             double aboveBottom = -3.0 / 16 + (fixture.tank.getHeight() - 9.0 / 16) * 3 / 8;
             for (var pos : fixture.pipes) {
                 var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(pos));
-                var saved = FluidKinetics.state(pipe); prepareLegacySnapshot(saved); saved.fluid = new FluidStack(Fluids.WATER, 1);
+                var saved = FluidKinetics.state(pipe); setInitialContents(saved); saved.fluid = new FluidStack(Fluids.WATER, 1);
                 for (var side : pipe.interfaces.keySet()) if (pipe.canHaveFlowToward(pipe.blockEntity.getBlockState(), side)) {
                     double lower = pos.getY() - fixture.corner.getY(), upper = lower + side.getStepY() * .5;
                     double wet = side.getStepY() == 0 ? lower < aboveBottom ? 1 : 0
@@ -823,7 +827,7 @@ public final class PumpPhysicsTests {
                 var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(),h.absolutePos(pos));
                 var saved = FluidKinetics.state(pipe);
                 h.assertTrue(saved.phases != null && Math.abs(saved.phases.volume()-saved.queueCapacity)<1e-8,
-                    "legacy free-surface geometry becomes a full queue without inventing liquid");
+                    "initial free-surface geometry creates its owned queue without inventing liquid");
             }
             double owned = fixture.pipes.stream().mapToDouble(pos -> pipeOwned(h, pos)).sum();
             h.assertTrue(Math.abs(fixture.tank.getTankInventory().getFluidAmount() + owned - total[0]) < 1e-6,
@@ -955,7 +959,7 @@ public final class PumpPhysicsTests {
         h.runAfterDelay(10, () -> {
             for (int x = -4; x <= 4; x++) {
                 var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(centre.east(x)));
-                var state = FluidKinetics.state(pipe); prepareLegacySnapshot(state); state.fluid = new FluidStack(Fluids.WATER, 1);
+                var state = FluidKinetics.state(pipe); setInitialContents(state); state.fluid = new FluidStack(Fluids.WATER, 1);
                 state.outward.put(Direction.WEST, -16d); state.outward.put(Direction.EAST, 16d);
             }
             var moving = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(centre.west(3)));
@@ -1015,7 +1019,7 @@ public final class PumpPhysicsTests {
         h.runAfterDelay(10, () -> {
             for (int x = -4; x <= 4; x++) {
                 var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(centre.east(x)));
-                var state = FluidKinetics.state(pipe); prepareLegacySnapshot(state); state.fluid = new FluidStack(Fluids.WATER, 1);
+                var state = FluidKinetics.state(pipe); setInitialContents(state); state.fluid = new FluidStack(Fluids.WATER, 1);
                 state.contents.put(Direction.WEST, com.diliupengyun.differential_create.kinetics.PipeContents.FULL);
                 state.contents.put(Direction.EAST, com.diliupengyun.differential_create.kinetics.PipeContents.FULL);
             }
@@ -1056,7 +1060,7 @@ public final class PumpPhysicsTests {
             for (int n = -5; n <= 5; n++) {
                 for (var pos : new BlockPos[]{centre.east(n), centre.south(n)}) {
                     var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(pos));
-                    var state = FluidKinetics.state(pipe); prepareLegacySnapshot(state); state.fluid = new FluidStack(Fluids.WATER, 1);
+                    var state = FluidKinetics.state(pipe); setInitialContents(state); state.fluid = new FluidStack(Fluids.WATER, 1);
                     for (Direction side : pipe.interfaces.keySet()) state.outward.put(side,
                         side == Direction.WEST || side == Direction.NORTH ? -16d : 16d);
                 }
@@ -1196,7 +1200,7 @@ public final class PumpPhysicsTests {
             // upper-mouth remainder while exercising the real block-removal path.
             for (var pos : fixture.pipes) {
                 var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(pos));
-                var saved = FluidKinetics.state(pipe); prepareLegacySnapshot(saved); saved.fluid = fluid.copy();
+                var saved = FluidKinetics.state(pipe); setInitialContents(saved); saved.fluid = fluid.copy();
                 for (var side : pipe.interfaces.keySet()) {
                     saved.contents.put(side, pos.getY() <= junction.getY()
                         ? com.diliupengyun.differential_create.kinetics.PipeContents.FULL
@@ -1214,7 +1218,7 @@ public final class PumpPhysicsTests {
                 }
             }
             var branchPipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(branch));
-            var saved = FluidKinetics.state(branchPipe); prepareLegacySnapshot(saved); saved.fluid = fluid.copy();
+            var saved = FluidKinetics.state(branchPipe); setInitialContents(saved); saved.fluid = fluid.copy();
             saved.contents.put(Direction.WEST, com.diliupengyun.differential_create.kinetics.PipeContents.FULL);
             saved.contents.put(Direction.EAST, com.diliupengyun.differential_create.kinetics.PipeContents.FULL);
             h.getLevel().destroyBlock(h.absolutePos(branch), false);
@@ -1281,7 +1285,7 @@ public final class PumpPhysicsTests {
             double lower = 7.29150564383068e-7, upper = 62.35266648986439;
             for (var pos : fixture.pipes) {
                 var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(pos));
-                var saved = FluidKinetics.state(pipe); prepareLegacySnapshot(saved); saved.fluid = fluid.copy();
+                var saved = FluidKinetics.state(pipe); setInitialContents(saved); saved.fluid = fluid.copy();
                 for (var side : pipe.interfaces.keySet()) {
                     saved.contents.put(side, pos.getY() <= fixture.corner.getY() + 4
                         ? com.diliupengyun.differential_create.kinetics.PipeContents.FULL
@@ -1304,7 +1308,7 @@ public final class PumpPhysicsTests {
                 }
             }
             var pipe = com.simibubi.create.content.fluids.FluidPropagator.getPipe(h.getLevel(), h.absolutePos(branch));
-            var saved = FluidKinetics.state(pipe); prepareLegacySnapshot(saved); saved.fluid = fluid.copy();
+            var saved = FluidKinetics.state(pipe); setInitialContents(saved); saved.fluid = fluid.copy();
             saved.contents.put(Direction.EAST, com.diliupengyun.differential_create.kinetics.PipeContents.of(.9999999991992271, 1));
             saved.outward.put(Direction.WEST, upper + lower); saved.outward.put(Direction.EAST, -(upper + lower));
             total[0] = fixture.tank.getTankInventory().getFluidAmount() + watched.stream().mapToDouble(pos -> pipeOwned(h, pos)).sum();

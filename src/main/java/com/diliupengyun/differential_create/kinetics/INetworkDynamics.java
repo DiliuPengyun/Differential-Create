@@ -6,8 +6,8 @@ import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 
 /**
  * Continuous-rotation state attached to Create's {@code KineticNetwork} by
- * mixin. A network owns a single speed state variable; each member's speed is
- * derived as ratio × network speed.
+ * mixin. Members retain independent speeds; a network also publishes a
+ * reference summary and geometric ratios for Create's connection context.
  */
 public interface INetworkDynamics {
 	NetworkData differentialcreate$data();
@@ -20,14 +20,6 @@ public interface INetworkDynamics {
 	double differentialcreate$getSpeed();
 
 	void differentialcreate$setSpeed(double speed);
-
-	/**
-	 * Legacy nominal source maximum retained for old-save compatibility.
-	 * Physical equilibrium is calculated from the complete torque balance.
-	 */
-	float differentialcreate$getTargetSpeed();
-
-	void differentialcreate$setTargetSpeed(float targetSpeed);
 
 	/**
 	 * Geometric member-to-reference ratios, signed and independent of speed.
@@ -56,7 +48,7 @@ public interface INetworkDynamics {
 
 	/**
 	 * Nominal reference basis, fixed at 16 in newly built networks and saved
-	 * alongside each member's ratio. Also supports legacy NBT migration.
+	 * alongside each member's ratio for restoring the same reference basis.
 	 */
 	float differentialcreate$getLastNonZeroTarget();
 

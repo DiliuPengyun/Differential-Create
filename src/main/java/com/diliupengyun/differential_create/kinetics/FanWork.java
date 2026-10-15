@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import com.simibubi.create.api.registry.CreateBuiltInRegistries;
 import com.simibubi.create.content.kinetics.belt.behaviour.TransportedItemStackHandlerBehaviour.TransportedResult;
 import com.simibubi.create.content.kinetics.belt.transport.TransportedItemStack;
-import com.simibubi.create.content.kinetics.fan.processing.AllFanProcessingTypes;
 import com.simibubi.create.content.kinetics.fan.processing.FanProcessingType;
 import com.simibubi.create.infrastructure.config.AllConfigs;
 import net.minecraft.nbt.CompoundTag;
@@ -25,16 +24,16 @@ public final class FanWork {
 		entity.getPersistentData().put("CreateData", data);
 		CompoundTag progress = data.getCompound("Processing");
 		data.put("Processing", progress);
-		if (!progress.contains("Type") || AllFanProcessingTypes.parseLegacy(progress.getString("Type")) != type) {
+		var key = CreateBuiltInRegistries.FAN_PROCESSING_TYPE.getKey(type);
+		if (key == null) throw new IllegalArgumentException("Unregistered fan processing type: " + type);
+		if (!progress.contains("DCRemaining") || !key.toString().equals(progress.getString("Type"))) {
 			if (!type.canProcess(entity.getItem(), entity.level())) return false;
-			var key = CreateBuiltInRegistries.FAN_PROCESSING_TYPE.getKey(type);
-			if (key == null) throw new IllegalArgumentException("Unregistered fan processing type: " + type);
 			progress.putString("Type", key.toString());
 			progress.putDouble("DCRemaining", duration(entity.getItem()));
 			progress.putInt("Time", (int) Math.ceil(duration(entity.getItem())));
 		}
 		if (progress.getInt("Time") < 0) return false;
-		double remaining = progress.contains("DCRemaining") ? progress.getDouble("DCRemaining") : progress.getInt("Time");
+		double remaining = progress.getDouble("DCRemaining");
 		remaining = Math.max(0, remaining - rate);
 		progress.putDouble("DCRemaining", remaining);
 		progress.putInt("Time", (int) Math.ceil(remaining));
