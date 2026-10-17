@@ -275,6 +275,7 @@ public final class PonderClientSmokeTests {
         private final java.util.Set<String> ejectorStates = new java.util.LinkedHashSet<>();
         private int frozenLinearTicks;
         private final Map<BlockPos, Double> mountedAngles = new LinkedHashMap<>();
+        private final Map<BlockPos, Integer> sheetCounts = new LinkedHashMap<>();
         private final Map<net.createmod.ponder.api.element.WorldSectionElement, net.minecraft.world.phys.Vec3> offsets = new LinkedHashMap<>();
 
         void sample(PonderScene scene) {
@@ -283,6 +284,24 @@ public final class PonderClientSmokeTests {
             var wheels = new ArrayList<com.simibubi.create.content.kinetics.crusher.CrushingWheelBlockEntity>();
             double mountedChange = 0;
             for (var be : scene.getWorld().getBlockEntities()) {
+                if (scene.getId().getPath().equals("dynamics")
+                    && be instanceof com.simibubi.create.content.logistics.depot.DepotBlockEntity tray
+                    && scene.getWorld().getBlockEntity(be.getBlockPos().above(2))
+                        instanceof com.simibubi.create.content.kinetics.press.MechanicalPressBlockEntity press) {
+                    var items = tray.getBehaviour(com.simibubi.create.content.logistics.depot.DepotBehaviour.TYPE).itemHandler;
+                    int sheets = 0;
+                    for (int slot = 0; slot < items.getSlots(); slot++)
+                        if (items.getStackInSlot(slot).is(AllItems.COPPER_SHEET.get()))
+                            sheets += items.getStackInSlot(slot).getCount();
+                    Integer before = sheetCounts.put(be.getBlockPos().immutable(), sheets);
+                    var pressing = press.getPressingBehaviour();
+                    if (before != null && sheets > before)
+                        require(pressing.running
+                                && pressing.runningTicks >= com.simibubi.create.content.kinetics.press.PressingBehaviour.CYCLE / 2
+                                && pressing.runningTicks < com.simibubi.create.content.kinetics.press.PressingBehaviour.CYCLE * 2 / 3,
+                            "Sheet appeared while the press head was off its depot in " + scene.getId()
+                                + " at tick " + scene.getCurrentTime());
+                }
                 if (be instanceof com.simibubi.create.content.kinetics.base.KineticBlockEntity kinetic) {
                     require(Float.isFinite(kinetic.getSpeed()), "Non-finite shaft speed in " + scene.getId());
                     Double angle = PonderKinetics.of(scene.getWorld()).angle(kinetic, 1);

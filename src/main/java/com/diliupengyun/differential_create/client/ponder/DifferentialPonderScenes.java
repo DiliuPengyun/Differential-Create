@@ -38,8 +38,6 @@ import net.createmod.ponder.api.element.WorldSectionElement;
 import net.createmod.ponder.api.scene.SceneBuilder;
 import net.createmod.ponder.api.scene.SceneBuildingUtil;
 import net.createmod.ponder.api.scene.Selection;
-import net.createmod.ponder.foundation.PonderScene;
-import net.createmod.ponder.foundation.instruction.TickingInstruction;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Direction.Axis;
@@ -160,72 +158,30 @@ public final class DifferentialPonderScenes {
         scene.idle(40);
     }
 
-    /**
-     * Wait until the press head reaches the workpiece; the shaft's own work drives it.
-     * {@code maxTicks} is the expected shaft-work duration; it also keeps the scene
-     * timeline accurate, since Ponder sums blocking durations before playback starts.
-     */
-    private static void waitForStrike(CreateSceneBuilder scene, BlockPos pressPos, int maxTicks) {
-        scene.addInstruction(new TickingInstruction(true, maxTicks) {
-            private boolean struck;
-            @Override public void reset(PonderScene scene) { super.reset(scene); struck = false; }
-            @Override public void tick(PonderScene scene) {
-                super.tick(scene);
-                if (struck) return;
-                if (!(scene.getWorld().getBlockEntity(pressPos) instanceof MechanicalPressBlockEntity press))
-                    struck = true;
-                else {
-                    PressingBehaviour behaviour = press.getPressingBehaviour();
-                    struck = behaviour.runningTicks >= PressingBehaviour.CYCLE / 2 || !behaviour.running;
-                }
-            }
-            @Override public boolean isComplete() { return struck || super.isComplete(); }
-        });
-    }
-
-    /** Copper burst and the actual ingot-to-sheet swap, placed exactly on the press contact. */
-    private static void punch(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pressPos, BlockPos depotPos,
-                              ItemStack ingots, ItemStack sheets, int sheetControlsTicks, int maxTicks) {
-        waitForStrike(scene, pressPos, maxTicks);
-        scene.world().modifyBlockEntity(pressPos, MechanicalPressBlockEntity.class,
-            press -> press.getPressingBehaviour()
-                .makePressingParticleEffect(util.vector().centerOf(depotPos).add(0, 8 / 16f, 0), ingots));
-        scene.world().removeItemsFromBelt(depotPos);
-        scene.world().createItemOnBeltLike(depotPos, Direction.NORTH, sheets.copy());
-        if (sheetControlsTicks > 0)
-            scene.overlay().showControls(util.vector().centerOf(depotPos), Pointing.UP, sheetControlsTicks)
-                .withItem(sheets);
-    }
-
     public static void dynamics(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.DYNAMICS);
         BlockPos input = INPUT.above(2), control = CONTROL.above(2), output = OUTPUT.above(2);
         drive(scene, util, AllBlocks.FLYWHEEL.getDefaultState(), AllBlocks.MECHANICAL_PRESS.getDefaultState(), 3);
         block(scene, util, OUTPUT, AllBlocks.DEPOT.getDefaultState());
+        scene.idle(15);
 
         ItemStack ingots = new ItemStack(Items.COPPER_INGOT, 4);
-        ItemStack sheets = new ItemStack(AllItems.COPPER_SHEET.get(), 4);
+        ItemStack sheet = new ItemStack(AllItems.COPPER_SHEET.get());
 
-        // The ingots wait while the heavy flywheel takes the commanded speed.
-        scene.world().createItemOnBeltLike(OUTPUT, Direction.NORTH, ingots);
-        scene.overlay().showControls(util.vector().centerOf(OUTPUT), Pointing.UP, 30).withItem(ingots);
+        // The press consumes one ingot per stroke; finished sheets rest on the depot rim.
+        PonderPressing.run(scene, 130, output, OUTPUT, ingots, sheet, 4, 3, 5);
+        scene.overlay().showControls(util.vector().blockSurface(OUTPUT, Direction.NORTH), Pointing.RIGHT, 30)
+            .withItem(ingots);
         target(scene, util.select().position(input), 64);
         scene.effects().rotationSpeedIndicator(control);
         PonderLesson.DYNAMICS.show(scene, util, control, 0);
-        scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
-            press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
-        punch(scene, util, output, OUTPUT, ingots, sheets, 20, 17);
-        scene.idle(30);
 
-        // With the motor cut, the stored flywheel energy still completes the next strike.
-        scene.world().removeItemsFromBelt(OUTPUT);
-        scene.world().createItemOnBeltLike(OUTPUT, Direction.NORTH, ingots.copy());
+        // With the motor cut, the stored flywheel energy still completes the next batch.
         scene.world().setKineticSpeed(util.select().position(input), 0);
-        scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
-            press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
-        punch(scene, util, output, OUTPUT, ingots, sheets, 40, 18);
+        PonderPressing.run(scene, 130, output, OUTPUT, ingots, sheet, 4, 3, 5);
+        scene.idle(10);
         PonderLesson.DYNAMICS.show(scene, util, output, 1);
-        scene.idle(30);
+        scene.idle(20);
 
         BlockPos upperCog = new BlockPos(2, 4, 3);
         BlockPos gearedShaft = new BlockPos(3, 4, 3);
@@ -238,31 +194,13 @@ public final class DifferentialPonderScenes {
         block(scene, util, gearedSupport, Blocks.SMOOTH_STONE.defaultBlockState());
         block(scene, util, gearedPress, axis(AllBlocks.MECHANICAL_PRESS.getDefaultState(), Axis.X));
         block(scene, util, gearedDepot, AllBlocks.DEPOT.getDefaultState());
-        scene.world().removeItemsFromBelt(OUTPUT);
-        scene.world().createItemOnBeltLike(OUTPUT, Direction.NORTH, ingots.copy());
-        scene.overlay().showControls(util.vector().centerOf(OUTPUT), Pointing.UP, 25).withItem(ingots);
-        scene.world().createItemOnBeltLike(gearedDepot, Direction.NORTH, ingots.copy());
-        scene.overlay().showControls(util.vector().centerOf(gearedDepot), Pointing.UP, 25).withItem(ingots);
-        // The main-shaft press stays on the 1x reference; the small gear drives the
-        // second press at 2x, so its batch is consumed in half the time.
         scene.rotateCameraY(90);
         target(scene, util.select().position(input), 32);
+        // Same batch on the same start tick: the 2x press empties its depot while the 1x press is halfway.
+        PonderPressing.run(scene, 120, output, OUTPUT, ingots, sheet, 0, 1, 2);
+        PonderPressing.run(scene, 120, gearedPress, gearedDepot, ingots, sheet, 0, 1, 7);
         scene.effects().rotationSpeedIndicator(upperCog);
         PonderLesson.DYNAMICS.show(scene, util, upperCog, 2, PonderPalette.GREEN);
-        scene.world().modifyBlockEntity(gearedPress, MechanicalPressBlockEntity.class,
-            press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
-        scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
-            press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
-        punch(scene, util, gearedPress, gearedDepot, ingots, sheets, 18, 18);
-        punch(scene, util, output, OUTPUT, ingots, sheets, 30, 16);
-        scene.idle(20);
-        scene.world().removeItemsFromBelt(gearedDepot);
-        scene.world().createItemOnBeltLike(gearedDepot, Direction.NORTH, ingots.copy());
-        scene.overlay().showControls(util.vector().centerOf(gearedDepot), Pointing.UP, 12).withItem(ingots);
-        scene.world().modifyBlockEntity(gearedPress, MechanicalPressBlockEntity.class,
-            press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
-        punch(scene, util, gearedPress, gearedDepot, ingots, sheets, 30, 18);
-        scene.idle(30);
 
         scene.overlay().showOutline(PonderPalette.RED, new Object(), util.select().fromTo(1, 3, 2, 2, 3, 2), 80);
         PonderLesson.DYNAMICS.show(scene, util, new BlockPos(1, 3, 2), 3, PonderPalette.RED);
