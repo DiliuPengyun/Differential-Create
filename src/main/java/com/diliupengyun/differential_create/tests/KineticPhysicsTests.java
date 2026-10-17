@@ -168,6 +168,12 @@ public final class KineticPhysicsTests {
 		LoadFactorTests.run(helper);
 	}
 
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "load_gauge", timeoutTicks = 100)
+	public static void physicalLoadGauge(GameTestHelper helper) {
+		forceImpactChunks(helper);
+		LoadGaugeTests.run(helper);
+	}
+
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "shaft_phase", timeoutTicks = 100)
 	public static void shaftPhaseAlignmentRegression(GameTestHelper helper) {
 		forceImpactChunks(helper);
@@ -939,6 +945,9 @@ public final class KineticPhysicsTests {
 			var ejector = (com.simibubi.create.content.logistics.depot.EjectorBlockEntity) helper.getBlockEntity(ejectorPos);
 			var ejectorTag = ejector.saveWithoutMetadata(helper.getLevel().registryAccess());
 			ejectorTag.putString("State", "CHARGED");
+			ejectorTag.putDouble(com.diliupengyun.differential_create.kinetics.EjectorCharge.KEY,
+				com.diliupengyun.differential_create.kinetics.EjectorCharge.required(
+					ejectorTag.getInt("HorizontalDistance"), ejectorTag.getInt("VerticalDistance")));
 			ejector.loadWithComponents(ejectorTag, helper.getLevel().registryAccess());
 			// Its pre-tick state was winding up; allow the completed interval to retain its load.
 			((com.diliupengyun.differential_create.kinetics.IMemberDynamics) ejector).differentialcreate$member().lastWorkingTick = Long.MIN_VALUE;

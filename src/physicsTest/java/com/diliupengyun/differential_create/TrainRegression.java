@@ -9,6 +9,7 @@ import com.diliupengyun.differential_create.kinetics.RatioScale;
 public final class TrainRegression {
     private static int checks;
     public static void run() {
+        TrainQuantitativeRegression.run();
         aerodynamics();
         for (int gear = 2; gear <= TrainMechanics.FORWARD_GEARS; gear++)
             near(2 * TrainMechanics.GEARS[gear - 1], TrainMechanics.GEARS[gear], 0, "each forward gear doubles wheel/input RPM ratio");
@@ -30,6 +31,18 @@ public final class TrainRegression {
         check(coast.speed() > 90 && coast.speed() < 100, "above original speed caps, coasting remains continuous");
         var park = TrainMechanics.advance(0, 10_000, 2, .7071, 1, List.of(), 1);
         near(0, park.speed(), 0, "parking on steep supported track");
+        for (double grade : new double[]{-.124, .124}) for (double ratio : new double[]{-.5, .5})
+            for (double rotation : new double[]{-.4, .4}) {
+                var residual = new TrainMechanics.Engine(); residual.ratio = ratio; residual.omega = rotation;
+                double stored = energy(25_000, 0, residual);
+                var held = TrainMechanics.advance(0, 25_000, 2, grade, 1, List.of(residual), .05);
+                near(0, held.speed(), 0, "a finite static brake holds against a small residual rotor impulse");
+                near(0, held.distance(), 0, "a warm stopped shaft cannot creep the parked wheels");
+                check(energy(25_000, held.speed(), residual) < stored, "parking dissipates residual shaft energy without resetting its momentum");
+            }
+        var overpower = new TrainMechanics.Engine(); overpower.omega = 100; overpower.ratio = .5;
+        var slip = TrainMechanics.advance(0, 1000, 0, 0, 1, List.of(overpower), .05);
+        check(slip.speed() > 0 && slip.distance() > 0, "static braking cannot infinitely lock an input impulse above its finite capacity");
         var slope = TrainMechanics.advance(0, 10_000, 0, -.1, 0, List.of(), 1);
         check(slope.speed() > .9, "gravity accelerates an unbraked sourceless train");
         var brake = TrainMechanics.advance(1, 10_000, 0, 0, 1, List.of(), 1);

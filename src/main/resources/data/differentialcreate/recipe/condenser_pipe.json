@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": ["CPC", "IBI"],
+  "key": {
+    "C": { "item": "create:copper_sheet" },
+    "I": { "item": "create:iron_sheet" },
+    "P": { "item": "create:fluid_pipe" },
+    "B": { "item": "minecraft:blue_ice" }
+  },
+  "result": { "id": "differentialcreate:condenser_pipe", "count": 1 }
+}

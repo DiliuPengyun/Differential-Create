@@ -127,6 +127,11 @@ public final class NetworkDynamics {
 		Level level = be.getLevel();
 		if (level == null || level.tickRateManager().isFrozen()) return;
 		if (level.isClientSide) {
+			if (level instanceof net.createmod.ponder.api.level.PonderLevel) {
+				double local = ElasticKinetics.state(be).physicalSpeed;
+				if (Double.isFinite(local)) cir.setReturnValue((float) local);
+				return;
+			}
 			Float speed = ClientNetworkSpeeds.speedOf(be);
 			if (speed != null) cir.setReturnValue(speed);
 		} else if (be.hasNetwork()) {

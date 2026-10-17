@@ -3,6 +3,7 @@ package com.diliupengyun.differential_create.client;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.UnaryOperator;
+import java.util.function.ToIntFunction;
 import com.diliupengyun.differential_create.trains.SteamBogey;
 import com.diliupengyun.differential_create.trains.SteamHoseLinks;
 import com.diliupengyun.differential_create.trains.SteamHosePort;
@@ -16,6 +17,8 @@ import com.simibubi.create.content.trains.bogey.AbstractBogeyBlockEntity;
 import com.simibubi.create.content.trains.entity.CarriageContraptionEntity;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
@@ -193,24 +196,36 @@ public final class SteamHoseRenderer {
     private static void draw(PoseStack pose, SteamHoseGeometry.Connection connection, UnaryOperator<Vec3> worldPoint, int color) {
         var mc = Minecraft.getInstance();
         var buffer = mc.renderBuffers().bufferSource().getBuffer(RenderType.cutoutMipped());
+        draw(pose, buffer, connection, color,
+            point -> LevelRenderer.getLightColor(mc.level, BlockPos.containing(worldPoint.apply(point))));
+    }
+
+    /** Use the actual hose mesh in the Ponder render target, with that scene's lighting. */
+    public static void renderPonder(PoseStack pose, MultiBufferSource buffers, SteamHoseGeometry.Connection connection) {
+        draw(pose, buffers.getBuffer(RenderType.cutoutMipped()), connection, 0xFFFFFF, point -> LightTexture.FULL_BRIGHT);
+    }
+
+    private static void draw(PoseStack pose, VertexConsumer buffer, SteamHoseGeometry.Connection connection,
+        int color, ToIntFunction<Vec3> light) {
+        var mc = Minecraft.getInstance();
         var atlas = mc.getTextureAtlas(InventoryMenu.BLOCK_ATLAS);
-        tube(pose, buffer, connection.points(), SteamHoseGeometry.RADIUS, atlas.apply(HOSE), 12, 16, 0, 16, color, worldPoint);
+        tube(pose, buffer, connection.points(), SteamHoseGeometry.RADIUS, atlas.apply(HOSE), 12, 16, 0, 16, color, light);
         for (var port : List.of(connection.engine(), connection.tank())) {
             var tip = port.point().add(port.normal().scale(.19));
-            tube(pose, buffer, List.of(port.point(), tip), 2.25 / 16d, atlas.apply(PIPES), 1, 6, 11, 16, color, worldPoint);
+            tube(pose, buffer, List.of(port.point(), tip), 2.25 / 16d, atlas.apply(PIPES), 1, 6, 11, 16, color, light);
             tube(pose, buffer, List.of(port.point().add(port.normal().scale(.025)),
-                port.point().add(port.normal().scale(.07))), 2.75 / 16d, atlas.apply(PIPES), 1, 6, 11, 16, color, worldPoint);
+                port.point().add(port.normal().scale(.07))), 2.75 / 16d, atlas.apply(PIPES), 1, 6, 11, 16, color, light);
         }
     }
 
     private static void tube(PoseStack pose, VertexConsumer buffer, List<Vec3> points, double radius,
-        TextureAtlasSprite sprite, float u0, float u1, float v0, float v1, int color, UnaryOperator<Vec3> worldPoint) {
+        TextureAtlasSprite sprite, float u0, float u1, float v0, float v1, int color, ToIntFunction<Vec3> light) {
         final int sides = 8;
         Vec3[][] rings = new Vec3[points.size()][sides], normals = new Vec3[points.size()][sides];
         int[] lights = new int[points.size()];
         Vec3 across = null;
         for (int i = 0; i < points.size(); i++) {
-            lights[i] = LevelRenderer.getLightColor(Minecraft.getInstance().level, BlockPos.containing(worldPoint.apply(points.get(i))));
+            lights[i] = light.applyAsInt(points.get(i));
             Vec3 tangent = points.get(Math.min(i + 1, points.size() - 1)).subtract(points.get(Math.max(0, i - 1))).normalize();
             if (across == null) across = Math.abs(tangent.y) < .95 ? new Vec3(0, 1, 0).cross(tangent).normalize()
                 : new Vec3(1, 0, 0).cross(tangent).normalize();

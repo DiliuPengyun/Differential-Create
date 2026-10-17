@@ -33,11 +33,14 @@ public final class TrainClientSteamSoundTests {
         var train = entity.getCarriage().train;
         int carriageIndex = entity.carriageIndex, honkTicks = train.honkTicks;
         Boolean lowHonk = train.lowHonk;
+        float accumulatedRelease = train.accumulatedSteamRelease;
         var heard = new ArrayList<SoundInstance>();
         Consumer<PlaySoundEvent> capture = event -> {
             heard.add(event.getOriginalSound());
-            // Verify requests without piling test exhaust pulses into the speakers.
-            if (event.getOriginalSound().getLocation().equals(AllSoundEvents.STEAM.getMainEvent().getLocation())) {
+            // Verify requests without piling test exhaust or stopping bursts into the speakers.
+            if (event.getOriginalSound().getLocation().equals(AllSoundEvents.STEAM.getMainEvent().getLocation())
+                || event.getOriginalSound().getLocation().equals(SoundEvents.LAVA_EXTINGUISH.getLocation())
+                || event.getOriginalSound().getLocation().equals(SoundEvents.WOODEN_TRAPDOOR_CLOSE.getLocation())) {
                 event.getOriginalSound().resolve(mc.getSoundManager());
                 event.setSound(null);
             }
@@ -46,6 +49,7 @@ public final class TrainClientSteamSoundTests {
         int cases = 0;
         try {
             train.honkTicks = 0;
+            train.accumulatedSteamRelease = 0;
             var dce = entity.getCarriage().getDimensional(mc.level);
             if (dce.leadingAnchor() == null || dce.trailingAnchor() == null) throw new AssertionError("Sound fixture has no native wheel anchors");
             for (int rpm : new int[]{30, 120, 512, -30, -120, -512}) for (float supply : new float[]{0, .1f, 1})
@@ -91,15 +95,7 @@ public final class TrainClientSteamSoundTests {
                 stale(entity); heard.clear(); sounds.tick(dce);
                 if (!steam(heard).isEmpty()) throw new AssertionError("Missing network updates kept steam playing");
                 cases++;
-                // Native stopping hiss is based on distance travelled, not our actual supply or stored pressure.
-                sample(mc, entity, 120, 2, 0); train.accumulatedSteamRelease = 10;
-                var arrived = CarriageSounds.class.getDeclaredField("arrived"); arrived.setAccessible(true); arrived.setBoolean(sounds, false);
-                heard.clear(); sounds.tick(dce);
-                if (heard.stream().anyMatch(s -> s.getLocation().equals(AllSoundEvents.STEAM.getMainEvent().getLocation())
-                    || s.getLocation().equals(SoundEvents.LAVA_EXTINGUISH.getLocation())
-                    || s.getLocation().equals(SoundEvents.WOODEN_TRAPDOOR_CLOSE.getLocation())))
-                    throw new AssertionError("Stopping emitted a movement-derived pressure release");
-                cases++;
+                cases += stops(mc, entity, dce, heard);
                 train.lowHonk = false; train.honkTicks = 20; heard.clear(); sounds.tick(dce);
                 if (heard.stream().noneMatch(s -> s.getLocation().equals(AllSoundEvents.WHISTLE_TRAIN_MANUAL_END.getMainEvent().getLocation())))
                     throw new AssertionError("Replacing steam suppressed the native whistle");
@@ -120,12 +116,59 @@ public final class TrainClientSteamSoundTests {
             tag.getAllKeys().stream().toList().forEach(tag::remove); tag.merge(saved);
             entity.setPos(position); entity.carriageIndex = carriageIndex; entity.sounds = previousSounds;
             train.honkTicks = honkTicks; train.lowHonk = lowHonk;
+            train.accumulatedSteamRelease = accumulatedRelease;
             ClientTrainKinetics.apply(original);
         }
     }
 
     private static List<SoundInstance> steam(List<SoundInstance> heard) {
         return heard.stream().filter(s -> s.getLocation().equals(AllSoundEvents.STEAM.getMainEvent().getLocation())).toList();
+    }
+    private static int stops(Minecraft mc, CarriageContraptionEntity entity,
+        com.simibubi.create.content.trains.entity.Carriage.DimensionalCarriageEntity dce, List<SoundInstance> heard) {
+        int cases = 0; var train = entity.getCarriage().train; var previous = entity.sounds;
+        for (int direction : new int[]{1, -1}) {
+            var sounds = new CarriageSounds(entity); entity.sounds = sounds; train.accumulatedSteamRelease = 0;
+            try {
+                heard.clear(); motion(mc, entity, dce, sounds, 0, 40);
+                if (!steam(heard).isEmpty()) throw new AssertionError("A newly loaded stationary train emitted a stopping hiss");
+                cases++;
+                heard.clear(); motion(mc, entity, dce, sounds, direction * .25, 5); motion(mc, entity, dce, sounds, 0, 60);
+                if (!steam(heard).isEmpty()) throw new AssertionError("A tiny movement bypassed the native stopping-release threshold");
+                cases++;
+                heard.clear(); motion(mc, entity, dce, sounds, direction * .5, 40);
+                if (!steam(heard).isEmpty()) throw new AssertionError("Native wheel-timed steam leaked into coasting without engine admission");
+                float release = train.accumulatedSteamRelease;
+                if (release <= 1) throw new AssertionError("Actual native carriage motion did not prepare its stopping release");
+                motion(mc, entity, dce, sounds, 0, 60); stoppingBurst(heard, release);
+                cases++;
+                heard.clear(); motion(mc, entity, dce, sounds, 0, 100);
+                if (!steam(heard).isEmpty() || heard.stream().anyMatch(sound -> sound.getLocation().equals(SoundEvents.LAVA_EXTINGUISH.getLocation())
+                    || sound.getLocation().equals(SoundEvents.WOODEN_TRAPDOOR_CLOSE.getLocation())))
+                    throw new AssertionError("Remaining parked repeated the stopping release");
+                cases++;
+                heard.clear(); motion(mc, entity, dce, sounds, direction * .5, 40);
+                release = train.accumulatedSteamRelease;
+                motion(mc, entity, dce, sounds, 0, 60); stoppingBurst(heard, release);
+                cases++;
+            } finally { sounds.stop(); entity.sounds = previous; }
+        }
+        return cases;
+    }
+    private static void motion(Minecraft mc, CarriageContraptionEntity entity,
+        com.simibubi.create.content.trains.entity.Carriage.DimensionalCarriageEntity dce, CarriageSounds sounds, double speed, int ticks) {
+        entity.setPos(entity.getPrevPositionVec().add(0, 0, speed));
+        for (int tick = 0; tick < ticks; tick++) {
+            sample(mc, entity, 0, 0, 0); sounds.tick(dce);
+        }
+    }
+    private static void stoppingBurst(List<SoundInstance> heard, float release) {
+        var steam = steam(heard);
+        if (steam.size() != 1 || Math.abs(steam.getFirst().getPitch() - .5f) > 1e-6
+            || Math.abs(steam.getFirst().getVolume() - .75f * release / 10) > 1e-6
+            || heard.stream().filter(sound -> sound.getLocation().equals(SoundEvents.LAVA_EXTINGUISH.getLocation())).count() != 1
+            || heard.stream().filter(sound -> sound.getLocation().equals(SoundEvents.WOODEN_TRAPDOOR_CLOSE.getLocation())).count() != 1)
+            throw new AssertionError("A forward/reverse stop did not play exactly one native pressure-release sound composite: steam=" + steam.size());
     }
     private static void sample(Minecraft mc, CarriageContraptionEntity entity, int rpm, double turns, float supply) {
         var payload = new TrainStatePayload(mc.level.dimension().location(), entity.getId(), entity.trainId, 0, true,

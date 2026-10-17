@@ -27,6 +27,6 @@ public abstract class TrainControlsExitMixin {
         if (carriage == null || carriage.train == null) return;
         TrainPhysics.endStationAssist(carriage.train);
         var state = TrainPhysics.state(carriage.train);
-        state.direction = 0; state.neutralRev = false; state.manualCommand = false; state.navigationCommand = false;
+        state.direction = 0; state.neutralRev = false; state.manualCommand = false; state.navigationCommand = false; state.parkingRequested = false;
     }
 }

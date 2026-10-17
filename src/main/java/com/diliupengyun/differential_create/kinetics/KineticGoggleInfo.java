@@ -8,6 +8,7 @@ import com.simibubi.create.content.contraptions.bearing.WindmillBearingBlockEnti
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.base.IRotate;
 import com.simibubi.create.content.kinetics.gauge.SpeedGaugeBlockEntity;
+import com.simibubi.create.content.kinetics.gauge.StressGaugeBlockEntity;
 import com.simibubi.create.content.kinetics.speedController.SpeedControllerBlockEntity;
 import com.simibubi.create.content.kinetics.steamEngine.PoweredShaftBlockEntity;
 import com.simibubi.create.content.kinetics.transmission.ClutchBlockEntity;
@@ -75,6 +76,10 @@ public final class KineticGoggleInfo {
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.torque", fmtSigned(torque, 2)));
 			return;
 		}
+		if (kbe instanceof StressGaugeBlockEntity) {
+			appendLoadFactor(kbe, tooltip);
+			return;
+		}
 		if (kbe instanceof SpeedGaugeBlockEntity gauge) {
 			double speed = NetworkDynamics.preciseSpeed(gauge);
 			int range = SpeedGaugeRangeBehaviour.rangeOf(gauge);
@@ -137,6 +142,13 @@ public final class KineticGoggleInfo {
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_head", fmtSigned(pump.differentialcreate$head(), 1), positive));
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_flow", fmtSigned(pump.differentialcreate$flow(), 2), positive));
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.pump_reaction", fmtSigned(-pump.differentialcreate$torque(), 2)));
+			return;
+		}
+		if (kbe instanceof com.simibubi.create.content.kinetics.crusher.CrushingWheelBlockEntity wheel) {
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.speed", fmtSigned(local, 1)));
+			tooltip.add(Component.translatable(MachineActivity.active(kbe)
+				? "gui.differentialcreate.goggles.machine_working" : "gui.differentialcreate.goggles.machine_idle"));
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.crushing_reaction", fmtSigned(CrushingKinetics.reaction(wheel), 2)));
 			return;
 		}
 		float impact = MachineActivity.impact(kbe);
@@ -233,6 +245,12 @@ public final class KineticGoggleInfo {
 				? "gui.differentialcreate.goggles.output_power" : "gui.differentialcreate.goggles.consumed_power", fmt(Math.abs(power))));
 			return;
 		}
+		if (kbe instanceof com.simibubi.create.content.kinetics.crusher.CrushingWheelBlockEntity wheel) {
+			double power = CrushingKinetics.reaction(wheel) * local;
+			tooltip.add(Component.translatable(power > 0
+				? "gui.differentialcreate.goggles.output_power" : "gui.differentialcreate.goggles.consumed_power", fmt(Math.abs(power))));
+			return;
+		}
 		float impact = MachineActivity.impact(kbe);
 		if (impact > 0 || MachineActivity.manages(kbe))
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.consumed_power",
@@ -242,14 +260,9 @@ public final class KineticGoggleInfo {
 	private static void appendLoadFactor(KineticBlockEntity be, List<Component> tooltip) {
 		LoadFactor.Reading reading = be.getLevel() != null && be.getLevel().isClientSide
 			? ClientNetworkSpeeds.loadFactorOf(be) : NetworkLoad.of(be);
-		Component value = switch (reading.status()) {
-			case AVAILABLE -> Component.literal(percent(reading.fraction()));
-			case NO_POWER -> Component.translatable("gui.differentialcreate.goggles.load_no_power");
-			case BRAKING -> Component.translatable("gui.differentialcreate.goggles.load_braking");
-			case UNKNOWN -> Component.literal("—");
-		};
+		Component value = LoadGaugeBehaviour.text(reading);
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.load_factor", value)
-			.withStyle(reading.status() == LoadFactor.Status.AVAILABLE ? loadFactorColor(reading.fraction()) : ChatFormatting.GRAY));
+			.withStyle(LoadGaugeScale.available(reading) ? loadFactorColor(reading.fraction()) : ChatFormatting.GRAY));
 	}
 
 	/** Color the displayed demand/supply percentage; equilibrium is 100%, not a stall warning. */
@@ -274,11 +287,6 @@ public final class KineticGoggleInfo {
 
 	private static String fmt1(double value) {
 		return String.format("%.1f", value);
-	}
-
-	private static String percent(double fraction) {
-		if (Double.isInfinite(fraction)) return "∞%";
-		return Math.round(fraction * 100) + "%";
 	}
 
 }

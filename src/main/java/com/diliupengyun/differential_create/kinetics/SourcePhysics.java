@@ -54,8 +54,13 @@ public final class SourcePhysics {
 		if (source instanceof WindmillBearingBlockEntity windmill) {
 			return windCurve(generated, capacity, InertiaRegistry.getSailCount(windmill));
 		}
-		return new Curve(2 * generated, capacity / Math.abs(generated));
+        return linearCurve(generated, capacity);
 	}
+
+    /** Shared linear source law, also used for a declared drive boundary in Ponder. */
+    public static Curve linearCurve(double generated, double capacity) {
+        return generated == 0 ? new Curve(0, 0) : new Curve(2 * generated, capacity / Math.abs(generated));
+    }
 
 	public static Curve steamCurve(PoweredShaftBlockEntity shaft) {
 		var world = shaft.getLevel();

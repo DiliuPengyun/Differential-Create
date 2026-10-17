@@ -4,23 +4,24 @@ import java.util.List;
 
 /** Sustained demand / current drive. Inertial and elastic energy storage are not demand. */
 public final class LoadFactor {
-    public enum Status { AVAILABLE, NO_POWER, BRAKING, UNKNOWN }
+    public enum Status { AVAILABLE, NO_POWER, BRAKING, UNKNOWN, UNDEFINED }
     public record Reading(Status status, double fraction) {
         public static final Reading UNKNOWN = new Reading(Status.UNKNOWN, 0);
         public static final Reading NO_POWER = new Reading(Status.NO_POWER, 0);
+        public static final Reading UNDEFINED = new Reading(Status.UNDEFINED, 0);
     }
     /** ratio is the signed nominal local/reference speed ratio, also valid at standstill. */
     public record Member(double ratio, double speed, double driveTorque, double loadTorque, boolean powered) {}
     private LoadFactor() {}
 
     public static Reading calculate(List<Member> members, double transmissionLossPower) {
-        if (members.isEmpty() || !Double.isFinite(transmissionLossPower) || transmissionLossPower < 0)
-            return Reading.UNKNOWN;
+        if (members.isEmpty()) return Reading.UNKNOWN;
+        if (!Double.isFinite(transmissionLossPower) || transmissionLossPower < 0) return Reading.UNDEFINED;
         boolean moving = false, powered = false;
         double startingDrive = 0;
         for (Member member : members) {
             if (!Double.isFinite(member.ratio) || !Double.isFinite(member.speed)
-                || !Double.isFinite(member.driveTorque) || !Double.isFinite(member.loadTorque)) return Reading.UNKNOWN;
+                || !Double.isFinite(member.driveTorque) || !Double.isFinite(member.loadTorque)) return Reading.UNDEFINED;
             moving |= Math.abs(member.speed) > 1e-9;
             powered |= member.powered;
             startingDrive += member.ratio * member.driveTorque;
@@ -37,7 +38,7 @@ public final class LoadFactor {
             demand += Math.max(0, member.loadTorque) * Math.abs(weight);
         }
         demand += braking;
-        if (!Double.isFinite(supply) || !Double.isFinite(demand)) return Reading.UNKNOWN;
+        if (!Double.isFinite(supply) || !Double.isFinite(demand)) return Reading.UNDEFINED;
         if (supply == 0 && braking > 0) return new Reading(Status.BRAKING, 0);
         // An unloaded water wheel at its no-load speed is 0%, not an undefined 0/0.
         double fraction = demand == 0 ? 0 : supply == 0 ? Double.POSITIVE_INFINITY : demand / supply;

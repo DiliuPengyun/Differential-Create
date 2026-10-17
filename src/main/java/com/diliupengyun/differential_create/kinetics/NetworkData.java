@@ -12,6 +12,7 @@ public final class NetworkData {
 	public BlockPos anchor;
 	public NetworkPhysics.Balance staticBalance;
 	public NetworkPhysics.Balance balance;
+	public LoadFactor.Reading loadFactor = LoadFactor.Reading.UNKNOWN;
 	public final java.util.List<com.simibubi.create.content.kinetics.base.KineticBlockEntity> activityMembers = new java.util.ArrayList<>();
 	public final java.util.List<com.simibubi.create.content.kinetics.transmission.ClutchBlockEntity> clutches = new java.util.ArrayList<>();
 	public final java.util.Map<com.simibubi.create.content.kinetics.transmission.ClutchBlockEntity,

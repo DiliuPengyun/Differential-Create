@@ -5,8 +5,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import com.simibubi.create.content.kinetics.KineticNetwork;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
-import com.simibubi.create.content.kinetics.crusher.CrushingWheelBlockEntity;
-import com.simibubi.create.content.kinetics.crusher.CrushingWheelControllerBlockEntity;
 import com.simibubi.create.content.kinetics.press.MechanicalPressBlockEntity;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
@@ -29,7 +27,8 @@ public final class MachineWork {
 		if (events == null) callback.run();
 		else events.add(callback);
 	}
-	public record Binding(ShaftWork work, KineticBlockEntity shaft) {
+	public record Binding(ShaftWork work, KineticBlockEntity shaft, CrushingKinetics.Pair pair) {
+		public Binding(ShaftWork work, KineticBlockEntity shaft) { this(work,shaft,null); }
 		public INetworkDynamics dynamics() { return (INetworkDynamics) shaft.getOrCreateNetwork(); }
 		public double ratio() { return Math.abs(dynamics().differentialcreate$getRatios().getOrDefault(shaft, 0f)); }
 	}
@@ -63,20 +62,11 @@ public final class MachineWork {
 							var actorWork = ContraptionActorWork.of(actor.getRight());
 							result.put(actorWork, new Binding(actorWork, be));
 						}
-				if (be instanceof CrushingWheelBlockEntity wheel)
-					for (Direction face : Direction.values()) {
-						if (face.getAxis() == wheel.getBlockState().getValue(BlockStateProperties.AXIS)) continue;
-						var pos = wheel.getBlockPos().relative(face);
-						if (wheel.getLevel().isLoaded(pos) && wheel.getLevel().getBlockEntity(pos)
-							instanceof CrushingWheelControllerBlockEntity controller) {
-							work = (ShaftWork) controller;
-							// A controller advances once, even when both wheels belong to this network.
-							var old = result.get(work);
-							if (old == null || be.getBlockPos().compareTo(old.shaft().getBlockPos()) < 0)
-								result.put(work, new Binding(work, be));
-						}
-					}
 			}
+		for (var pair : CrushingKinetics.pairs(networks)) {
+			var work = (ShaftWork) pair.controller();
+			result.put(work, new Binding(work, pair.a(), pair));
+		}
 		return new ArrayList<>(result.values());
 	}
 }

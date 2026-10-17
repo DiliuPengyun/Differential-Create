@@ -43,8 +43,13 @@ public final class InertiaRegistry {
 
 	/** The fixed machine/source rotor is independent of its assembled structure's mass. */
 	public static float getBaseInertia(KineticBlockEntity kbe) {
+		return getBaseInertia(kbe.getBlockState().getBlock());
+	}
+
+	/** Bare inventory component, before any structure has been assembled. */
+	public static float getBaseInertia(Block block) {
 		ensureInitialized();
-		return overrides.getOrDefault(kbe.getBlockState().getBlock(), DEFAULT_INERTIA);
+		return overrides.getOrDefault(block, DEFAULT_INERTIA);
 	}
 
 	public static float getInertia(KineticBlockEntity kbe) {

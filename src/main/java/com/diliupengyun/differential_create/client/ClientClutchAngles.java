@@ -16,6 +16,11 @@ public final class ClientClutchAngles {
 	private ClientClutchAngles() {}
 
 	public static RotationFrame outputRotation(ClutchBlockEntity clutch) {
+		if (clutch.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel level) {
+			Double angle = com.diliupengyun.differential_create.client.ponder.PonderKinetics.of(level)
+				.clutchOutputAngle(clutch, net.createmod.catnip.animation.AnimationTickHolder.getPartialTicks(level));
+			return new RotationFrame(Minecraft.getInstance().levelRenderer.getTicks(), angle == null ? 0 : angle, 0);
+		}
 		return update(clutch, outputs.get(clutch));
 	}
 

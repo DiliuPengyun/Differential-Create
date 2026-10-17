@@ -21,6 +21,7 @@ public final class TrainPhysics {
     public static final class State {
         public int gear = 1, direction, travelDirection = 1, cabDirection = 1;
         public boolean brake, manualCommand, navigationCommand, gearInitialized, emergencyStop, neutralRev, stationAssist;
+        public boolean parkingBrake, parkingRequested;
         public double navigationDistance = Double.POSITIVE_INFINITY;
         public double distance, mass = 1000, grade, engineRpm;
         public double controlsAdmission;
@@ -31,9 +32,9 @@ public final class TrainPhysics {
         public CompoundTag write() {
             var tag = new CompoundTag(); tag.putInt("Gear", gear); tag.putInt("Ticks", ticks); tag.putInt("LastShift", lastShift); tag.putInt("TravelDirection", travelDirection); tag.putBoolean("EmergencyStop", emergencyStop);
             // This marks the saved navigation as player-held, never as an input to replay.
-            tag.putBoolean("StationAssist", stationAssist); return tag;
+            tag.putBoolean("StationAssist", stationAssist); tag.putBoolean("ParkingBrake", parkingBrake); return tag;
         }
-        public void read(CompoundTag tag) { gear = TrainMechanics.clampGear(tag.getInt("Gear")); gearInitialized = true; ticks = Math.max(0, tag.getInt("Ticks")); lastShift = Math.min(ticks, tag.getInt("LastShift")); travelDirection = tag.getInt("TravelDirection") < 0 ? -1 : 1; emergencyStop = tag.getBoolean("EmergencyStop"); }
+        public void read(CompoundTag tag) { gear = TrainMechanics.clampGear(tag.getInt("Gear")); gearInitialized = true; ticks = Math.max(0, tag.getInt("Ticks")); lastShift = Math.min(ticks, tag.getInt("LastShift")); travelDirection = tag.getInt("TravelDirection") < 0 ? -1 : 1; emergencyStop = tag.getBoolean("EmergencyStop"); parkingBrake = tag.getBoolean("ParkingBrake"); }
     }
     private TrainPhysics() {}
     public static State state(Train train) { return ((Holder) train).differentialcreate$physics(); }
@@ -61,13 +62,23 @@ public final class TrainPhysics {
     public static void manual(Train train, int direction, boolean brake, boolean neutralRev) {
         boolean neutral = hasLever(train) && state(train).gear == 0;
         var s = state(train); s.emergencyStop = false; s.direction = Integer.signum(direction); s.brake = brake; s.manualCommand = true;
+        s.parkingRequested = false;
+        if (!brake && (direction != 0 || neutralRev)) s.parkingBrake = false;
         s.neutralRev = neutral && !brake && (neutralRev || direction != 0);
         if (neutral) s.direction = 0;
         train.manualTick = true; train.targetSpeed = s.direction;
     }
+    /** Space applies the same finite brake as S, then latches it once stopped. */
+    public static void park(Train train) {
+        manual(train, 0, true);
+        var s = state(train); s.parkingRequested = true;
+        if (train.speed == 0) s.parkingBrake = true;
+    }
     public static void navigate(Train train) {
         var nav = train.navigation; var s = state(train);
         if (s.emergencyStop) { s.brake = true; return; }
+        // Resuming an autonomous timetable is also an explicit departure request.
+        if (!s.stationAssist && !train.runtime.paused) s.parkingBrake = false;
         s.navigationCommand = true; s.direction = nav.destinationBehindTrain ? -1 : 1;
         s.navigationDistance = nav.waitingForSignal != null ? nav.distanceToSignal : nav.distanceToDestination;
         if (s.navigationDistance < -10) { nav.cancelNavigation(); s.direction = 0; s.brake = true; }
@@ -145,20 +156,24 @@ public final class TrainPhysics {
             if (l != null && (!l.motors.isEmpty() || s.failure.equals("no_engine"))) s.failure = l.failure;
         }
         s.mass = Math.max(1000, s.mass); s.grade = gradeMass / s.mass;
-        boolean reversing = command != 0 && train.speed * command < -1e-5;
-        double brake = s.brake || reversing || train.derailed || s.emergencyStop ? 1 : 0;
+        // Navigation may deliberately brake before changing direction. A manual
+        // regulator instead keeps admitting steam against rollback through the
+        // finite cylinder torque and clutch, without applying a service brake.
+        boolean reversing = s.navigationCommand && command != 0 && train.speed * command < -1e-5;
+        double brake = s.brake || s.parkingBrake || reversing || train.derailed || s.emergencyStop ? 1 : 0;
         if (s.navigationCommand) {
             double forward = train.speed * command * 20;
             double downhill = -s.grade * command;
             double stopping = TrainMechanics.stoppingDistance(Math.max(0, forward), downhill);
-            if (s.navigationDistance <= stopping + Math.abs(train.speed) * 2 + .1) brake = 1;
             // Finite-force approach after braking, to reach the station listener
-            // without assigning a minimum speed or teleporting the train.
-            if (forward < .1 && s.navigationDistance > 1e-6) brake = 0;
+            // without releasing service, reversal or emergency brakes.
+            boolean creeping = !reversing && forward < .1 && s.navigationDistance > 1e-6;
+            if (!creeping && s.navigationDistance <= stopping + Math.abs(train.speed) * 2 + .1) brake = 1;
         }
-        // The cab shows service/navigation braking, not the automatic stationary hold.
+        // Explicit parking remains visible after releasing Space. A released S
+        // does not latch; the implicit stationary hold is only for unattended trains.
         s.controlsBraking = brake > 0;
-        if (command == 0 && (train.getCurrentStation() != null || Math.abs(train.speed) < 1e-4)) brake = 1;
+        if (!human && command == 0 && (train.getCurrentStation() != null || Math.abs(train.speed) < 1e-4)) brake = 1;
         if (!human && !train.runtime.paused && s.navigationCommand && hasLever(train)) {
             if (command < 0 && s.gear != TrainMechanics.REVERSE_GEAR) shift(train, TrainMechanics.REVERSE_GEAR);
             else if (command > 0 && (s.gear == 0 || s.gear == TrainMechanics.REVERSE_GEAR)) shift(train, 1);
@@ -171,12 +186,12 @@ public final class TrainPhysics {
         // Automatic stationary brakes may hold the carriage while the input spins.
         boolean lever = hasLever(train);
         boolean neutral = lever && s.gear == 0;
-        boolean neutralRev = neutral && human && s.neutralRev && !s.brake && !train.derailed && !s.emergencyStop;
+        boolean neutralRev = neutral && human && s.neutralRev && !s.brake && !s.parkingBrake && !train.derailed && !s.emergencyStop;
         int gearedDirection = s.cabDirection * (s.gear == TrainMechanics.REVERSE_GEAR ? -1 : 1);
         boolean wrongGear = s.stationAssist && !neutral && command != 0 && command != gearedDirection;
         double throttle = neutral ? neutralRev ? train.throttle : 0 : command == 0 || brake > 0 || reversing ? 0 : train.throttle;
         if (wrongGear) throttle = 0;
-        if (s.navigationCommand) throttle *= Math.clamp(s.navigationDistance / 2, 0, 1);
+        if (s.navigationCommand) throttle = approachAdmission(train, command, throttle);
         throttle = Double.isFinite(throttle) ? Math.clamp(throttle, 0, 1) : 0;
         s.controlsAdmission = throttle;
         var active = new ArrayList<TrainMechanics.Engine>();
@@ -208,7 +223,8 @@ public final class TrainPhysics {
                 var engine = connection.carriage().engines.get(drive.motor().pos());
                 double ratio = drive.ratio() * (lever ? TrainMechanics.GEARS[s.gear] : drive.dial());
                 int direction = inputDirection(engine, drive.ratio(), ratio, command, neutralRev);
-                demand += SourcePhysics.steamDemand(drive.motor().capacity(), target, consumers, direction, throttle, engine.rpm());
+                double waterUse = drive.motor().condenser() ? SteamBogey.CONDENSER_WATER_USE : 1;
+                demand += waterUse * SourcePhysics.steamDemand(drive.motor().capacity(), target, consumers, direction, throttle, engine.rpm());
             }
             double available = cs.water.getOrDefault(b.pos(), 0d);
             available += drainWater(train, Math.max(0, (int) Math.ceil(demand - available)));
@@ -265,6 +281,7 @@ public final class TrainPhysics {
         var motion = TrainMechanics.advance(train.speed * 20, s.mass, TrainAerodynamics.AIR_COEFFICIENT * frontalArea(train),
             s.grade, brake, active, TrainMechanics.TICK_SECONDS);
         train.speed = motion.speed() / 20;
+        if (s.parkingRequested && train.speed == 0) s.parkingBrake = true;
         s.distance = com.diliupengyun.differential_create.kinetics.TrainActorMotion.feed(train, motion.distance(), active);
         rpmSum = 0; rpmCount = 0;
         for (var c : train.carriages) {
@@ -282,12 +299,36 @@ public final class TrainPhysics {
         }
         for (var c : train.carriages) { var cs = carriage(c); cs.wheelTurns += s.distance / (2 * Math.PI * TrainMechanics.WHEEL_RADIUS); cs.apply(c, s.gear); }
         train.speedBeforeStall = null; train.manualTick = false;
-        s.direction = 0; s.brake = false; s.manualCommand = false; s.navigationCommand = false; s.neutralRev = false; s.navigationDistance = Double.POSITIVE_INFINITY;
+        s.direction = 0; s.brake = false; s.manualCommand = false; s.navigationCommand = false; s.neutralRev = false; s.parkingRequested = false; s.navigationDistance = Double.POSITIVE_INFINITY;
         TrainStatePayload.send(train);
     }
     private static int inputDirection(TrainMechanics.Engine engine, double driveRatio, double ratio, int command, boolean neutralRev) {
         return neutralRev ? engine.omega == 0 ? (int) Math.signum(driveRatio) : (int) Math.signum(engine.omega)
             : command == 0 || ratio == 0 ? 0 : (int) Math.signum(command * ratio);
+    }
+    private static double approachAdmission(Train train, int command, double throttle) {
+        var s = state(train);
+        double approach = throttle * Math.clamp(s.navigationDistance / 2, 0, 1);
+        double uphill = s.grade * command;
+        if (throttle <= 0 || uphill <= 0 || s.navigationDistance >= 2) return approach;
+        // Distance alone can close the valve below the force needed to climb.
+        // Estimate a low-speed opening that balances grade and rolling resistance
+        // with 0.1 m/s^2 of traction left; actual boilers, water and clutches still
+        // determine the force, and navigation braking controls approach speed.
+        double force = 0;
+        boolean lever = hasLever(train);
+        for (var c : train.carriages) {
+            var layout = carriage(c).layout;
+            if (layout == null) continue;
+            for (var drive : layout.drives) {
+                double ratio = drive.ratio() * (lever ? TrainMechanics.GEARS[s.gear] : drive.dial());
+                if (ratio == 0) continue;
+                double torque = SourcePhysics.steamCurve(drive.motor().capacity(), 1, 1, 1).stallTorque();
+                force += torque * TrainMechanics.TORQUE_SCALE / (TrainMechanics.WHEEL_RADIUS * Math.abs(ratio));
+            }
+        }
+        double required = s.mass * (TrainMechanics.GRAVITY * uphill + TrainMechanics.ROLLING_ACCELERATION + .1);
+        return force > 0 ? Math.min(throttle, Math.max(approach, required / force)) : approach;
     }
     private static int drainWater(Train train, int amount) {
         if (amount <= 0) return 0; int collected = 0;

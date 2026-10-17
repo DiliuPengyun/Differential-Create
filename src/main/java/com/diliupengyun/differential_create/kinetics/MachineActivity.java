@@ -2,6 +2,7 @@ package com.diliupengyun.differential_create.kinetics;
 
 import com.diliupengyun.differential_create.mixin.SawBlockEntityAccessor;
 import com.simibubi.create.AllRecipeTypes;
+import com.simibubi.create.content.equipment.armor.BacktankBlockEntity;
 import com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity;
 import com.simibubi.create.content.kinetics.KineticNetwork;
 import com.simibubi.create.content.kinetics.base.BlockBreakingKineticBlockEntity;
@@ -34,7 +35,7 @@ public final class MachineActivity {
 			|| be instanceof MillstoneBlockEntity || be instanceof CrushingWheelBlockEntity
 			|| be instanceof SawBlockEntity || be instanceof DrillBlockEntity
 			|| be instanceof DeployerBlockEntity || be instanceof MechanicalCrafterBlockEntity
-			|| be instanceof ArmBlockEntity || be instanceof EjectorBlockEntity
+			|| be instanceof ArmBlockEntity || be instanceof EjectorBlockEntity || be instanceof BacktankBlockEntity
 			|| ContraptionPhysics.manages(be);
 	}
 
@@ -78,7 +79,7 @@ public final class MachineActivity {
 	/** Actual sustained shaft resistance at this speed; accelerating inertia is separate. */
 	public static double loadTorque(KineticBlockEntity be, double speed) {
 		if (be instanceof IPumpDynamics pump) return Math.max(0, pump.differentialcreate$torque() * Math.signum(speed));
-		double impact = impact(be);
+		double impact = be instanceof CrushingWheelBlockEntity ? 0 : impact(be);
 		return (be instanceof EncasedFanBlockEntity ? 0 : impact) + quadraticDrag(be) * speed * speed;
 	}
 	public static double quadraticDrag(KineticBlockEntity be) {
@@ -107,6 +108,8 @@ public final class MachineActivity {
 	}
 
 	public static boolean working(KineticBlockEntity be) {
+		if (be instanceof BacktankBlockEntity)
+			return Double.isFinite(((ShaftWork) be).differentialcreate$remainingTravel());
 		if (ContraptionPhysics.manages(be)) return !ContraptionPhysics.drives(be).isEmpty();
 		if (be instanceof MechanicalPressBlockEntity press)
 			return press.getPressingBehaviour() != null && press.getPressingBehaviour().running;
@@ -126,17 +129,10 @@ public final class MachineActivity {
 		}
 		if (be instanceof DrillBlockEntity drill) return breakingBlock(drill);
 		if (be instanceof CrushingWheelBlockEntity wheel) {
-			Direction.Axis axis = wheel.getBlockState().getValue(BlockStateProperties.AXIS);
-			for (Direction face : Direction.values()) {
-				if (face.getAxis() == axis) continue;
-				var pos = wheel.getBlockPos().relative(face);
-				if (wheel.getLevel().isLoaded(pos)
-					&& wheel.getLevel().getBlockEntity(pos) instanceof CrushingWheelControllerBlockEntity controller
-					&& controller.isOccupied() && (controller.hasEntity() || controller.inventory.remainingTime > 0))
-					return true;
-			}
-			return false;
-		}
+            for (var pair : CrushingKinetics.pairs(wheel))
+                if ((pair.a() == wheel || pair.b() == wheel) && pair.active()) return true;
+            return false;
+        }
 		if (be instanceof DeployerBlockEntity) {
 			String phase = MachinePhase.of(be);
 			return phase.equals("EXPANDING") || phase.equals("RETRACTING");
@@ -149,7 +145,8 @@ public final class MachineActivity {
 			String phase = MachinePhase.of(be);
 			return phase.equals("MOVE_TO_INPUT") || phase.equals("MOVE_TO_OUTPUT") || phase.equals("DANCING");
 		}
-		if (be instanceof EjectorBlockEntity ejector) return ejector.getState() != EjectorBlockEntity.State.CHARGED;
+		if (be instanceof EjectorBlockEntity)
+			return Double.isFinite(((ShaftWork) be).differentialcreate$remainingTravel());
 		return false;
 	}
 

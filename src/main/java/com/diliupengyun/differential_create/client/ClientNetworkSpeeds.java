@@ -301,6 +301,7 @@ public final class ClientNetworkSpeeds {
 	}
 
 	private static Entry entryOf(KineticBlockEntity kbe) {
+		if (kbe.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel) return null;
 		ResourceKey<Level> dimension = kbe.getLevel()
 			.dimension();
 		Map<BlockPos, Long> members = memberToNetwork.get(dimension);

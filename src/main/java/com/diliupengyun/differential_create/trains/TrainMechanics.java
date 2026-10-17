@@ -70,11 +70,12 @@ public final class TrainMechanics {
         double distance = 0;
         int steps = Math.max(1, (int) Math.ceil(seconds / (TICK_SECONDS / 64)));
         double dt = seconds / steps;
+        double gravity = -mass * GRAVITY * grade;
+        double friction = mass * (ROLLING_ACCELERATION + Math.clamp(brake, 0, 1) * BRAKE_ACCELERATION);
         for (int step = 0; step < steps; step++) {
             // External forces use an exact drag/friction solution and cannot
             // reverse the train merely because a brake crosses zero in a tick.
-            var free = RotationMath.motion(speed, -mass * GRAVITY * grade, 0,
-                mass * (ROLLING_ACCELERATION + Math.clamp(brake, 0, 1) * BRAKE_ACCELERATION), mass, drag, dt);
+            var free = RotationMath.motion(speed, gravity, 0, friction, mass, drag, dt);
             double before = speed;
             speed = free.speed();
             for (Engine engine : engines) {
@@ -99,6 +100,11 @@ public final class TrainMechanics {
                 }
                 engine.turns += engine.omega * dt / (2 * Math.PI);
             }
+            // A stopped brake still has its finite static reaction available
+            // against the clutch impulse. Otherwise a coasting input rotor adds
+            // motion after the friction step and can creep out of a station.
+            if (before == 0 && free.speed() == 0 && brake > 0)
+                speed = RotationMath.advance(speed, gravity, 0, friction, mass, drag, dt);
             distance += (before + speed) * .5 * dt;
         }
         return new Motion(speed, distance);

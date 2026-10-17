@@ -80,11 +80,14 @@ public final class ClientSpeedSync {
 			if (structureChanged || newcomers.contains(player)) queue(player, last.structure);
 			if (structureChanged || heartbeat || changed || newcomers.contains(player)) queue(player, current);
 		}
+		boolean hasGauges = network.members.keySet().stream()
+			.anyMatch(com.simibubi.create.content.kinetics.gauge.StressGaugeBlockEntity.class::isInstance);
+		var loadFactor = hasGauges ? LoadGaugeBehaviour.sample(network)
+			: !last.audience.isEmpty() ? NetworkLoad.calculate(network) : LoadFactor.Reading.UNKNOWN;
 		if (!last.audience.isEmpty()) {
 			var rotors = new ArrayList<RotorStatePayload.Rotor>();
 			double energy = ElasticKinetics.kineticEnergy(network);
 			var elasticEnergy = ElasticKinetics.elasticEnergy(network);
-			var loadFactor = NetworkLoad.calculate(network);
 			for (var be : dynamics.differentialcreate$getRatios().keySet()) {
 				rotors.add(captureRotor(be, elasticEnergy.of(be)));
 				// Keep every packet safely below the custom-payload size limit.

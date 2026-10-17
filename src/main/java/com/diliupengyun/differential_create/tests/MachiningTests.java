@@ -193,7 +193,7 @@ final class MachiningTests {
 			}
 			crusher.inventory.insertItem(0, new ItemStack(Items.COBBLESTONE, 64), false);
 			cycle(helper, "crusher64", (ShaftWork) crusher, List.of(left, right), new double[]{256},
-				16.0 * Math.max(0, crusher.inventory.remainingTime - 20) * 64 * 12.5 / 1200);
+				16.0 * Math.max(0, crusher.inventory.remainingTime - 20) * 6 * 12.5 / 1200);
 			helper.assertTrue(crusher.inventory.isEmpty(), "crusher must complete the full batch");
 			helper.succeed();
 		});

@@ -25,12 +25,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(Train.class)
 public abstract class TrainPhysicsMixin implements TrainPhysics.Holder {
     @Unique private final TrainPhysics.State differentialcreate$physics = new TrainPhysics.State();
+    @Unique private GlobalStation differentialcreate$departureStation;
     @Override public TrainPhysics.State differentialcreate$physics() { return differentialcreate$physics; }
     @Shadow private void collideWithOtherTrains(Level level, Carriage carriage) { throw new AssertionError(); }
     @Inject(method = "tick", at = @At("HEAD"))
     private void differentialcreate$begin(Level level, CallbackInfo ci) {
+        var train = (Train) (Object) this;
         differentialcreate$physics.level = level;
-        if (((Train) (Object) this).graph == null) TrainPhysics.advance((Train) (Object) this);
+        differentialcreate$departureStation = train.getCurrentStation();
+        if (train.graph == null) TrainPhysics.advance(train);
     }
     @Inject(method = "tickPassiveSlowdown", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$advance(CallbackInfo ci) { TrainPhysics.advance((Train) (Object) this); ci.cancel(); }
@@ -58,6 +61,11 @@ public abstract class TrainPhysicsMixin implements TrainPhysics.Holder {
     private void differentialcreate$derailedFriction(CallbackInfo ci) { ci.cancel(); }
     @Inject(method = "burnFuel", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$realBurners(CallbackInfo ci) { ((Train) (Object) this).fuelTicks = 0; ci.cancel(); }
+    @Inject(method = "arriveAt", at = @At("RETURN"))
+    private void differentialcreate$parkAfterAssist(GlobalStation station, CallbackInfo ci) {
+        var train = (Train) (Object) this;
+        if (differentialcreate$physics.stationAssist && train.speed == 0) differentialcreate$physics.parkingBrake = true;
+    }
     @Inject(method = "disassemble", at = @At("HEAD"))
     private void differentialcreate$returnContainers(Direction direction, BlockPos pos, CallbackInfoReturnable<Boolean> cir) {
         TrainPhysics.prepareDisassembly((Train) (Object) this);
@@ -81,10 +89,12 @@ public abstract class TrainPhysicsMixin implements TrainPhysics.Holder {
         double travelled = 0, remaining = distance;
         do {
             double segment = Math.clamp(remaining, -1, 1);
-            var departedStation = ((Train) (Object) this).getCurrentStation();
             double actual = carriage.travel(level, graph, segment, forward, backward, type);
-            if (Double.isFinite(actual) && Math.abs(actual) > 1e-6 && departedStation != null
-                && ((Train) (Object) this).getCurrentStation() == departedStation)
+            // Only release the station occupied before this tick. A leading
+            // carriage may have just arrived while the remaining cars settle.
+            if (Math.abs(differentialcreate$physics.distance) > 1e-6 && Double.isFinite(actual) && Math.abs(actual) > 1e-6
+                && differentialcreate$departureStation != null
+                && ((Train) (Object) this).getCurrentStation() == differentialcreate$departureStation)
                 ((Train) (Object) this).leaveStation();
             travelled += actual; remaining -= segment;
             if (carriage == ((Train) (Object) this).carriages.get(((Train) (Object) this).speed < 0 ? ((Train) (Object) this).carriages.size() - 1 : 0))

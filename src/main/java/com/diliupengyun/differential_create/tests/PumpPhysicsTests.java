@@ -1,6 +1,7 @@
 package com.diliupengyun.differential_create.tests;
 
 import com.diliupengyun.differential_create.DifferentialCreate;
+import com.diliupengyun.differential_create.kinetics.BoilerAdmission;
 import com.diliupengyun.differential_create.kinetics.ElasticKinetics;
 import com.diliupengyun.differential_create.kinetics.INetworkDynamics;
 import com.diliupengyun.differential_create.kinetics.NetworkTopology;
@@ -21,6 +22,7 @@ import com.simibubi.create.content.fluids.pump.PumpBlockEntity;
 import com.simibubi.create.content.fluids.tank.FluidTankBlockEntity;
 import com.simibubi.create.content.kinetics.motor.CreativeMotorBlockEntity;
 import com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlock;
+import java.util.function.Consumer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.gametest.framework.GameTest;
@@ -29,6 +31,9 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.material.Fluids;
+import net.neoforged.bus.api.EventPriority;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.fluids.FluidStack;
 import net.neoforged.neoforge.fluids.capability.IFluidHandler.FluidAction;
 import net.neoforged.neoforge.gametest.GameTestHolder;
@@ -279,8 +284,8 @@ public final class PumpPhysicsTests {
 
     private static void coasting(GameTestHelper h, boolean flywheel) {
         Fixture f = fixture(h, flywheel);
-        h.runAfterDelay(80, () -> {
-            h.assertTrue(f.boiler.boiler.waterSupply > 0 && f.boiler.boiler.waterSupply <= 10, "powered pump supplies only the real cylinder's bounded water demand");
+        h.runAfterDelay(80, () -> afterSupplyTick(f,
+            "powered pump supplies only the real cylinder's bounded water demand", () -> {
             h.assertTrue(f.water() < 15000, "powered pump drains its input tank");
             h.setBlock(DRIVE_SHAFT, Blocks.AIR);
             NetworkTopology.flush();
@@ -294,8 +299,8 @@ public final class PumpPhysicsTests {
                     f.pump.getBehaviour(FluidTransportBehaviour.TYPE).phase);
                 h.assertTrue(after > 90 && after < speed, "disconnected pump still rotates and spends stored rotational energy");
                 h.assertTrue(before > f.water(), "coasting pump continues paying real cylinder water demand while its speed changes");
-                h.runAfterDelay(70, () -> {
-                    h.assertTrue(f.boiler.boiler.waterSupply > 0 && f.boiler.boiler.waterSupply <= 10, "current pump delivery supplies the loaded engine without a historical sampling window");
+                h.runAfterDelay(70, () -> afterSupplyTick(f,
+                    "current pump delivery supplies the loaded engine without a historical sampling window", () -> {
                     var network = f.pump.getOrCreateNetwork();
                     network.members.keySet().forEach(be -> ElasticKinetics.state(be).physicalSpeed = 0);
                     h.setBlock(PUMP.east(2), Blocks.STONE);
@@ -314,8 +319,37 @@ public final class PumpPhysicsTests {
                             h.succeed();
                         });
                     });
-                });
+                }));
             });
+        }));
+    }
+
+    /** GameTest callbacks run before the Post tick physics step. Capture its
+     * completed supply once, then assert inside GameTest on the following tick;
+     * reading the live boiler there would again see only prepaid fractions. */
+    private static void afterSupplyTick(Fixture f, String message, Runnable after) {
+        long requestedTick = f.h.getLevel().getGameTime();
+        class SupplySample implements Consumer<ServerTickEvent.Post> {
+            long tick = Long.MIN_VALUE;
+            double demand, delivered;
+
+            @Override
+            public void accept(ServerTickEvent.Post event) {
+                if (event.getServer() != f.h.getLevel().getServer()) return;
+                NeoForge.EVENT_BUS.unregister(this);
+                tick = f.h.getLevel().getGameTime();
+                demand = BoilerAdmission.demand(f.boiler.boiler);
+                delivered = f.boiler.boiler.waterSupply;
+            }
+        }
+        var sample = new SupplySample();
+        NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST, ServerTickEvent.Post.class, sample);
+        f.h.runAfterDelay(1, () -> {
+            f.h.assertTrue(sample.tick == requestedTick, "supply snapshot belongs to the requested completed physics tick");
+            f.h.assertTrue(sample.demand > 0 && sample.demand <= 10
+                && sample.delivered > 0 && sample.delivered <= 10 && sample.delivered <= sample.demand + 1e-6,
+                message + ": demand=" + sample.demand + " delivered=" + sample.delivered);
+            after.run();
         });
     }
 

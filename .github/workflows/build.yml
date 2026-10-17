@@ -27,7 +27,7 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build and verify physics and game scenarios
-        run: ./gradlew build runGameTestServer runVirtualAirServer --console=plain
+        run: ./gradlew build runGameTestServer runVirtualAirServer runBacktankServer runEjectorServer runCrusherServer runLogisticsServer --console=plain
 
       - name: Preserve test evidence
         if: always()
@@ -38,3 +38,7 @@ jobs:
             build/reports/
             run-gametest/logs/latest.log
             build/virtual-air/runs/*/logs/latest.log
+            build/backtank/runs/*/logs/latest.log
+            build/ejector/runs/*/logs/latest.log
+            build/crusher/runs/*/logs/latest.log
+            build/logistics/runs/*/logs/latest.log

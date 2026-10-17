@@ -1,6 +1,5 @@
 package com.diliupengyun.differential_create.kinetics;
 
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Set;
 import com.diliupengyun.differential_create.mixin.TorquePropagatorAccessor;
@@ -29,8 +28,10 @@ public final class NetworkSpeedTicker {
 		NetworkTopology.flush();
 		Set<KineticNetwork> live = new HashSet<>();
 		Set<Level> advanced = new HashSet<>();
-		for (var entry : new ArrayList<>(TorquePropagatorAccessor.differentialcreate$getNetworks().entrySet())) {
-			if (!(entry.getKey() instanceof Level level) || level.isClientSide) continue;
+		// Create's outer registry also receives client/Ponder worlds on the render thread.
+		// Enumerate server-owned worlds rather than iterating that shared mutable map.
+		for (var level : event.getServer().getAllLevels()) {
+			if (!TorquePropagatorAccessor.differentialcreate$getNetworks().containsKey(level)) continue;
 			if (!level.tickRateManager().isFrozen()) MachiningClock.advance(level);
 			advanced.add(level);
 			live.addAll(MachiningClock.networks(level));

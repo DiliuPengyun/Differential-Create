@@ -7,7 +7,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.world.phys.Vec3;
 
-/** A boiler attachment on the clicked tank block, independent of its controller and world position. */
+/** A boiler attachment at the clicked tank face's centre, independent of its controller and world position. */
 public record SteamHosePort(Direction face, Vec3 point) {
     public static final String KEY = "DCSteamHosePort";
 
@@ -17,7 +17,7 @@ public record SteamHosePort(Direction face, Vec3 point) {
 
     private static SteamHosePort normalized(Direction face, Vec3 point) {
         if (face == null || !Double.isFinite(point.x) || !Double.isFinite(point.y) || !Double.isFinite(point.z)) return null;
-        double x = Math.clamp(point.x, 0, 1), y = Math.clamp(point.y, 0, 1), z = Math.clamp(point.z, 0, 1);
+        double x = .5, y = .5, z = .5;
         switch (face.getAxis()) {
             case X -> x = face.getStepX() > 0 ? 1 : 0;
             case Y -> y = face.getStepY() > 0 ? 1 : 0;

@@ -12,16 +12,20 @@ import net.minecraft.world.level.block.Blocks;
 
 public final class SteamBogeyModels {
     public static final PartialModel ENGINE_COVER=PartialModel.of(ResourceLocation.fromNamespaceAndPath("differentialcreate","block/steam_bogey/engine_cover"));
+    public static final PartialModel CONDENSER_COVER=PartialModel.of(ResourceLocation.fromNamespaceAndPath("differentialcreate","block/steam_bogey/condenser_cover"));
     // Keep a thin surface gap after the native bogey pose's 1/128-block offset.
     public static final float COVER_Y=1+1/64f, COVER_SCALE=1+1/512f;
     private SteamBogeyModels() {}
     public static void init() {}
+    public static PartialModel cover(CompoundTag data) {
+        return data.getBoolean(SteamBogey.ENGINE)&&data.getBoolean(SteamBogey.CONDENSER)?CONDENSER_COVER:ENGINE_COVER;
+    }
     public static void render(CompoundTag data,PoseStack pose,MultiBufferSource source,int light,int overlay) {
         if(!data.getBoolean(SteamBogey.ENGINE))return;
         var buffer=source.getBuffer(RenderType.cutoutMipped());
         // The engine cover occupies only the lid and upper wood panels. All
         // native brass edging, casing, adhesive faces and wheel parts remain visible.
-        CachedBuffers.partial(ENGINE_COVER,Blocks.AIR.defaultBlockState()).translate(-.5,COVER_Y,-.5).center().scale(COVER_SCALE,1,COVER_SCALE).uncenter()
+        CachedBuffers.partial(cover(data),Blocks.AIR.defaultBlockState()).translate(-.5,COVER_Y,-.5).center().scale(COVER_SCALE,1,COVER_SCALE).uncenter()
             .light(light).overlay(overlay).renderInto(pose,buffer);
     }
 }

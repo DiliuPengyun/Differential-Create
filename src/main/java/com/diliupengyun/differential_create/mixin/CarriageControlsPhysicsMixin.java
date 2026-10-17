@@ -59,7 +59,8 @@ public abstract class CarriageControlsPhysicsMixin {
         if (carriage != null) {
             // Cancelling this injection returns before RETURN hooks can run.
             TrainPhysics.endStationAssist(carriage.train);
-            TrainPhysics.manual(carriage.train, brake ? 0 : direction, brake, neutralRev.get());
+            if (controls.contains(4)) TrainPhysics.park(carriage.train);
+            else TrainPhysics.manual(carriage.train, brake ? 0 : direction, brake, neutralRev.get());
         }
         cir.setReturnValue(true);
     }
@@ -73,7 +74,7 @@ public abstract class CarriageControlsPhysicsMixin {
         if (!cir.getReturnValue()) { TrainPhysics.endStationAssist(train); return; }
         if (controls.contains(4) && !serviceBrake.get()) {
             if (train.getCurrentStation() != null) {
-                TrainPhysics.endStationAssist(train); TrainPhysics.manual(train, 0, true); return;
+                TrainPhysics.endStationAssist(train); TrainPhysics.park(train); return;
             }
             if (train.navigation.destination != null) {
                 var block = entity.getContraption().getBlocks().get(pos);

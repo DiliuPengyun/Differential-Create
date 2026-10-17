@@ -59,7 +59,7 @@ public final class LoadFactorRegression {
             "coasting stored energy does not masquerade as active supply");
         status(Status.NO_POWER, List.of(new Member(1, 0, 0, 0, false)), "unpowered rest");
         status(Status.UNKNOWN, List.of(), "missing network data");
-        status(Status.UNKNOWN, List.of(new Member(1, Double.NaN, 64, 8, true)), "invalid state is not a fabricated percentage");
+        status(Status.UNDEFINED, List.of(new Member(1, Double.NaN, 64, 8, true)), "invalid state is not a fabricated percentage");
 
         // A preloaded spring stores energy but consumes no power while held still.
         near(0, LoadFactor.contactLoss(1e7, 128, Double.POSITIVE_INFINITY, .001, 0), "spring preload is not loss");

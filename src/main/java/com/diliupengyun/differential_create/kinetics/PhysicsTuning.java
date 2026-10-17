@@ -32,6 +32,12 @@ public final class PhysicsTuning {
 	 */
 	public static final double FAN_ANCHOR_RPM = 64;
 
+	/** One air unit at 128 RPM per tick, matching Create's compressor at that anchor. */
+	public static final double BACKTANK_TRAVEL_PER_AIR = 128;
+
+	/** Native ejector winding: 256 local RPM-ticks per block of target distance. */
+	public static final double EJECTOR_TRAVEL_PER_DISTANCE = 256;
+
 	/**
 	 * Maximum torque a fully engaged starter clutch transmits, su/RPM.
 	 * (DESIGN.md §6 clutch rework). Tuning entry: higher means stiffer

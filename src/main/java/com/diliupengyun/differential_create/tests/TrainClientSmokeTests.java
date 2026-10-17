@@ -3,9 +3,11 @@ package com.diliupengyun.differential_create.tests;
 import com.diliupengyun.differential_create.DifferentialCreate;
 import com.diliupengyun.differential_create.content.ModContent;
 import com.diliupengyun.differential_create.client.RenderObservationCache;
+import com.diliupengyun.differential_create.client.SteamBogeyModels;
 import com.diliupengyun.differential_create.client.SteamHoseRenderer;
 import com.diliupengyun.differential_create.trains.GearLeverBlock;
 import com.diliupengyun.differential_create.trains.SteamHoseLinks;
+import com.diliupengyun.differential_create.trains.SteamBogey;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.simibubi.create.AllBlocks;
@@ -19,6 +21,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.item.ItemStack;
@@ -74,6 +77,7 @@ public final class TrainClientSmokeTests {
                 motionChecked = true;
             }
             if (portsComplete) {
+                if (!TrainClientUpgradeTests.tick(mc)) return;
                 if (!TrainClientDrivingTests.tick(mc)) return;
                 DifferentialCreate.LOGGER.info("DC_TRAIN_CLIENT_SMOKE_PASS: models/BER/HUD loaded; {} world frames, {} client-only engines after concurrent server additions/removals",
                     renderedFrames, verifiedEngines);
@@ -156,7 +160,7 @@ public final class TrainClientSmokeTests {
             "com.simibubi.create.content.kinetics.steamEngine.SteamEngineVisual",
             "com.simibubi.create.content.trains.TrainHUD"}) Class.forName(type);
         var missing = mc.getModelManager().getMissingModel();
-        if (com.diliupengyun.differential_create.client.SteamBogeyModels.ENGINE_COVER.get() == missing)
+        if (SteamBogeyModels.ENGINE_COVER.get() == missing || SteamBogeyModels.CONDENSER_COVER.get() == missing)
             throw new AssertionError("Steam bogey engine cover model failed to bake");
         for (int gear = 0; gear <= com.diliupengyun.differential_create.trains.TrainMechanics.REVERSE_GEAR; gear++) {
             var model = mc.getBlockRenderer().getBlockModel(ModContent.GEAR_LEVER.getDefaultState().setValue(GearLeverBlock.GEAR, gear));
@@ -196,8 +200,16 @@ public final class TrainClientSmokeTests {
                 throw new AssertionError("Physical lever order must be R, centred N, 1 through 5: gear=" + gear + " tip=" + tip);
             previousTip = tip;
         }
-        if (mc.getItemRenderer().getItemModelShaper().getItemModel(new ItemStack(ModContent.STEAM_HOSE.get())) == missing)
-            throw new AssertionError("Missing hose model");
+        for (var item : new ItemStack[]{ModContent.STEAM_HOSE.asStack(), ModContent.CONDENSER_PIPE.asStack()}) {
+            var model = mc.getItemRenderer().getItemModelShaper().getItemModel(item);
+            var expected = ResourceLocation.fromNamespaceAndPath("differentialcreate",
+                ModContent.STEAM_HOSE.isIn(item) ? "item/steam_hose" : "item/condenser_pipe");
+            if (model == missing || model.isGui3d() || !model.getParticleIcon().contents().name().equals(expected))
+                throw new AssertionError("Hose and condenser items must use their own flat sprites: " + item);
+            if (model.getParticleIcon().contents().width() != 16 || model.getParticleIcon().contents().height() != 16)
+                throw new AssertionError("Hose and condenser sprites must match Create's 16px inventory pixel grid: " + item);
+        }
+        panelTexelDensity();
         bogeyGeometry();
         DifferentialCreate.LOGGER.info("Train client resources loaded; starting integrated-server hose rendering check");
     }
@@ -206,13 +218,22 @@ public final class TrainClientSmokeTests {
     private static void bogeyGeometry() {
         int cases = 0;
         for (var renderer : new StandardBogeyRenderer[]{new StandardBogeyRenderer.Small(), new StandardBogeyRenderer.Large()})
-            for (float angle : new float[]{0, 30, 90, 173}) for (boolean moving : new boolean[]{false, true}) {
+            for (float angle : new float[]{0, 30, 90, 173}) for (boolean moving : new boolean[]{false, true})
+            for (boolean condenser : new boolean[]{false, true}) {
                 var ordinary = bogeyVertices(renderer, new CompoundTag(), angle, moving);
                 var data = new CompoundTag(); data.putBoolean("DCGeared", true);
                 if (!ordinary.equals(bogeyVertices(renderer, data, angle, moving)))
                     throw new AssertionError("Legacy geared flag changed the native bogey geometry");
-                data.putBoolean(com.diliupengyun.differential_create.trains.SteamBogey.ENGINE, true);
+                data.putBoolean(SteamBogey.CONDENSER, condenser);
+                if (!ordinary.equals(bogeyVertices(renderer, data, angle, moving)))
+                    throw new AssertionError("Condenser flag without an engine changed an ordinary bogey");
+                data.putBoolean(SteamBogey.ENGINE, true);
                 var installed = bogeyVertices(renderer, data, angle, moving);
+                if (condenser) {
+                    var plain = data.copy(); plain.putBoolean(SteamBogey.CONDENSER, false);
+                    if (installed.equals(bogeyVertices(renderer, plain, angle, moving)))
+                        throw new AssertionError("Condenser upgrade failed to change the rendered panel texture");
+                }
                 for (var entry : ordinary.entrySet()) {
                     int remaining = installed.getOrDefault(entry.getKey(), 0) - entry.getValue();
                     if (remaining < 0) throw new AssertionError("Installed engine removed or changed a native wheel/frame/rod vertex");
@@ -231,6 +252,42 @@ public final class TrainClientSmokeTests {
                 cases++;
             }
         DifferentialCreate.LOGGER.info("DC_TRAIN_BOGEY_GEOMETRY_PASS: {} small/large angle and stationary/moving render cases preserve native vertices and UVs", cases);
+    }
+
+    /** Compare actual baked UVs in texture pixels, independent of atlas placement. */
+    private static void panelTexelDensity() {
+        var plain = SteamBogeyModels.ENGINE_COVER.get().getQuads(null, null, net.minecraft.util.RandomSource.create(0),
+            net.neoforged.neoforge.client.model.data.ModelData.EMPTY, null);
+        var cooled = SteamBogeyModels.CONDENSER_COVER.get().getQuads(null, null, net.minecraft.util.RandomSource.create(0),
+            net.neoforged.neoforge.client.model.data.ModelData.EMPTY, null);
+        if (plain.size() != cooled.size()) throw new AssertionError("Condenser changed the cover geometry");
+        int panels = 0;
+        for (int i = 0; i < plain.size(); i++) {
+            var first = plain.get(i); var second = cooled.get(i);
+            if (!first.getSprite().contents().name().equals(ResourceLocation.fromNamespaceAndPath("create", "block/engine"))) continue;
+            var firstSprite = first.getSprite(); var secondSprite = second.getSprite();
+            var a = first.getVertices(); var b = second.getVertices();
+            if (!secondSprite.contents().name().equals(ResourceLocation.fromNamespaceAndPath("differentialcreate", "block/steam_bogey/condenser_panel")))
+                throw new AssertionError("Condenser panel did not use the cooled engine atlas");
+            int stride = a.length / 4;
+            for (int vertex = 0; vertex < 4; vertex++) {
+                for (int axis = 0; axis < 3; axis++)
+                    if (a[vertex * stride + axis] != b[vertex * stride + axis]) throw new AssertionError("Condenser panel moved a native cover vertex");
+                float firstU = (Float.intBitsToFloat(a[vertex * stride + 4]) - firstSprite.getU0())
+                    / (firstSprite.getU1() - firstSprite.getU0()) * firstSprite.contents().width();
+                float secondU = (Float.intBitsToFloat(b[vertex * stride + 4]) - secondSprite.getU0())
+                    / (secondSprite.getU1() - secondSprite.getU0()) * secondSprite.contents().width();
+                float firstV = (Float.intBitsToFloat(a[vertex * stride + 5]) - firstSprite.getV0())
+                    / (firstSprite.getV1() - firstSprite.getV0()) * firstSprite.contents().height();
+                float secondV = (Float.intBitsToFloat(b[vertex * stride + 5]) - secondSprite.getV0())
+                    / (secondSprite.getV1() - secondSprite.getV0()) * secondSprite.contents().height();
+                if (Math.abs(firstU - secondU) > .001 || Math.abs(firstV - secondV) > .001)
+                    throw new AssertionError("Condenser pixel scale differs from the native engine cover");
+            }
+            panels++;
+        }
+        if (panels != 3) throw new AssertionError("Expected one lid and two side panels");
+        DifferentialCreate.LOGGER.info("DC_TRAIN_TEXTURE_DENSITY_PASS: 16px item sprites and {} panels match native engine texel density", panels);
     }
 
     private static Map<BogeyVertex, Integer> bogeyVertices(StandardBogeyRenderer renderer, CompoundTag data, float angle, boolean moving) {

@@ -124,7 +124,7 @@ public final class TrainStationAssistTests {
             if (!action.equals("hold")) {
                 TrainDrivingTests.control(f, player, action.equals("brake") ? List.of(1, 4) : List.of());
                 h.assertTrue(f.train.navigation.destination == null && !TrainPhysics.state(f.train).stationAssist
-                    && TrainPhysics.state(f.train).brake == action.equals("brake"),
+                    && !TrainPhysics.state(f.train).parkingBrake && TrainPhysics.state(f.train).brake == action.equals("brake"),
                     "Releasing space cancels assistance; S plus space immediately returns to service braking");
                 f.finish(); return;
             }
@@ -132,12 +132,19 @@ public final class TrainStationAssistTests {
                 TrainDrivingTests.control(f, player, List.of(4)); f.train.tick(h.getLevel());
                 h.assertTrue(TrainPhysics.state(f.train).gear == gear, "Holding station assist never automatically shifts player gears");
             }
-            h.assertTrue(f.train.getCurrentStation() == target && f.train.speed == 0,
+            h.assertTrue(f.train.getCurrentStation() == target && f.train.speed == 0 && TrainPhysics.state(f.train).parkingBrake,
                 "Holding space reaches and parks at the native station with finite steam/braking");
             int water = f.water();
             for (int tick = 0; tick < 5; tick++) { TrainDrivingTests.control(f, player, List.of(0, 4)); f.train.tick(h.getLevel()); }
             h.assertTrue(f.train.getCurrentStation() == target && f.train.speed == 0 && f.water() == water,
                 "Holding space after arrival prevents W from departing or consuming water");
+            for (int tick = 0; tick < 10; tick++) { TrainDrivingTests.control(f, player, List.of()); f.train.tick(h.getLevel()); }
+            h.assertTrue(f.train.getCurrentStation() == target && f.train.speed == 0 && f.water() == water
+                && TrainPhysics.state(f.train).parkingBrake && TrainPhysics.state(f.train).controlsBraking,
+                "Releasing Space after assisted arrival retains the parked train and brake animation");
+            for (int tick = 0; tick < 20; tick++) { TrainDrivingTests.control(f, player, List.of(0)); f.train.tick(h.getLevel()); }
+            h.assertTrue(!TrainPhysics.state(f.train).parkingBrake && f.train.currentStation == null && f.train.speed * direction > 0,
+                "W unlocks the assisted station stop; actual rail travel releases its station registration");
             f.finish();
         });
     }
@@ -208,7 +215,7 @@ public final class TrainStationAssistTests {
         try {
             for (int tick = 0; tick < 700; tick++) { TrainDrivingTests.control(f, player, List.of(4)); f.train.tick(h.getLevel()); }
             h.assertTrue(f.train.navigation.waitingForSignal != null && f.train.currentStation == null
-                && (point.position - position) * direction <= 1e-6 && Math.abs(f.train.speed) < .01,
+                && !TrainPhysics.state(f.train).parkingBrake && (point.position - position) * direction <= 1e-6 && Math.abs(f.train.speed) < .01,
                 "Held station assistance waits before an occupied signal in either direction");
             occupied.reserved = null;
             signal.blockEntities.getFirst().replaceAll((pos, powered) -> false);

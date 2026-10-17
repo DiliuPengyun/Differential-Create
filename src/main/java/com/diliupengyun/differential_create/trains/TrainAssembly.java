@@ -23,7 +23,7 @@ public final class TrainAssembly {
         void differentialcreate$layout(Layout layout);
     }
     // The internal transmission and motor share the powered bogey's position.
-    public record Motor(BlockPos pos, BlockPos shaft, BlockPos boiler, double capacity) {}
+    public record Motor(BlockPos pos, BlockPos shaft, BlockPos boiler, double capacity, boolean condenser) {}
     public record Heater(BlockPos pos, float fixedHeat, CompoundTag burner) {}
     public record Boiler(BlockPos pos, int size, List<Heater> heaters, double feedWater) {}
     public record Drive(Motor motor, double ratio, BlockPos controller, double dial) {}
@@ -60,7 +60,8 @@ public final class TrainAssembly {
             var list = new ListTag();
             for (var motor : motors) {
                 var t = new CompoundTag(); t.putLong("Pos", motor.pos.asLong()); t.putLong("Shaft", motor.shaft.asLong());
-                t.putLong("Boiler", motor.boiler.asLong()); t.putDouble("Capacity", motor.capacity); list.add(t);
+                t.putLong("Boiler", motor.boiler.asLong()); t.putDouble("Capacity", motor.capacity);
+                t.putBoolean("Condenser", motor.condenser); list.add(t);
             }
             tag.put("Motors", list); list = new ListTag();
             for (var boiler : boilers.values()) {
@@ -90,7 +91,7 @@ public final class TrainAssembly {
                 double capacity = t.getDouble("Capacity");
                 if (Double.isFinite(capacity) && capacity > 0)
                     l.motors.add(new Motor(BlockPos.of(t.getLong("Pos")), BlockPos.of(t.getLong("Shaft")),
-                        BlockPos.of(t.getLong("Boiler")), capacity));
+                        BlockPos.of(t.getLong("Boiler")), capacity, t.getBoolean("Condenser")));
             }
             for (Tag raw : tag.getList("Boilers", Tag.TAG_COMPOUND)) {
                 var t = (CompoundTag) raw; var heaters = new ArrayList<Heater>();
@@ -142,7 +143,7 @@ public final class TrainAssembly {
             var tank = SteamHoseLinks.tank(bogey);
             if (tank == null) continue;
             BlockPos boiler = tank.getBlockPos().subtract(contraption.anchor);
-            result.motors.add(new Motor(local, local, boiler, BlockStressValues.getCapacity(AllBlocks.STEAM_ENGINE.get())));
+            result.motors.add(new Motor(local, local, boiler, BlockStressValues.getCapacity(AllBlocks.STEAM_ENGINE.get()), SteamBogey.condensing(bogey)));
         }
         result.frontalArea = result.frontalProjection.size(); result.resolve(); return result;
     }

@@ -20,12 +20,16 @@ import net.neoforged.neoforge.gametest.*;
 public final class TrainCrossCarriageSteamTests {
     private TrainCrossCarriageSteamTests() {}
     @GameTestGenerator public static Collection<TestFunction> cases() {
-        String name = "train_four_cross_carriage_hoses";
-        if (!name.matches(System.getProperty("differentialcreate.trains.select", ".*"))) return List.of();
-        return List.of(new TestFunction(name, name, "differentialcreate_trains:kineticphysicstests.physics_test", 200, 0, true,
-            TrainCrossCarriageSteamTests::fourHoses));
+        var tests = new ArrayList<TestFunction>();
+        for (boolean condensers : new boolean[]{false, true}) {
+            String name = "train_four_cross_carriage_" + (condensers ? "condensers" : "hoses");
+            if (name.matches(System.getProperty("differentialcreate.trains.select", ".*")))
+                tests.add(new TestFunction(name, name, "differentialcreate_trains:kineticphysicstests.physics_test", 200, 0, true,
+                    h -> fourHoses(h, condensers)));
+        }
+        return tests;
     }
-    private static void fourHoses(GameTestHelper h) {
+    private static void fourHoses(GameTestHelper h, boolean condensers) {
         var captured = new ArrayList<CarriageContraption>();
         TrainTestFixture.create(h, "flat", false, false, setup -> {
             for (int i = 0; i < 4; i++) {
@@ -34,6 +38,7 @@ public final class TrainCrossCarriageSteamTests {
                 setup.setBlock(at.above(), AllBlocks.RAILWAY_CASING.getDefaultState());
                 setup.getLevel().addFreshEntity(new SuperGlueEntity(setup.getLevel(), SuperGlueEntity.span(setup.absolutePos(at), setup.absolutePos(at.above()))));
                 SteamBogey.install(setup.getBlockEntity(at));
+                if (condensers && i % 2 == 0) SteamBogey.installCondenser(setup.getBlockEntity(at));
             }
             setup.runAfterDelay(24, () -> {
                 for (int i = 0; i < 4; i++) {
@@ -44,6 +49,7 @@ public final class TrainCrossCarriageSteamTests {
                     catch (com.simibubi.create.content.contraptions.AssemblyException e) { throw new IllegalStateException(e); }
                     var layout = ((TrainAssembly.LayoutHolder) cc).differentialcreate$layout();
                     h.assertTrue(layout.motors.size() == 1 && layout.boilers.isEmpty(), "A remote hose retains its motor without duplicating the boiler");
+                    h.assertTrue(layout.motors.getFirst().condenser() == (condensers && i % 2 == 0), "Remote native capture retains each engine's condenser");
                     captured.add(cc);
                 }
                 for (var cc : captured) cc.removeBlocksFromWorld(h.getLevel(), BlockPos.ZERO);
@@ -84,8 +90,20 @@ public final class TrainCrossCarriageSteamTests {
             int initialWater = original.water(); double paid = 0;
             var supply = network.supplies.getFirst();
             for (int tick = 0; tick < 20; tick++) {
+                var rpms = new IdentityHashMap<TrainMechanics.Engine, Double>();
+                for (var connection : supply.connections) {
+                    var engine = connection.carriage().engines.get(connection.drive().motor().pos()); rpms.put(engine, engine.rpm());
+                }
                 original.tick(1, false);
-                paid += BoilerAdmission.demand(supply.carriage.boilers.get(supply.boiler.pos()));
+                var actual = supply.carriage.boilers.get(supply.boiler.pos());
+                double share = Math.min(1, SourcePhysics.thermalSteamLevel(actual, supply.boiler.size()) / 5), expected = 0;
+                for (var connection : supply.connections) {
+                    var motor = connection.drive().motor(); double rpm = Math.abs(rpms.get(connection.carriage().engines.get(motor.pos())));
+                    expected += 10 * Math.min(share, Math.max(16, rpm) / 256) * Math.clamp((512 - rpm) / 64, 0, 1)
+                        * (motor.condenser() ? .1 : 1);
+                }
+                h.assertTrue(Math.abs(BoilerAdmission.demand(actual) - expected) < 1e-8, "Only upgraded remote engines reduce their own net water request");
+                paid += BoilerAdmission.demand(actual);
             }
             double remainder = supply.carriage.water.get(supply.boiler.pos());
             h.assertTrue(Math.abs(initialWater - original.water() - paid - remainder) < 1e-8,
@@ -104,6 +122,8 @@ public final class TrainCrossCarriageSteamTests {
             var restored = TrainSteamConnections.resolve(original.train);
             h.assertTrue(restored.supplies.size() == 1 && restored.supplies.getFirst().connections.size() == 5,
                 "Native Train save/read preserves all remote boiler bindings");
+            h.assertTrue(restored.supplies.getFirst().connections.stream().filter(c -> c.drive().motor().condenser()).count() == (condensers ? 2 : 0),
+                "Native train readback preserves the mixed remote upgrades");
             original.tick(1, false);
             original.train.carriages.forEach(c -> unload(c, h));
             h.assertTrue(TrainPhysics.frontalArea(original.train) == area, "Native entity unload preserves whole-train shadowing");
@@ -137,6 +157,7 @@ public final class TrainCrossCarriageSteamTests {
                     var motor = h.getLevel().getBlockEntity(at);
                     h.assertTrue(SteamBogey.powered(motor) && SteamHoseLinks.tank(motor) != null,
                         "Disassembled remote bogey preserves a real world hose endpoint: " + at);
+                    h.assertTrue(SteamBogey.condensing(motor) == (condensers && i % 2 == 0), "Native remote disassembly restores each condenser");
                     var cc = new CarriageContraption(Direction.SOUTH);
                     try { h.assertTrue(cc.assemble(h.getLevel(), at), "A remote bogey reassembles natively"); }
                     catch (com.simibubi.create.content.contraptions.AssemblyException e) { throw new IllegalStateException(e); }

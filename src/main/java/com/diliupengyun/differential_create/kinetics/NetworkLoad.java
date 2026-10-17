@@ -21,6 +21,23 @@ public final class NetworkLoad {
         var members = new ArrayList<LoadFactor.Member>();
         for (var entry : ratios.entrySet())
             if (!entry.getKey().isRemoved()) members.add(member(entry.getKey(), entry.getValue()));
+        for (var pair : CrushingKinetics.pairs(List.of(network))) if (pair.active()) {
+            double a = NetworkDynamics.preciseSpeed(pair.a()), b = NetworkDynamics.preciseSpeed(pair.b());
+            double relative = a - b;
+            double torque = pair.reaction();
+            boolean left = ratios.containsKey(pair.a()), right = ratios.containsKey(pair.b());
+            if (left && right) {
+                // Internal returned power cancels before forming the network demand.
+                members.add(new LoadFactor.Member(ratios.get(pair.a()) - ratios.get(pair.b()), relative, 0,
+                    relative == 0 ? pair.torque() : Math.max(0, torque * Math.signum(relative)), false));
+            } else {
+                double speed = left ? a : b, reaction = left ? -torque : torque;
+                double ratio = ratios.get(left ? pair.a() : pair.b());
+                boolean driving = reaction * speed > 0 || speed == 0 && reaction != 0;
+                members.add(new LoadFactor.Member(ratio, speed, driving ? reaction : 0,
+                    Math.max(0, -reaction * Math.signum(speed)), driving));
+            }
+        }
         double loss = 0;
         for (var edge : dynamics.differentialcreate$data().connections) {
             if (edge.a.isRemoved() || edge.b.isRemoved()) continue;

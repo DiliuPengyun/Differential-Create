@@ -20,7 +20,7 @@
 | 零速启动 | 暂无输入时保留程序；首次实际输入决定正反转基准 |
 | 能量 | 每个接受的时间片核对储能增量不超过供给功扣除制动功；耦合力矩有上限；累计制动功非负 |
 
-本组目前有 356 个机械场景；大量时间片断言不等于同样数量的独立行为。反复采样用于抓住中途超限、短指令过冲和停车附近振荡。
+2026-10-09 的验证记录中本组有 356 个机械场景；当前数量以本次回归输出为准。大量时间片断言不等于同样数量的独立行为。反复采样用于抓住中途超限、短指令过冲和停车附近振荡。
 
 ## 真实游戏划分
 
@@ -36,7 +36,7 @@
 | 虚拟演示 | 1 | Ponder 虚拟方块沿用原生延时与红石等待，不建立真实转子目标和伺服存档 |
 | 输出装配相位 | 24 | 三轴 × 两侧接线 × 对齐/扩展/重载/双输出；以报告存档的两个不同角度零点复现接缝，保留实际弹簧扭转，校正后控制坐标、目标、速度与储能不变 |
 
-共 577 例。比较器保留原生步骤更新和有信号时的结束锁存；读档比较双精度位置、速度、目标和进度；冻结验证程序与输出都不前进；丢弃试算验证结果不受采样顺序影响，也不修改实际输出。运动过程中逐 tick 核对输出端与相邻轴的实际扭转关系；90° 快照组覆盖中段真实旋转和停车前后，核对输出相位与普通转子在同一份网络消息中无损往返。
+上表列出的齿轮箱分组合计 577 例，不是当前完整运动套件的总数；其他机器、接口和矿车场景另计。比较器保留原生步骤更新和有信号时的结束锁存；读档比较双精度位置、速度、目标和进度；冻结验证程序与输出都不前进；丢弃试算验证结果不受采样顺序影响，也不修改实际输出。运动过程中逐 tick 核对输出端与相邻轴的实际扭转关系；90° 快照组覆盖中段真实旋转和停车前后，核对输出相位与普通转子在同一份网络消息中无损往返。
 
 ## 其他板块补测与既有覆盖
 
@@ -56,7 +56,92 @@
 | 流体与共享时钟 | 继续执行完整真实流体专项，检查机械改动没有改变液体库存、接口或动力耦合 | [流体覆盖矩阵](FLUID_COVERAGE.md) |
 | 客户端数学 | 输出装配相位与相邻轴对齐，普通渲染和实例化 shader 使用同一相位；复现两路样本差一 tick 导致中段错位，验证同一物理快照的完整、缺失、合并交付与只读渲染查询；覆盖停靠、反转、冻结与两种模型静态偏移；既有零包/双包与轴承姿态回归继续执行 | RenderingRegression |
 
-## 验证记录
+## 背罐充气
+
+入口：[BacktankChargeRegression](../src/physicsTest/java/com/diliupengyun/differential_create/BacktankChargeRegression.java)、[BacktankIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/BacktankIntegrationTests.java) 和 [BacktankTests](../src/main/java/com/diliupengyun/differential_create/tests/BacktankTests.java)。2026-10-15 数值回归 42 次检查、铜／下界合金两种材质共 16 项 GameTest 通过。
+
+| 分组 | 验证内容 |
+| --- | --- |
+| 位移与产量 | 分成 1–1024 片的同一行程得到相同产量；极低速无最低免费增量，高速无原版增量封顶，正反转按绝对行程计 |
+| 实际耗功 | 从 ±128、0.01、8192 RPM 的受控初态调用一次真实公共时钟，以孤立转子的恒扭矩运动解析解核对产量和末速；自然停转不丢最后一段行程 |
+| 充满事件 | 从已付四分之三点空气、±128 RPM 开始，在 tick 内充满；末速对应最后四分之一点的实际加工功，余时和随后 tick 不再消耗工作扭矩 |
+| 工作状态 | 静止待充保留起动阻力；原生 tick 不免费充气；水淹暂停并卸载，保留惯量与小数进度，解除后续充 |
+| 生命周期 | 受控 NBT 保存／读取、物品 NBT、克隆取物、真实掉落表、右键穿戴和重新放置；保留容量附魔、整数空气、自定义名称、其他模组数据及显式组件移除；满罐清除旧小数额度 |
+
+专项命令为 `.\gradlew.bat runBacktankServer`，独立命名空间 `differentialcreate_backtank`，每次在 `build/backtank/runs/` 创建世界。运动测试仅设置初速，随后不补能；它们在测试回调中额外推进一次公共物理 tick，以隔离初态和比较解析解。生命周期测试是受控序列化与原生物品转换，未替代自然区块卸载、多人交互或实际客户端体验。
+
+## 弹射置物台
+
+入口：[EjectorChargeRegression](../src/physicsTest/java/com/diliupengyun/differential_create/EjectorChargeRegression.java)、[EjectorIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/EjectorIntegrationTests.java)、[EjectorTests](../src/main/java/com/diliupengyun/differential_create/tests/EjectorTests.java) 和 [EjectorClientSmokeTests](../src/main/java/com/diliupengyun/differential_create/tests/EjectorClientSmokeTests.java)。2026-10-15 数值回归 30 次检查、服务端专项 19 项 GameTest 通过；其中一项复用既有机器负载回归，不计为新增独立场景。
+
+| 分组 | 验证内容 |
+| --- | --- |
+| 实际回卷与耗功 | 0、0.01、±128、8192 RPM；孤立转子从受控初速推进一次公共物理 tick，与恒扭矩解析解比较实际回卷行程和末速；停转不增加额度 |
+| 充满边界 | 正反转均只支付最后 32 RPM-tick；充满后余时与后续 tick 保留惯量但不消耗工作扭矩 |
+| 原生发射 | 1 件／64 件物品、生物、断电发射、释放动画卸载；耗尽一轮额度，重复触发不重复发射；未充能触发也不向上推动实体 |
+| 目标和触发 | 改远只补差额，改近丢弃超额，改回不能恢复；高度正负沿用原版相同行程标定；待发射时改远会取消未付足的排队发射并保留物品；保留红石抑制与库存阻塞规则 |
+| 在途物品 | 两批不同目标／朝向同时在途，同批共享碰撞缓存；NBT 恢复各自轨迹、年龄和批次，拆除时按原轨迹掉落一次；实际障碍拦截与目标置物台入库 |
+| 客户端 | 集成服务器的实际方块数据同步；真实原生 BER 在改目标前后产生相同的在途物品顶点；玩家待弹起期间收到 LAUNCHING 更新仍按原生速度弹起；虚拟 Ponder 保留原生时钟 |
+
+命令为 `.\gradlew.bat runEjectorServer runEjectorClientSmoke`，各自在 `build/ejector/` 创建临时世界。服务端运动及充满测试以解析解核对轴功；其余用例由夹具明确预付回卷行程，用于隔离物品与触发行为，不作为从动力源到载荷真实动能的全周期验收。物品弹道测试清除共享模板的低顶棚，碰撞用例另放实际障碍；客户端使用独立集成世界和冻结夹具，完成后自动退出。
+
+额度保留原版距离标定和批量规则，没有物品／生物质量模型，不保证实体动能守恒；虚拟物品仍使用原生修正弹道和周期性碰撞扫描。受控 NBT 重载未替代自然区块卸载／重载，多人延迟、长时间工厂运行和动态结构／列车上的原生支持范围仍未完成专项验收。
+
+## 粉碎轮双轮作业
+
+入口：[CrushingPairRegression](../src/physicsTest/java/com/diliupengyun/differential_create/CrushingPairRegression.java)、[CrushingIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/CrushingIntegrationTests.java) 和 [CrushingTests](../src/main/java/com/diliupengyun/differential_create/tests/CrushingTests.java)。2026-10-15 数值回归 416 次检查、服务端专项 27 项 GameTest 通过；其中两项复用既有机器负载与多机器耗功回归。
+
+| 分组 | 验证内容 |
+| --- | --- |
+| 共同进给 | 等速／异速反向、同向同速／异速、一轮停转、全停、极低速自然相对停转和高速；按解析解核对行程、双轮末速、动量与耗功 |
+| 相对静止 | 有限静反力、不同惯量、共享轮和冗余接触环；弹性轴振荡与反转时相对绝对行程仍与加工耗功一致 |
+| 完工与批量 | 正反转均在最后 32 RPM-tick 完工并卸载两侧；单件、2／4／64 件的有限对数预算，按数量执行原生配方、整批输出且不重放；复用既有多机器全周期耗功测试 |
+| 进出料 | 六种轮轴／间隔方向，一轮停转时仍创建有效进给；反转改变进出料方向，拆轮移除控制器；实体牵引和物品吸入使用共同进给，零进给不造成原生伤害 |
+| 独立传动 | 两个实际创造马达分别驱动两轮，保留各自网络；其中一路经过实际离合器，检查滑移和扭矩上限；同向异速时慢侧负载率识别返回功率 |
+| 保存与显示 | 受控 NBT 冷载恢复双精度加工余量；同速自转和全停均保留进度。护目镜显示有符号物料反力及吸收／返回功率，控制器同步静反力 |
+
+命令为 `.\gradlew.bat runCrusherServer`，每次在 `build/crusher/runs/` 创建独立世界。孤立运动与完工场景使用受控初速和明确的已付行程；马达场景从实际动力源驱动。批量测试每个 tick 重设初速，用动能差检查每段耗功。受控 NBT 测试未替代自然区块卸载，多人同步、实际客户端观感及长期大型工厂性能仍待专项验收；物料惯量、滑移剪切损失和实体真实动能未纳入模型。
+
+## Create 6 物流与锁链传动轮
+
+2026-10-16 基于 Create 6.0.10-281 的专项包含 **60 项默认服务端 GameTest**；同次完整物理回归通过，其中 [ChainConveyorRegression](../src/physicsTest/java/com/diliupengyun/differential_create/ChainConveyorRegression.java) 有 1584 次分割路径与正反向首达检查。客户端烟测通过了 10 个正反向乘链出口用例、实际方块数据中的包裹／方向往返、虚拟 Ponder 连续 tick 与原生渲染器存在性检查。
+
+入口为 [Create6LogisticsTests](../src/main/java/com/diliupengyun/differential_create/tests/Create6LogisticsTests.java)、[列车邮件测试](../src/main/java/com/diliupengyun/differential_create/tests/Create6TrainPackageTests.java)、[工厂配料测试](../src/main/java/com/diliupengyun/differential_create/tests/Create6FactoryTests.java)、[商店测试](../src/main/java/com/diliupengyun/differential_create/tests/Create6CommerceTests.java) 和 [客户端烟测](../src/main/java/com/diliupengyun/differential_create/tests/Create6ClientSmokeTests.java)。
+
+| 分组 | 默认数量 | 覆盖与边界 |
+| --- | ---: | --- |
+| 锁链与基本物流 | 46 | ±0.01／16／256／1024／2048／8192 RPM、整圈、多圈、停转；正反向转交、先到端口优先、跨段余时使用接收轮实际转速、同 tick 不重复推进、`1e30 RPM` 闭环不挂起；蛙港满库存保持包裹、受控 NBT 内容与方向、负转停机后的几何重载；打包拆包、碎片等待／重组、库存查询／请求、仪表、物品仓口与计时器 |
+| 列车邮件 | 8 | 正反方向 × 取件／送件 × 实体邮筒／未加载坐标的离线缓冲；真实时刻表寻路、物理到站与原生库存转移；保留不匹配地址和已到本地的信件，重复停靠转移不复制 |
+| 工厂配料与合成 | 2 | 两个实际仓储按 4 金锭／1 红石精确配料，保留 3×3 配方排列与发货地址，重打包守恒；输出承诺抑制重复配料。另从单输入仪表配方生成包裹，经原生拆包接口交给真实马达和齿轮驱动的机械合成器，实际产出 4 个木板 |
+| 桌布商店 | 4 | 购物清单增加／库存上限与物品组件保存；正常交易精确扣款和打包；付款不足、收款库存满、使用新鲜库存摘要时缺货均不扣款 |
+
+锁链修复入口为 [ChainConveyorTransport](../src/main/java/com/diliupengyun/differential_create/kinetics/ChainConveyorTransport.java)。原生最短角差比较会遗漏一次 tick 已经过的大半圈、整圈或多圈；现按未取模行程定位首个事件，再推进跨段余时。方向随包裹和传动轮保存，停机重载保留所在链侧。空载额定负载、零链体惯量、无货物附加质量及原生每 tick 转速采样保留，没有接入共同机械积分或真实链条伸缩模型。
+
+```powershell
+.\gradlew.bat runLogisticsServer
+.\gradlew.bat runLogisticsClientSmoke
+```
+
+标准入口分别在 `build/logistics/runs/` 和 `build/logistics/client-runs/` 创建新世界，并要求日志明确通过。CI 执行服务端专项并保留日志。本机 Gradle 启动曾遇到 `Unable to establish loopback connection`，本次验证改用 JDK 21 编译全部当前源码和已有 ModDev 依赖／启动参数直接运行同一测试；不能据此声称执行了 Gradle 的完整 `build` 任务。
+
+### 商店事务的已确认原生问题
+
+两项额外正确性探针以 `-PlogisticsKnownIssues=true` 显式启用，默认不混入通过套件：
+
+```powershell
+.\gradlew.bat runLogisticsServer -PlogisticsKnownIssues=true
+```
+
+- `table_cloth_busy_warehouse`：打包机已有 50 项排队出口包裹，原生 `PLAYER` 请求拒绝；交易仍扣取 4 绿宝石并消耗清单，仓储的 17 铁锭未动，也没有创建本次商品包裹。
+- `table_cloth_stale_stock`：清单订购 14 铁锭后，实际库存从 17 变为 1，但 20 tick 的近期摘要仍显示旧量；交易足额扣取 4 绿宝石并消耗清单，只打出 1 铁锭。
+
+对应上游 [StockTickerInteractionHandler](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/content/logistics/stockTicker/StockTickerInteractionHandler.java) 在实际扣款后才广播请求且不检查返回值，库存检查又取近期摘要。这些路径没有使用微分动力的输送推进实现，本轮只确认并保留复现，没有改变商店交易规则；两项探针当前预期失败，不能当作已修复回归。
+
+多人高延迟、自然区块卸载／重载、任意大型自动化图、长期性能、ComputerCraft 可选集成、纸板装备交互和全部新增配方仍未完成专项验收。乘链烟测验证实际客户端的出口选择，未穷尽长距离玩家随动和网络延迟。邮筒测试直接建立原生站点关联，没有验收玩家放置站台和连线的完整交互；离线缓冲测试使用真正未加载坐标，没有声称覆盖自然卸载的完整生命周期。
+
+## 历史验证记录
+
+本节保留当时的测试数量与网络协议号，不作为当前构建状态；现行协议见 [README](../README.md#构建与验证)，本次验证范围和结果以实际执行日志为准。
 
 2026-10-09 初版构建与数值回归通过：356 个齿轮箱场景（4,855,762 次约束检查）和 2526 个其他动力划分（101,398 次检查）；535 项真实运动测试、247 项常规 GameTest 和 427 项真实流体专项全部通过。另在存档副本恢复原崩溃记录的九节点状态和双精度进度，100 个普通服务端 tick 内完成停车，输出轴和飞轮未断裂。临时重放探针只用于验证，没有进入试用 JAR。
 

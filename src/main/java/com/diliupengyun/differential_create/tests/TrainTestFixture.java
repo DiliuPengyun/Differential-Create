@@ -34,6 +34,7 @@ final class TrainTestFixture {
     final TrackGraph graph;
     Train train;
     private TrainTestFixture(GameTestHelper h, Train train) { this.h=h; this.train=train; this.graph=train.graph; }
+    static TrainTestFixture restored(GameTestHelper h, Train train) { return new TrainTestFixture(h, train); }
     static void create(GameTestHelper h, String track, boolean large, boolean upsideDown,
                        Consumer<GameTestHelper> customise, Consumer<TrainTestFixture> ready) {
         create(h,track,large,upsideDown,false,customise,ready);

@@ -30,6 +30,9 @@ public final class ModContent {
 	public static final ItemEntry<com.diliupengyun.differential_create.trains.SteamHoseItem> STEAM_HOSE = REGISTRATE
 		.item("steam_hose", com.diliupengyun.differential_create.trains.SteamHoseItem::new).register();
 
+	public static final ItemEntry<com.diliupengyun.differential_create.trains.CondenserPipeItem> CONDENSER_PIPE = REGISTRATE
+		.item("condenser_pipe", com.diliupengyun.differential_create.trains.CondenserPipeItem::new).register();
+
 	public static final BlockEntry<com.diliupengyun.differential_create.trains.GearLeverBlock> GEAR_LEVER = REGISTRATE
 		.block("gear_lever", com.diliupengyun.differential_create.trains.GearLeverBlock::new)
 		.initialProperties(SharedProperties::stone)

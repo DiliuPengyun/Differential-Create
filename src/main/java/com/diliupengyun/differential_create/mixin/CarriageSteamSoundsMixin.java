@@ -23,14 +23,18 @@ public abstract class CarriageSteamSoundsMixin {
 
     @Inject(method = "tick", at = @At("HEAD"))
     private void differentialcreate$actualSteam(DimensionalCarriageEntity carriage, CallbackInfo ci) {
-        // Travel is not stored boiler pressure. This also disables the native
-        // movement-derived stopping plume in CarriageParticles.
-        entity.getCarriage().train.accumulatedSteamRelease = 0;
         differentialcreate$steam.tick(entity);
     }
     @Redirect(method = "tick", at = @At(value = "INVOKE",
-        target = "Lcom/simibubi/create/AllSoundEvents$SoundEntry;playAt(Lnet/minecraft/world/level/Level;Lnet/minecraft/world/phys/Vec3;FFZ)V"))
+        target = "Lcom/simibubi/create/AllSoundEvents$SoundEntry;playAt(Lnet/minecraft/world/level/Level;Lnet/minecraft/world/phys/Vec3;FFZ)V", ordinal = 0))
     private void differentialcreate$replaceTravelSteam(SoundEntry sound, Level level, Vec3 pos, float volume, float pitch, boolean delay) {
         if (sound != AllSoundEvents.STEAM) sound.playAt(level, pos, volume, pitch, delay);
+    }
+    // Only the two wheel-timed exhaust calls are replaced. Native stopping
+    // release and whistle calls later in tick retain their original behavior.
+    @Redirect(method = "tick", at = @At(value = "INVOKE",
+        target = "Lcom/simibubi/create/AllSoundEvents$SoundEntry;playAt(Lnet/minecraft/world/level/Level;Lnet/minecraft/world/phys/Vec3;FFZ)V", ordinal = 1))
+    private void differentialcreate$replaceTravelBurst(SoundEntry sound, Level level, Vec3 pos, float volume, float pitch, boolean delay) {
+        differentialcreate$replaceTravelSteam(sound, level, pos, volume, pitch, delay);
     }
 }

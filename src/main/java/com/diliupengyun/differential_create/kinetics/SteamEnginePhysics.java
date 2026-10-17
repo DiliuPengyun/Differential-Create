@@ -36,8 +36,11 @@ public final class SteamEnginePhysics {
 
 	public static PoweredShaftBlockEntity shaft(SteamEngineBlockEntity engine) {
 		var level = engine.getLevel();
-		if (level != null && level.isClientSide && engine.isVirtual())
-			return com.diliupengyun.differential_create.client.ClientTrainKinetics.renderShaft(engine);
+		if (level != null && level.isClientSide && engine.isVirtual()) {
+			var rendered = com.diliupengyun.differential_create.client.ClientTrainKinetics.renderShaft(engine);
+			if (rendered != null) return rendered;
+			// Ponder also marks block entities virtual, but uses a real powered shaft.
+		}
 		PoweredShaftBlockEntity target = null;
 		// Create calls getShaft() during remove(), after marking the engine removed.
 		if (level != null && engine.getBlockState().getBlock() instanceof SteamEngineBlock) {

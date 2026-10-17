@@ -56,7 +56,10 @@ public final class TrainDrivingTests {
         create(h, gear, inverted, setup -> {}, run);
     }
     static void create(GameTestHelper h, int gear, boolean inverted, Consumer<GameTestHelper> customise, Consumer<TrainTestFixture> run) {
-        TrainTestFixture.create(h, "flat", false, false, setup -> {
+        create(h, "flat", gear, inverted, customise, run);
+    }
+    static void create(GameTestHelper h, String track, int gear, boolean inverted, Consumer<GameTestHelper> customise, Consumer<TrainTestFixture> run) {
+        TrainTestFixture.create(h, track, false, false, setup -> {
             var chunk = new ChunkPos(setup.absolutePos(TrainTestFixture.WHEEL));
             // Driver tests must keep a cab loaded while moving either way.
             for (int x = -1; x <= 1; x++) for (int z = -2; z <= 1; z++)
@@ -81,8 +84,12 @@ public final class TrainDrivingTests {
     }
     static void control(TrainTestFixture f, Player player, Collection<Integer> keys) {
         var local = CAB.subtract(TrainTestFixture.WHEEL);
-        player.setPos(f.entity().toGlobalVector(Vec3.atCenterOf(local), 0));
-        f.h.assertTrue(f.entity().control(local, keys, player), "Actual Create cab accepts driver input");
+        var entity = f.entity();
+        f.h.assertTrue(entity != null, "Driving fixture retains its cab: speed=" + f.train.speed
+            + " point=" + f.train.carriages.getFirst().getLeadingPoint().position + " graph=" + (f.train.graph != null)
+            + " parking=" + TrainPhysics.state(f.train).parkingBrake);
+        player.setPos(entity.toGlobalVector(Vec3.atCenterOf(local), 0));
+        f.h.assertTrue(entity.control(local, keys, player), "Actual Create cab accepts driver input");
     }
     private static List<Integer> keys(String keys) {
         return switch (keys) {
@@ -100,20 +107,25 @@ public final class TrainDrivingTests {
             boolean brake = keys.equals("brake") || keys.equals("space") || keys.equals("both") || keys.equals("brake_space");
             int direction = keys.equals("drive") && gear != 0 ? (inverted ? -1 : 1) * (gear == TrainMechanics.REVERSE_GEAR ? -1 : 1) : 0;
             int water = f.water();
-            for (int tick = 0; tick < 60; tick++) {
+            // A high gear must overcome the initial opposite momentum using its
+            // own smaller wheel torque, rather than the former full service brake.
+            int duration = direction * momentum < 0 ? 400 : 60;
+            for (int tick = 0; tick < duration; tick++) {
                 control(f, player, keys(keys));
                 var state = TrainPhysics.state(train);
                 h.assertTrue(state.direction == direction && state.brake == brake, "W follows gear/cab orientation; S wins over W and space");
                 h.assertTrue(state.neutralRev == (keys.equals("drive") && gear == 0), "Only W alone opens admission in neutral");
-                boolean reversing = direction != 0 && train.speed * direction < -1e-5;
                 train.tick(h.getLevel());
-                h.assertTrue(state.controlsBraking == (brake || reversing), "Cab brake animation follows service/reversing brakes, excluding automatic stationary hold");
-                double admission = keys.equals("drive") && !brake && !reversing ? train.throttle : 0;
+                h.assertTrue(state.controlsBraking == brake, "Manual opposing motion does not apply a service brake or change the brake animation");
+                double admission = keys.equals("drive") && !brake ? train.throttle : 0;
                 h.assertTrue(Math.abs(state.controlsAdmission - admission) < 1e-12, "Cab regulator animation follows effective admission, including neutral and release");
                 if (gear == 0) h.assertTrue(Math.abs(train.speed) <= Math.abs(momentum * .05) + 1e-12,
                     "A disconnected, revving engine cannot accelerate the wheels in either direction");
                 if (brake) h.assertTrue(momentum == 0 ? Math.abs(train.speed) < 1e-12 : train.speed * momentum >= -1e-12,
                     "Holding S cannot reverse the train after it reaches zero");
+                // End a completed reversal before this fixture reaches the finite
+                // track behind its start; high gears may take longer to stop.
+                if (tick >= 59 && direction != 0 && train.speed * direction > 0) break;
             }
             if (brake) h.assertTrue(Math.abs(train.speed) < 1e-8 && f.water() == water, "Service braking stops the wheels and closes water admission");
             else if (direction != 0) h.assertTrue(train.speed * direction > 0 && f.water() < water,
@@ -273,9 +285,11 @@ public final class TrainDrivingTests {
             TrainPhysics.shift(train, TrainMechanics.REVERSE_GEAR);
             h.assertTrue(train.speed == speed && speed > 0, "Selecting R does not assign or flip train velocity");
             control(f, player, List.of(0)); train.tick(h.getLevel());
-            h.assertTrue(train.speed > 0 && train.speed < speed, "R applies finite braking while still travelling forwards");
+            h.assertTrue(train.speed > 0 && train.speed < speed, "The shift retains forward momentum during finite clutch disengagement");
+            h.assertTrue(!TrainPhysics.state(train).controlsBraking && TrainPhysics.state(train).controlsAdmission == train.throttle,
+                "Opposite gear admits steam without applying an automatic service brake");
             for (int i = 0; i < 80; i++) { control(f, player, List.of(0)); train.tick(h.getLevel()); }
-            h.assertTrue(train.speed < 0, "After braking, W in R propels the train backwards");
+            h.assertTrue(train.speed < 0, "Finite clutch and cylinder torque bring the train through zero into reverse");
             for (int i = 0; i < 80; i++) { control(f, player, List.of(1)); train.tick(h.getLevel()); }
             h.assertTrue(Math.abs(train.speed) < 1e-8, "S also stops a train already moving in reverse");
             f.finish();

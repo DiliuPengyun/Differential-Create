@@ -29,11 +29,11 @@ public final class ElasticKinetics {
         // coefficients by q^2, so physical behavior cannot depend on block-coordinate ordering.
         public double stiffness() { return 2 * PhysicsTuning.TORSIONAL_STIFFNESS / (1 + ratio * ratio); }
         public double elasticEnergy() { return .5 * stiffness() * twist * twist; }
-        double damping() { return 2 * PhysicsTuning.TORSIONAL_DAMPING / (1 + ratio * ratio)
+        public double damping() { return 2 * PhysicsTuning.TORSIONAL_DAMPING / (1 + ratio * ratio)
             + (SequencerKinetics.outputOwner(this) == null ? 0 : SequencerMotion.OUTPUT_DAMPING); }
-        double friction() { return clutch == null ? Double.POSITIVE_INFINITY : ClutchPhysics.torqueLimit(clutch); }
-        double strength() { return Math.min(strengthOf(a) / Math.abs(ratio), strengthOf(b)); }
-        KineticBlockEntity weakest() {
+        public double friction() { return clutch == null ? Double.POSITIVE_INFINITY : ClutchPhysics.torqueLimit(clutch); }
+        public double strength() { return Math.min(strengthOf(a) / Math.abs(ratio), strengthOf(b)); }
+        public KineticBlockEntity weakest() {
             double left = strengthOf(a) / Math.abs(ratio), right = strengthOf(b);
             return left < right ? a : right < left ? b
                 : InertiaRegistry.getInertia(a) == 0 ? a : b;
@@ -165,7 +165,8 @@ public final class ElasticKinetics {
         double travel(KineticBlockEntity be);
         double signedTravel(KineticBlockEntity be);
     }
-    public record WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary, int enteringDirection, boolean output) {
+    public record WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary, int enteringDirection, boolean output, CrushingKinetics.Pair pair) {
+        public WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary, int enteringDirection, boolean output) { this(shaft,boundary,enteringDirection,output,null); }
         public WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary, int enteringDirection) { this(shaft, boundary, enteringDirection, false); }
         public WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary) { this(shaft, boundary, 0, false); }
     }
@@ -176,9 +177,17 @@ public final class ElasticKinetics {
         private final Map<KineticBlockEntity, Integer> indices;
         private final Map<KineticBlockEntity, Integer> outputs;
         private final Map<KineticBlockEntity, Double> brakes;
+        private final Map<CrushingKinetics.Pair, Integer> crushing;
         Trial(List<KineticBlockEntity> members, List<Connection> connections, Map<KineticBlockEntity, Integer> indices,
-              TorsionSolver.Result result, Map<KineticBlockEntity, Integer> outputs, Map<KineticBlockEntity, Double> brakes) {
-            this.members = members; this.connections = connections; this.indices = indices; this.result = result; this.outputs = outputs; this.brakes = brakes;
+              TorsionSolver.Result result, Map<KineticBlockEntity, Integer> outputs, Map<KineticBlockEntity, Double> brakes, Map<CrushingKinetics.Pair, Integer> crushing) {
+            this.members = members; this.connections = connections; this.indices = indices; this.result = result; this.outputs = outputs; this.brakes = brakes; this.crushing = crushing;
+        }
+        public double crushingTravel(CrushingKinetics.Pair pair) {
+            Integer at = crushing.get(pair);
+            return at == null ? 0 : result.workTravel()[at] / (2 * RotationMath.TICK_MINUTES);
+        }
+        public double crushingSignedTravel(CrushingKinetics.Pair pair) {
+            return (signedTravel(pair.a()) - signedTravel(pair.b())) / 2;
         }
         public double travel(KineticBlockEntity be) {
             Integer i = indices.get(be);
@@ -216,6 +225,12 @@ public final class ElasticKinetics {
                 recordTorque(edge.a, edge.b, -edge.ratio * edge.torque);
                 recordTorque(edge.b, edge.a, edge.torque);
             }
+            crushing.forEach((pair, at) -> {
+                double torque = result.torque()[at];
+                ((ICrushingDynamics) pair.controller()).differentialcreate$reaction(torque);
+                recordTorque(pair.a(), pair.b(), -torque);
+                recordTorque(pair.b(), pair.a(), torque);
+            });
         }
         public double outputTravel(KineticBlockEntity be) {
             Integer i = outputs.get(be);
@@ -256,9 +271,10 @@ public final class ElasticKinetics {
         private final Map<KineticBlockEntity, Double> brakes;
         private final TorsionSolver.Prepared solver;
         private final double[] sourceDrives;
+        private final Map<CrushingKinetics.Pair, Integer> crushing;
         private Snapshot(List<KineticBlockEntity> members, List<Connection> connections,
                          Map<KineticBlockEntity, Integer> indices, Map<KineticBlockEntity, Integer> outputs, List<TorsionSolver.Body> bodies,
-                         List<TorsionSolver.Link> links, double[] speeds, double[] twists, double[] sourceDrives) {
+                         List<TorsionSolver.Link> links, double[] speeds, double[] twists, double[] sourceDrives, Map<CrushingKinetics.Pair, Integer> crushing) {
             this.members = List.copyOf(members); this.connections = List.copyOf(connections);
             this.indices = Map.copyOf(indices);
             this.outputs = Map.copyOf(outputs);
@@ -266,6 +282,7 @@ public final class ElasticKinetics {
             outputs.forEach((be, at) -> ratings.put(be, bodies.get(at).load()));
             this.brakes = Map.copyOf(ratings);
             this.sourceDrives = sourceDrives.clone();
+            this.crushing = Map.copyOf(crushing);
             solver = TorsionSolver.prepare(bodies, links, speeds, twists);
         }
         /** No world state changes between these pump-load trials. */
@@ -278,7 +295,7 @@ public final class ElasticKinetics {
             solver.updateDrives(drives);
         }
         public Trial sample(double minutes) {
-            return new Trial(members, connections, indices, solver.advance(minutes, PhysicsTuning.TORSION_MAX_STEP), outputs, brakes);
+            return new Trial(members, connections, indices, solver.advance(minutes, PhysicsTuning.TORSION_MAX_STEP), outputs, brakes, crushing);
         }
         public Travel motion(double minutes) {
             return new MotionTrial(indices, solver.motion(minutes, PhysicsTuning.TORSION_MAX_STEP));
@@ -286,6 +303,12 @@ public final class ElasticKinetics {
         public Trial advanceToEvent(double minutes, List<WorkEvent> events) {
             var limits = new ArrayList<TorsionSolver.EventLimit>(events.size());
             for (var event : events) {
+                if (event.pair() != null) {
+                    var pair = event.pair(); Integer link = crushing.get(pair);
+                    if (link != null) limits.add(TorsionSolver.EventLimit.work(indices.get(pair.a()), indices.get(pair.b()), link,
+                        event.boundary().travel() * RotationMath.TICK_MINUTES));
+                    continue;
+                }
                 Integer shaft = (event.output() ? outputs : indices).get(event.shaft());
                 if (shaft == null) continue;
                 var boundary = event.boundary();
@@ -294,7 +317,7 @@ public final class ElasticKinetics {
                     event.enteringDirection()));
             }
             var result = solver.advanceToEvent(minutes, PhysicsTuning.TORSION_MAX_STEP, limits);
-            return new Trial(members, connections, indices, result, outputs, brakes);
+            return new Trial(members, connections, indices, result, outputs, brakes, crushing);
         }
     }
     public static Trial sample(List<KineticNetwork> networks, double minutes) {
@@ -328,6 +351,7 @@ public final class ElasticKinetics {
             double drag = MachineActivity.quadraticDrag(be);
             if (ActorFeed.enabled(be)) drag = 0;
             if (be instanceof EncasedFanBlockEntity) load = 0;
+            if (be instanceof com.simibubi.create.content.kinetics.crusher.CrushingWheelBlockEntity) load = 0;
             sourceDrives[i] = be.isSource() ? curve.stallTorque() : 0;
             bodies.add(new TorsionSolver.Body(InertiaRegistry.getInertia(be),
                 sourceDrives[i] + externalTorques.getOrDefault(be, 0d),
@@ -369,6 +393,12 @@ public final class ElasticKinetics {
             links.add(new TorsionSolver.Link(indices.get(be), outputs.get(be), 1, 0,
                 ActorFeed.DAMPING, Double.POSITIVE_INFINITY, feed.coupling));
         }
-        return new Snapshot(members, connections, indices, outputs, bodies, links, speeds, allTwists, sourceDrives);
+        var crushing = new HashMap<CrushingKinetics.Pair, Integer>();
+        for (var pair : CrushingKinetics.pairs(networks)) if (pair.active() && indices.containsKey(pair.a()) && indices.containsKey(pair.b())) {
+            crushing.put(pair, links.size());
+            links.add(TorsionSolver.Link.work(indices.get(pair.a()), indices.get(pair.b()), pair.torque()));
+        }
+        allTwists = java.util.Arrays.copyOf(allTwists, links.size());
+        return new Snapshot(members, connections, indices, outputs, bodies, links, speeds, allTwists, sourceDrives, crushing);
     }
 }

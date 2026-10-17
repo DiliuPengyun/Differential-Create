@@ -79,6 +79,69 @@ neoForge {
             logLevel = org.slf4j.event.Level.INFO
         }
 
+        loadGaugeServer {
+            type = "gameTestServer"
+            gameDirectory = project.file('build/load-gauge/runs/' + UUID.randomUUID())
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_gauge'
+            logLevel = org.slf4j.event.Level.INFO
+        }
+
+        backtankServer {
+            type = "gameTestServer"
+            gameDirectory = project.file('build/backtank/runs/' + UUID.randomUUID())
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_backtank'
+        }
+
+        ejectorServer {
+            type = "gameTestServer"
+            gameDirectory = project.file('build/ejector/runs/' + UUID.randomUUID())
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_ejector'
+        }
+
+        crusherServer {
+            type = "gameTestServer"
+            gameDirectory = project.file('build/crusher/runs/' + UUID.randomUUID())
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_crusher'
+        }
+
+        logisticsServer {
+            type = "gameTestServer"
+            gameDirectory = project.file('build/logistics/runs/' + UUID.randomUUID())
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_logistics'
+            systemProperty 'differentialcreate.logistics.knownIssues', providers.gradleProperty('logisticsKnownIssues').getOrElse('false')
+        }
+
+        logisticsClientSmoke {
+            client()
+            gameDirectory = project.file('build/logistics/client-runs/' + UUID.randomUUID())
+            systemProperty 'differentialcreate.logisticsClientSmoke', 'true'
+        }
+
+        ejectorClientSmoke {
+            client()
+            gameDirectory = project.file('build/ejector/client-runs/' + UUID.randomUUID())
+            systemProperty 'differentialcreate.ejectorClientSmoke', 'true'
+        }
+
+        loadGaugeClientSmoke {
+            client()
+            gameDirectory = project.file('build/load-gauge/client-runs/' + UUID.randomUUID())
+            systemProperty 'differentialcreate.loadGaugeClientSmoke', 'true'
+            systemProperty 'differentialcreate.gaugePreviewPath', project.file('build/load-gauge/preview.png').absolutePath
+            programArguments.addAll '--width', '1100', '--height', '760'
+            logLevel = org.slf4j.event.Level.INFO
+        }
+
+        ponderClientSmoke {
+            client()
+            gameDirectory = project.file('build/ponder/runs/' + UUID.randomUUID())
+            systemProperty 'differentialcreate.ponderClientSmoke', 'true'
+            systemProperty 'differentialcreate.ponderAudit', providers.gradleProperty('ponderAudit').orElse('false').get()
+            systemProperty 'differentialcreate.ponderFrameAudit', providers.gradleProperty('ponderFrameAudit').orElse('').get()
+            systemProperty 'differentialcreate.ponderPreviewPath', project.file('build/ponder/previews').absolutePath
+            programArguments.addAll '--width', '1200', '--height', '900'
+        }
+
         server {
             server()
             programArgument '--nogui'
@@ -186,6 +249,42 @@ neoForge {
 }
 
 neoForge.runs.fluidBenchmarkServer { logLevel = org.slf4j.event.Level.INFO }
+neoForge.runs.backtankServer { logLevel = org.slf4j.event.Level.INFO }
+neoForge.runs.ejectorServer { logLevel = org.slf4j.event.Level.INFO }
+neoForge.runs.ejectorClientSmoke { logLevel = org.slf4j.event.Level.INFO }
+neoForge.runs.logisticsServer { logLevel = org.slf4j.event.Level.INFO }
+neoForge.runs.logisticsClientSmoke { logLevel = org.slf4j.event.Level.INFO }
+neoForge.runs.ponderClientSmoke { logLevel = org.slf4j.event.Level.INFO }
+
+tasks.named('runPonderClientSmoke') {
+    notCompatibleWithConfigurationCache('Ponder playback and visual QA use an owned disposable client directory.')
+    doLast {
+        def directory = neoForge.runs.getByName('ponderClientSmoke').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !log.text.contains('DC_PONDER_CLIENT_PASS') || log.text.contains('DC_PONDER_CLIENT_FAIL'))
+            throw new GradleException('Ponder client verification failed; inspect its latest.log.')
+    }
+}
+
+tasks.named('runLogisticsClientSmoke') {
+    notCompatibleWithConfigurationCache('Logistics client verification uses a fresh disposable world.')
+    doLast {
+        def directory = neoForge.runs.getByName('logisticsClientSmoke').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !log.text.contains('DC_CREATE6_CLIENT_PASS') || log.text.contains('DC_CREATE6_CLIENT_FAIL'))
+            throw new GradleException('Logistics client verification did not pass; inspect its latest.log.')
+    }
+}
+
+tasks.named('runLogisticsServer') {
+    notCompatibleWithConfigurationCache('Logistics integration uses a fresh disposable world.')
+    doLast {
+        def directory = neoForge.runs.getByName('logisticsServer').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !(log.text =~ /All \d+ required tests passed/))
+            throw new GradleException('Logistics server did not report a completed successful run; inspect its latest.log.')
+    }
+}
 
 tasks.named('runFluidBenchmarkServer') {
     notCompatibleWithConfigurationCache('Each performance invocation requires a new empty world.')
@@ -228,6 +327,66 @@ tasks.named('runTrainClientSmoke') {
         def log = new File(directory, 'logs/latest.log')
         if (!log.isFile() || !log.text.contains('DC_TRAIN_CLIENT_SMOKE_PASS') || log.text.contains('DC_TRAIN_CLIENT_SMOKE_FAIL'))
             throw new GradleException('Train client smoke check did not pass; inspect its latest.log.')
+    }
+}
+
+tasks.named('runLoadGaugeServer') {
+    notCompatibleWithConfigurationCache('Instrument integration uses a fresh disposable world.')
+    doLast {
+        def directory = neoForge.runs.getByName('loadGaugeServer').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !(log.text =~ /All \d+ required tests passed/))
+            throw new GradleException('Load gauge server did not report a completed successful run; inspect its latest.log.')
+    }
+}
+
+tasks.named('runLoadGaugeClientSmoke') {
+    notCompatibleWithConfigurationCache('Load gauge visual QA uses an owned disposable client directory.')
+    doLast {
+        def directory = neoForge.runs.getByName('loadGaugeClientSmoke').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !log.text.contains('DC_LOAD_GAUGE_CLIENT_PASS') || log.text.contains('DC_LOAD_GAUGE_CLIENT_FAIL'))
+            throw new GradleException('Load gauge client preview failed; inspect its latest.log.')
+    }
+}
+
+tasks.named('runBacktankServer') {
+    notCompatibleWithConfigurationCache('Backtank integration uses a fresh disposable world.')
+    doLast {
+        def directory = neoForge.runs.getByName('backtankServer').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !(log.text =~ /All \d+ required tests passed/))
+            throw new GradleException('Backtank server did not report a completed successful run; inspect its latest.log.')
+    }
+}
+
+tasks.named('runEjectorServer') {
+    notCompatibleWithConfigurationCache('Ejector integration uses a fresh disposable world.')
+    doLast {
+        def directory = neoForge.runs.getByName('ejectorServer').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !(log.text =~ /All \d+ required tests passed/))
+            throw new GradleException('Ejector server did not report a completed successful run; inspect its latest.log.')
+    }
+}
+
+tasks.named('runCrusherServer') {
+    notCompatibleWithConfigurationCache('Crushing pair integration uses a fresh disposable world.')
+    doLast {
+        def directory = neoForge.runs.getByName('crusherServer').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !(log.text =~ /All \d+ required tests passed/))
+            throw new GradleException('Crusher server did not report a completed successful run; inspect its latest.log.')
+    }
+}
+
+tasks.named('runEjectorClientSmoke') {
+    notCompatibleWithConfigurationCache('Ejector render checks use an owned disposable client world.')
+    doLast {
+        def directory = neoForge.runs.getByName('ejectorClientSmoke').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !log.text.contains('DC_EJECTOR_CLIENT_PASS') || log.text.contains('DC_EJECTOR_CLIENT_FAIL'))
+            throw new GradleException('Ejector client check failed; inspect its latest.log.')
     }
 }
 

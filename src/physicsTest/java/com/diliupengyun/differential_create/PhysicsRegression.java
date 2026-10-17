@@ -12,6 +12,7 @@ public final class PhysicsRegression {
 	private static int checks;
 	public static void main(String[] args) {
 		TorsionRegression.run();
+		CrushingPairRegression.run();
 		ClutchEngagementRegression.run();
 		SolverPrecisionRegression.run();
 		SnapshotRegression.run();
@@ -33,6 +34,10 @@ public final class PhysicsRegression {
 		QueuedFluidRegression.run();
 		PumpDirectionRegression.run();
 		LoadFactorRegression.run();
+		LoadGaugeRegression.run();
+		BacktankChargeRegression.run();
+		EjectorChargeRegression.run();
+		ChainConveyorRegression.run();
 		shaftTravel();
 		ActorContactRegression.run();
 		contraptionGeometry();

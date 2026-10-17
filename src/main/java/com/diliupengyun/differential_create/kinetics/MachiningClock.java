@@ -71,7 +71,7 @@ public final class MachiningClock {
             var limits = new ArrayList<ElasticKinetics.WorkEvent>(phases.size());
             for (var phase : phases)
                 limits.add(new ElasticKinetics.WorkEvent(phase.binding.shaft(),
-                    phase.binding.work().differentialcreate$boundary(phase.remaining), phase.wakeDirection, feedPhase(phase.binding)));
+                    phase.binding.work().differentialcreate$boundary(phase.remaining), phase.wakeDirection, feedPhase(phase.binding), phase.binding.pair()));
             for (var dock : docks) if (dock.drive() instanceof ContraptionPhysics.Drive drive)
                 limits.add(new ElasticKinetics.WorkEvent(drive.shaft(), new ShaftWork.Boundary(Double.POSITIVE_INFINITY, dock.boundary(1), dock.boundary(-1)), 0, ActorFeed.enabled(drive.shaft())));
             ActorFeed.boundaries(networks, limits);
@@ -83,14 +83,15 @@ public final class MachiningClock {
             double[] trialSignedTravel = new double[phases.size()];
             for (int i = 0; i < phases.size(); i++) {
                 var phase = phases.get(i);
-                double travel = feedPhase(phase.binding) ? trial.outputAbsTravel(phase.binding.shaft()) : trial.travel(phase.binding.shaft());
-                double signed = feedPhase(phase.binding) ? trial.outputTravel(phase.binding.shaft()) : trial.signedTravel(phase.binding.shaft());
+                double travel = phase.binding.pair() != null ? trial.crushingTravel(phase.binding.pair()) : feedPhase(phase.binding) ? trial.outputAbsTravel(phase.binding.shaft()) : trial.travel(phase.binding.shaft());
+                double signed = phase.binding.pair() != null ? trial.crushingSignedTravel(phase.binding.pair()) : feedPhase(phase.binding) ? trial.outputTravel(phase.binding.shaft()) : trial.signedTravel(phase.binding.shaft());
                 advances[i] = phase.wakeDirection != 0 ? 0 : Math.min(travel,
                     phase.binding.work().differentialcreate$phaseLimit(travel,
                         signed, phase.remaining));
                 trialSignedTravel[i] = signed;
             }
             trial.commit();
+            for (var pair : CrushingKinetics.pairs(networks)) CrushingKinetics.update(pair.controller());
             SequencerKinetics.observe(networks, trial.result.duration(), hydraulicTorques);
             ContraptionMotion.advance(trial);
             for (var dock : docks) if (dock.drive() instanceof ContraptionPhysics.Drive drive)

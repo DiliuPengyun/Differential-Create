@@ -72,8 +72,17 @@ public final class TrainHosePortTests {
         return kind.equals("native") ? NATIVE : WHEEL;
     }
 
-    private static SteamHosePort port(Direction face, boolean edge) {
-        return SteamHosePort.fromHit(BlockPos.ZERO, face, edge ? new Vec3(.99, .01, .98) : new Vec3(.23, .67, .81));
+    private static SteamHosePort port(Direction face) {
+        return new SteamHosePort(face, new Vec3(.5 + .5 * face.getStepX(), .5 + .5 * face.getStepY(), .5 + .5 * face.getStepZ()));
+    }
+
+    private static SteamHosePort hitPort(Direction face, boolean edge) {
+        var point = edge ? new Vec3(.99, .01, .98) : new Vec3(.23, .67, .81);
+        return new SteamHosePort(face, switch (face.getAxis()) {
+            case X -> new Vec3(face.getStepX() > 0 ? 1 : 0, point.y, point.z);
+            case Y -> new Vec3(point.x, face.getStepY() > 0 ? 1 : 0, point.z);
+            case Z -> new Vec3(point.x, point.y, face.getStepZ() > 0 ? 1 : 0);
+        });
     }
 
     private static void input(GameTestHelper h, Player player, InteractionHand hand, BlockPos local, SteamHosePort port) {
@@ -94,25 +103,27 @@ public final class TrainHosePortTests {
         h.runAtTickTime(25, () -> {
             var engine = h.getBlockEntity(enginePos); var link = (SteamHoseLinks.EngineLink) engine;
             for (boolean edge : new boolean[]{false, true}) {
-                var selected = port(face, edge);
-                input(h, player, hand, reverse ? enginePos : TANK, reverse ? null : selected);
-                if (!reverse) closePort(h, SteamHoseItem.selectedTankPort(stack), selected, "First boiler click records precise face and point");
+                var selected = port(face);
+                var hit = hitPort(face, edge);
+                input(h, player, hand, reverse ? enginePos : TANK, reverse ? null : hit);
+                if (!reverse) closePort(h, SteamHoseItem.selectedTankPort(stack), selected, "First boiler click snaps to the selected face centre");
                 // Item component serialization must retain a pending boiler port.
                 stack.set(DataComponents.CUSTOM_DATA, CustomData.of(stack.get(DataComponents.CUSTOM_DATA).copyTag()));
-                input(h, player, hand, reverse ? TANK : enginePos, reverse ? selected : null);
-                closePort(h, link.differentialcreate$port(), selected, "Both endpoint orders preserve exact click point and face");
+                input(h, player, hand, reverse ? TANK : enginePos, reverse ? hit : null);
+                closePort(h, link.differentialcreate$port(), selected, "Both endpoint orders snap off-centre and edge clicks to the selected face centre");
+                h.assertTrue(h.absolutePos(TANK).equals(engine.getBlockPos().offset(link.differentialcreate$hose())), "Snapping retains the clicked tank block");
                 h.assertTrue(SteamHoseLinks.tank(engine) != null && !SteamHoseItem.hasSelection(stack), "Connection activates the boiler and finishes selection");
                 h.assertTrue(!stack.get(DataComponents.CUSTOM_DATA).contains(SteamHosePort.KEY), "Completed selection removes its port component");
                 var geometry = SteamHoseGeometry.connect(engine.getBlockState(), Vec3.atCenterOf(engine.getBlockPos()),
-                    new AABB(h.absolutePos(TANK)), Vec3.atCenterOf(h.absolutePos(TANK)), selected);
-                close(h, geometry.tank().point(), selected.position(h.absolutePos(TANK)).add(selected.normal().scale(.015)), "Hose ends at the clicked surface, including edge clicks");
+                    new AABB(h.absolutePos(TANK)), Vec3.atCenterOf(h.absolutePos(TANK)), link.differentialcreate$port());
+                close(h, geometry.tank().point(), selected.position(h.absolutePos(TANK)).add(selected.normal().scale(.015)), "Hose ends at the face centre, including edge clicks");
                 close(h, geometry.tank().normal(), selected.normal(), "Hose leaves the selected face, including top and bottom");
                 var saved = engine.saveWithFullMetadata(h.getLevel().registryAccess());
                 SteamHoseLinks.unlink(engine);
-                h.assertTrue(link.differentialcreate$port() == null, "Unlink removes precise port data");
+                h.assertTrue(link.differentialcreate$port() == null, "Unlink removes port data");
                 engine.loadWithComponents(saved, h.getLevel().registryAccess()); SteamHoseLinks.ensureRegistered(engine);
                 closePort(h, link.differentialcreate$port(), selected, "Native block entity save and load preserves the exact port");
-                input(h, player, hand, reverse ? enginePos : TANK, reverse ? null : port(face, !edge));
+                input(h, player, hand, reverse ? enginePos : TANK, reverse ? null : hitPort(face, !edge));
                 player.setShiftKeyDown(true); input(h, player, hand, WHEEL, null); player.setShiftKeyDown(false);
                 h.assertTrue(!SteamHoseItem.hasSelection(stack) && !stack.get(DataComponents.CUSTOM_DATA).contains(SteamHosePort.KEY)
                     && stack.get(DataComponents.CUSTOM_DATA).copyTag().getString("OtherMod").equals("keep"), "Cancellation clears the pending port and retains unrelated data");
@@ -132,10 +143,10 @@ public final class TrainHosePortTests {
         }
         h.getLevel().addFreshEntity(new SuperGlueEntity(h.getLevel(), SuperGlueEntity.span(h.absolutePos(new BlockPos(2, 3, 4)), h.absolutePos(new BlockPos(10, 7, 9)))));
         h.runAtTickTime(25, () -> {
-            var selected = port(face, false);
+            var selected = port(face);
             SteamHoseLinks.connect(h.getBlockEntity(enginePos), h.getBlockEntity(TANK), selected);
             var cc = new CarriageContraption(Direction.SOUTH);
-            try { h.assertTrue(cc.assemble(h.getLevel(), h.absolutePos(WHEEL)), "Precise hose assembles in a native carriage"); }
+            try { h.assertTrue(cc.assemble(h.getLevel(), h.absolutePos(WHEEL)), "Centred hose assembles in a native carriage"); }
             catch (com.simibubi.create.content.contraptions.AssemblyException e) { throw new IllegalStateException(e); }
             var localEngine = h.absolutePos(enginePos).subtract(cc.anchor);
             var localTank = h.absolutePos(TANK).subtract(cc.anchor);
@@ -147,7 +158,7 @@ public final class TrainHosePortTests {
             h.runAfterDelay(20, () -> {
                 var engine = h.getLevel().getBlockEntity(transform.apply(localEngine));
                 var link = (SteamHoseLinks.EngineLink) engine; var movedPort = link.differentialcreate$port();
-                h.assertTrue(movedPort != null && SteamHoseLinks.tank(engine) != null, "Native rotated rebuild restores a working precise hose");
+                h.assertTrue(movedPort != null && SteamHoseLinks.tank(engine) != null, "Native rotated rebuild restores a working centred hose");
                 close(h, movedPort.position(engine.getBlockPos().offset(link.differentialcreate$hose())), expectedPoint, "Rotation preserves the point on the same material surface");
                 close(h, movedPort.normal(), expectedNormal, "Rotation restores the correct outward connection face");
                 h.succeed();
@@ -156,23 +167,29 @@ public final class TrainHosePortTests {
     }
 
     private static void transforms(GameTestHelper h) {
+        for (Direction face : Direction.values()) for (boolean edge : new boolean[]{false, true}) {
+            var hit = hitPort(face, edge); var block = new BlockPos(11, 8, -6);
+            closePort(h, SteamHosePort.fromHit(block, face, hit.position(block)), port(face), "Off-centre and edge hits snap to each face centre");
+            var saved = new CompoundTag(); SteamHosePort.write(saved, hit);
+            closePort(h, SteamHosePort.read(saved), port(face), "Saved off-centre attachments load at the same block face centre");
+        }
         for (Direction face : Direction.values()) for (Direction.Axis axis : Direction.Axis.values())
             for (Rotation rotation : Rotation.values()) for (Mirror mirror : Mirror.values()) {
-                var original = port(face, false); var block = new BlockPos(2, 3, -4);
+                var original = port(face); var block = new BlockPos(2, 3, -4);
                 var transform = new StructureTransform(new BlockPos(11, 8, 6), axis, rotation, mirror);
                 var transformed = original.transform(transform);
                 close(h, transformed.position(transform.apply(block)), transform.apply(original.position(block)), "All axis rotations and mirrors preserve the native global point");
                 close(h, transformed.normal(), transform.applyWithoutOffsetUncentered(original.normal()), "All rotations and mirrors preserve the outward normal");
             }
         h.assertTrue(SteamHosePort.read(new CompoundTag()) == null, "Missing surface data is not a valid attachment");
-        var invalid = new CompoundTag(); SteamHosePort.write(invalid, port(Direction.UP, false));
+        var invalid = new CompoundTag(); SteamHosePort.write(invalid, port(Direction.UP));
         invalid.getCompound(SteamHosePort.KEY).putDouble("X", Double.NaN);
         h.assertTrue(SteamHosePort.read(invalid) == null, "Malformed optional point cannot send non-finite geometry to the renderer");
         h.succeed();
     }
 
     private static void moving(GameTestHelper h, boolean large, Direction face) {
-        var selected = port(face, false);
+        var selected = port(face);
         TrainTestFixture.create(h, "flat", large, false, false, selected, setup -> {}, f -> {
             checkCarriagePort(h, f, selected);
             var before = f.entity().position();
@@ -198,7 +215,7 @@ public final class TrainHosePortTests {
             h.runAfterDelay(20, () -> {
                 var engine = h.getLevel().getBlockEntity(transform.apply(BlockPos.ZERO));
                 var link = (SteamHoseLinks.EngineLink) engine; var restored = link.differentialcreate$port();
-                h.assertTrue(restored != null && SteamHoseLinks.tank(engine) != null, "Final native bogey-data restoration retains a working precise hose");
+                h.assertTrue(restored != null && SteamHoseLinks.tank(engine) != null, "Final native bogey-data restoration retains a working centred hose");
                 close(h, restored.position(engine.getBlockPos().offset(link.differentialcreate$hose())), expectedPoint, "Native train disassembly retains the rotated material point");
                 close(h, restored.normal(), expectedNormal, "Final bogey-data overwrite retains the rotated face");
                 f.finish();
@@ -208,7 +225,7 @@ public final class TrainHosePortTests {
 
     private static void checkCarriagePort(GameTestHelper h, TrainTestFixture f, SteamHosePort expected) {
         var carriage = f.train.carriages.getFirst();
-        closePort(h, SteamHosePort.read(carriage.leadingBogey().bogeyData), expected, "Live carriage bogey retains the clicked surface point");
+        closePort(h, SteamHosePort.read(carriage.leadingBogey().bogeyData), expected, "Live carriage bogey retains the selected face centre");
         var tag = f.entity().getContraption().getBlocks().get(BlockPos.ZERO).nbt();
         closePort(h, SteamHosePort.read(tag.getCompound("BogeyData")), expected, "Captured moving block and native train readback retain the surface point");
     }
@@ -219,7 +236,6 @@ public final class TrainHosePortTests {
 
     private static void closePort(GameTestHelper h, SteamHosePort actual, SteamHosePort expected, String message) {
         h.assertTrue(actual != null && actual.face() == expected.face(), message);
-        // A world-space hit loses a few low bits when the test origin is millions of blocks away.
         close(h, actual.point(), expected.point(), message);
     }
 }

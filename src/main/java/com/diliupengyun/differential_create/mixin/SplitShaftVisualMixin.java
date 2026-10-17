@@ -30,7 +30,7 @@ public abstract class SplitShaftVisualMixin {
 	@Redirect(method = {"<init>", "update"}, at = @At(value = "INVOKE",
 		target = "Lcom/simibubi/create/content/kinetics/base/RotatingInstance;setup(Lcom/simibubi/create/content/kinetics/base/KineticBlockEntity;F)Lcom/simibubi/create/content/kinetics/base/RotatingInstance;"))
 	private RotatingInstance differentialcreate$animateOutput(RotatingInstance instance, KineticBlockEntity be, float speed) {
-		if (be instanceof SequencedGearshiftBlockEntity seq && !seq.isVirtual()) {
+		if (be instanceof SequencedGearshiftBlockEntity seq) {
 			var axis = KineticBlockEntityVisual.rotationAxis(seq.getBlockState());
 			int index = keys.indexOf(instance);
 			if (index < 0) index = keys.size();

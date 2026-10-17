@@ -17,12 +17,22 @@ public final class ClientKineticAngles {
 	}
 
 	public static RotationFrame rotationOf(KineticBlockEntity be, float portSpeed, PortRotation port) {
+		if (be.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel level) {
+			Double angle = com.diliupengyun.differential_create.client.ponder.PonderKinetics.of(level)
+				.angle(be, net.createmod.catnip.animation.AnimationTickHolder.getPartialTicks(level));
+			return angle == null ? null : new RotationFrame(Minecraft.getInstance().levelRenderer.getTicks(), angle, 0);
+		}
 		RotationFrame member = ClientTrainKinetics.rotation(be);
 		if (member == null) member = ClientNetworkSpeeds.rotationOf(be);
 		return member == null ? null : port.resolve(member, be.getSpeed(), portSpeed, renderTick());
 	}
 
 	public static float angleOf(KineticBlockEntity be, Axis axis, float staticOffset) {
+		if (be.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel level) {
+			Double angle = com.diliupengyun.differential_create.client.ponder.PonderKinetics.of(level)
+				.angle(be, net.createmod.catnip.animation.AnimationTickHolder.getPartialTicks(level));
+			return angle == null ? Float.NaN : (float) Math.toRadians((staticOffset + angle) % 360);
+		}
 		Double theta = ClientTrainKinetics.theta(be);
 		if (theta == null) theta = ClientNetworkSpeeds.thetaOf(be);
 		return theta == null ? Float.NaN : (float) (Math.toRadians((staticOffset + theta) % 360));

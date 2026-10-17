@@ -10,9 +10,9 @@
 
 微分动力按结构方块计算惯量，接口方块也计入；搬入物品或流体不会增加逐物品、逐流体质量。这沿用当前[矿车质量规则](MINECARTS.md#装配质量与阻力)和[动态结构质量规则](CONTRAPTIONS.md#质量与惯量)。
 
-## 驻留和恢复运动
+## 改造前的驻留和恢复运动
 
-接口仍由原生 `PortableStorageInterfaceMovement` 设置 `context.stall`，再由结构实体汇总暂停状态。它没有钻头和收割机使用的连续接触路径，也不会生成 `DCActorJob`。维护入口为 [ContraptionActorWork](../src/main/java/com/diliupengyun/differential_create/kinetics/ContraptionActorWork.java)、[AbstractContraptionEntityMixin](../src/main/java/com/diliupengyun/differential_create/mixin/AbstractContraptionEntityMixin.java) 和 [MinecartActorMotion](../src/main/java/com/diliupengyun/differential_create/kinetics/MinecartActorMotion.java)。
+在 `8394417` 研究版本中，接口由原生 `PortableStorageInterfaceMovement` 设置 `context.stall`，再由结构实体汇总暂停状态，没有连续接触路径。下表只描述该历史版本；当前已使用独立停靠状态、有限反力和会话保护，列车也已接入，不再使用这些暂停与恢复规则。
 
 | 载具或驱动 | 驻留时 | 释放时 |
 | --- | --- | --- |
@@ -26,7 +26,7 @@
 
 轴承和活塞的专项测试确认，结构暂停时其惯量仍留在轴系模型中，结构空气阻力变为零，接口自身的工具作业力矩为零。动力轴可以继续转动，暂停的结构输出为零，解除暂停后只消耗新的行程。共用代码见 [ContraptionPhysics](../src/main/java/com/diliupengyun/differential_create/kinetics/ContraptionPhysics.java) 与 [ContraptionMotion](../src/main/java/com/diliupengyun/differential_create/kinetics/ContraptionMotion.java)。这些行为构成原生驻留与连续动力学之间的适配边界，尚未描述一个包含对接反力的完整机械约束。
 
-## 传输计时
+## 改造前的传输计时
 
 计时使用游戏 tick，与动力轴转速无关。Create 的 `logistics.psiTimeout` 默认是 60 tick，20 TPS 时为 3 秒；实际服务器可以修改配置。首次开始连接时计时器固定设为 14；发生成功传输后才设为 `psiTimeout + 4`。在默认配置下，从首次连接到计时器降为 4 只有 10 次静态接口 tick，真正开始停车时可能已经消耗其中一部分。[计时实现](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/content/contraptions/actors/psi/PortableStorageInterfaceBlockEntity.java)，[超时默认配置](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/infrastructure/config/CLogistics.java)
 
@@ -36,15 +36,15 @@
 
 静态端收到红石信号时关闭连接并拒绝新的对接；关闭移动端 actor 或拆掉静态端也会解除驻留。比较器的原生 0/15 输出按连接计时区间判断，表示对接状态，不表示车载库存满度；它不单独检查 `connectedEntity`，所以也不能直接代替存活与传输许可检查。[接口方块实现](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/content/contraptions/actors/psi/PortableStorageInterfaceBlock.java)
 
-## 流体管网交互和旧能力对象
+## 当时的流体管网交互和旧能力缺陷
 
-微分动力把静态流体接口作为原生 `IFluidHandler` 边界访问。供液使用模拟抽取，受液使用模拟注入，实际交付使用整数 mB，不能即时交付的小数保存在管网预算和缓冲中。接口在这一层没有单独的真实储罐水位几何，使用泛用机器的近似水头；连接管道和泵的流量、阻力与耗功继续由连续流体求解器处理。代码见 [FluidKinetics 的 Endpoint](../src/main/java/com/diliupengyun/differential_create/kinetics/FluidKinetics.java) 与 [流体说明](FLUIDS.md)。完整泵、接口、车载储罐组成的循环管网还需要专项验证。
+当时微分动力已把静态流体接口作为原生 `IFluidHandler` 边界访问，实际交付使用整数 mB，小数保存在外部管网缓冲中；接口使用泛用机器的近似水头。这项水头边界仍保留，但完整泵、接口、移动储罐的双向传输和重接后来已有专项，见[当前接口验证记录](PORTABLE_STORAGE.md#验证入口)，不能继续视为完全未测试。
 
 由交付代码与原生计时条件可推得：接口作为受液端时，尚未累计到 1 mB 的小数缓冲不会执行 `fill`，也不会续期；极低流量可能在首次有效注入前就解除驻留。供液方向会先以整数抽取并保留内部余量，不能直接套用同一个时间估算。此处的实际停车效果需要低流量接管测试确认。
 
 **已复现的上游边界：外部长期保存旧流体 handler 时，红石断开后仍可能注入。** Create 的流体 `fill` 只判断计时区间 `isConnected()`，而两个 `drain` 和物品插取都经过 `canTransfer()`，后者同时检查连接实体。专项测试在断开后重新取得 capability，注入被拒绝；但对断开前保存的旧对象调用 `fill`，仍接受 1 mB，旧车载库存从 4000 增至 4001 mB。同一个旧对象的抽取被拒绝，旧物品 handler 的插入也被拒绝。[对应流体实现](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/content/contraptions/actors/psi/PortableFluidInterfaceBlockEntity.java)
 
-此边界要求调用者保留旧对象，且计时器仍处于连接范围。接口关闭时会替换 capability 并发送失效通知，正常响应失效通知并重新查询的调用者取得的是空处理器。当前 `Endpoint.refresh()` 经 provider 取得能力，Create 的原生管道 provider 使用带失效回调的 `BlockCapabilityCache`；是否存在绕开失效通知的第三方调用者或特殊时序，应通过实际接管场景确认。后续修复旧对象的注入门槛时，应增加拒绝断开后注入的回归，并更新研究工具中的现状判据。
+这个历史缺陷要求调用者保留旧对象，且计时器仍处于连接范围。当前微分动力已通过 [DockingSession](../src/main/java/com/diliupengyun/differential_create/kinetics/portable/DockingSession.java) 和 [DockingHandlers](../src/main/java/com/diliupengyun/differential_create/kinetics/portable/DockingHandlers.java) 为物品及流体访问绑定会话，断开和换车后旧对象失效；对应拒绝判据位于 [PortableDockingTests](../src/main/java/com/diliupengyun/differential_create/tests/PortableDockingTests.java)。研究工具刻意保留上游缺陷复现，不应改作当前版本的通过标准。
 
 ## 专项验证和维护
 
@@ -64,6 +64,4 @@
 
 测试世界和日志使用忽略的 `build/` 目录。测试中的接触回调用于确定对接起点，之后由原生实体 tick 管理驻留；这些有限场景不覆盖任意路线上的自动捕获。接口没有接入连续工具的体素和圆弧扫掠，高角速度长臂、自然卸载重载、完整循环管网及多人客户端伸缩动画仍需单独检查。
 
-若要进一步接入连续动力学，主要工作是对接反力与有限制动、输出与动力轴之间的驻留约束、矿车恢复速度的能量处理，以及接口沿平移和转向轨迹的捕获。传输超时与库存能力可以继续复用原生流程。
-
-拟议的停靠状态、制动与释放规则见[接口行为设计](PORTABLE_STORAGE_DESIGN.md)，该方案尚未实现。
+上述研究推动了后来的[接口行为设计](PORTABLE_STORAGE_DESIGN.md)。公共停靠状态、有限制动、真实停车后的重新起步、轨迹捕获与旧能力失效均已实现；当前范围、验证入口及尚未验收的组合见[接口使用指南](PORTABLE_STORAGE.md)。

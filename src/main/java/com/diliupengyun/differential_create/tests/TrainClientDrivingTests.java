@@ -46,7 +46,7 @@ public final class TrainClientDrivingTests {
     private static CompletableFuture<?> work;
     private static CompletableFuture<Boolean> verification;
     private static Fixture fixture;
-    private static int stage, age, shift, scenario, stationScenario;
+    private static int stage, age, shift, scenario, stationScenario, parkingScenario;
     private static GlobalStation frontStation, backStation;
     private static UUID stationTarget;
     private static long driveTick;
@@ -148,7 +148,9 @@ public final class TrainClientDrivingTests {
                     var pos = CAB.subtract(WHEEL); var block = entity.getContraption().getBlocks().get(pos);
                     Direction facing = entity.getInitialOrientation().getCounterClockWise();
                     entity.setBlock(pos, new StructureBlockInfo(pos, block.state().setValue(ControlsBlock.FACING, inverted() ? facing.getOpposite() : facing), block.nbt()));
-                    TrainPhysics.shift(train, gear()); train.speed = scenario % 3 == 0 ? 0 : (inverted() ? -.05 : .05);
+                    TrainPhysics.shift(train, gear());
+                    int direction = (inverted() ? -1 : 1) * (gear() == R ? -1 : 1);
+                    train.speed = scenario % 3 == 0 ? gear() == 0 ? 0 : -direction * .05 : (inverted() ? -.05 : .05);
                     driveTick = player.level().getGameTime();
                     return null;
                 });
@@ -171,12 +173,22 @@ public final class TrainClientDrivingTests {
                         if (train.targetSpeed != expected || scenario % 3 != 0 && Math.abs(train.speed) > 1e-8)
                             throw new AssertionError("Native driver packet did not honor W/S/R: gear=" + gear() + " keys=" + buttons()
                                 + " expected=" + expected + " target=" + train.targetSpeed + " speed=" + train.speed);
+                        if (scenario % 3 == 0) {
+                            var physics = TrainPhysics.state(train);
+                            if (physics.controlsBraking || physics.controlsAdmission != train.throttle
+                                || gear() != 0 && train.speed * expected >= 0)
+                                throw new AssertionError("Manual opposite momentum must retain admission without a brake; this unconnected fixture cannot stop itself with steam");
+                        }
                         return true;
                     });
                     return false;
                 }
                 if (!verification.isDone()) return false;
                 if (!verification.join()) { verification = null; return false; }
+                if (scenario % 3 == 0) {
+                    var received = ClientTrainKinetics.freshState(clientEntity(mc));
+                    if (received == null || received.braking() || received.admission() != received.throttle()) return false;
+                }
                 scenario++; next(4);
             }
             case 7 -> {
@@ -192,11 +204,11 @@ public final class TrainClientDrivingTests {
             case 8 -> {
                 if (!work.isDone()) return false;
                 work.join();
-                DifferentialCreate.LOGGER.info("DC_TRAIN_CLIENT_DRIVING_PASS: {} native key shifts, {} cab/gear/W/S and {} station-assist packet cases", shift, scenario, stationScenario);
+                DifferentialCreate.LOGGER.info("DC_TRAIN_CLIENT_DRIVING_PASS: {} native key shifts, {} cab/gear/W/S, {} station-assist and {} parking packet cases", shift, scenario, stationScenario, parkingScenario);
                 next(9);
             }
             case 10 -> {
-                if (stationScenario == 16) { next(7); return false; }
+                if (stationScenario == 16) { next(16); return false; }
                 send(mc, List.of(0, 1, 4, 5), false);
                 work = mc.getSingleplayerServer().submit(() -> {
                     var train = Create.RAILWAYS.trains.get(fixture.train); var entity = train.carriages.getFirst().anyAvailableEntity();
@@ -282,6 +294,84 @@ public final class TrainClientDrivingTests {
                 if (!work.isDone()) return false;
                 work.join(); stationScenario++; next(10);
             }
+            case 16 -> {
+                if (parkingScenario == 6) { next(7); return false; }
+                send(mc, List.of(0, 1, 4, 5), false);
+                work = mc.getSingleplayerServer().submit(() -> {
+                    var train = Create.RAILWAYS.trains.get(fixture.train); var entity = train.carriages.getFirst().anyAvailableEntity();
+                    TrainPhysics.endStationAssist(train); train.navigation.cancelNavigation();
+                    if (frontStation != null) train.graph.removePoint(EdgePointType.STATION, frontStation.id);
+                    if (backStation != null) train.graph.removePoint(EdgePointType.STATION, backStation.id);
+                    frontStation = backStation = null;
+                    var pos = CAB.subtract(WHEEL); var block = entity.getContraption().getBlocks().get(pos);
+                    var facing = entity.getInitialOrientation().getCounterClockWise();
+                    entity.setBlock(pos, new StructureBlockInfo(pos, block.state().setValue(ControlsBlock.FACING,
+                        parkingScenario >= 3 ? facing.getOpposite() : facing), block.nbt()));
+                    TrainPhysics.shift(train, parkingGear()); train.speed = parkingScenario >= 3 ? -.05 : .05;
+                    return null;
+                }); next(17);
+            }
+            case 17 -> {
+                if (!work.isDone()) return false;
+                work.join();
+                var received = ClientTrainKinetics.state(fixture.train);
+                if (received == null || received.gear() != parkingGear()) return false;
+                send(mc, List.of(4), true);
+                work = mc.getSingleplayerServer().submit(() -> { driveTick = mc.getSingleplayerServer().overworld().getGameTime(); return null; });
+                next(18);
+            }
+            case 18 -> {
+                if (age % 5 == 0) send(mc, List.of(4), true);
+                if (!work.isDone()) return false;
+                work.join();
+                if (verification == null) verification = mc.getSingleplayerServer().submit(() -> {
+                    if (mc.getSingleplayerServer().overworld().getGameTime() - driveTick < 10) return false;
+                    var train = Create.RAILWAYS.trains.get(fixture.train); var physics = TrainPhysics.state(train);
+                    if (!physics.parkingBrake || train.speed != 0 || !physics.controlsBraking || physics.controlsAdmission != 0)
+                        throw new AssertionError("Native Space packet did not stop and park the train: " + parkingScenario);
+                    return true;
+                });
+                if (!verification.isDone()) return false;
+                if (!verification.join()) { verification = null; return false; }
+                send(mc, List.of(4), false);
+                work = mc.getSingleplayerServer().submit(() -> { driveTick = mc.getSingleplayerServer().overworld().getGameTime(); return null; });
+                next(19);
+            }
+            case 19 -> {
+                if (!work.isDone()) return false;
+                work.join();
+                if (verification == null) verification = mc.getSingleplayerServer().submit(() -> {
+                    if (mc.getSingleplayerServer().overworld().getGameTime() - driveTick < 10) return false;
+                    var train = Create.RAILWAYS.trains.get(fixture.train); var physics = TrainPhysics.state(train);
+                    if (!physics.parkingBrake || train.speed != 0 || !physics.controlsBraking || physics.controlsAdmission != 0)
+                        throw new AssertionError("Releasing the native Space packet lost parking: " + parkingScenario);
+                    return true;
+                });
+                if (!verification.isDone()) return false;
+                if (!verification.join()) { verification = null; return false; }
+                var received = ClientTrainKinetics.freshState(clientEntity(mc));
+                if (received == null || !received.braking() || received.admission() != 0) return false;
+                send(mc, List.of(0), true);
+                work = mc.getSingleplayerServer().submit(() -> { driveTick = mc.getSingleplayerServer().overworld().getGameTime(); return null; });
+                next(20);
+            }
+            case 20 -> {
+                if (age % 5 == 0) send(mc, List.of(0), true);
+                if (!work.isDone()) return false;
+                work.join();
+                if (verification == null) verification = mc.getSingleplayerServer().submit(() -> {
+                    if (mc.getSingleplayerServer().overworld().getGameTime() - driveTick < 10) return false;
+                    var train = Create.RAILWAYS.trains.get(fixture.train); var physics = TrainPhysics.state(train);
+                    if (physics.parkingBrake || physics.controlsBraking || physics.controlsAdmission != train.throttle)
+                        throw new AssertionError("Native W packet did not unlock parking and open admission: " + parkingScenario);
+                    return true;
+                });
+                if (!verification.isDone()) return false;
+                if (!verification.join()) { verification = null; return false; }
+                var received = ClientTrainKinetics.freshState(clientEntity(mc));
+                if (received == null || received.braking() || received.admission() != received.throttle()) return false;
+                parkingScenario++; next(16);
+            }
             default -> throw new AssertionError("Unknown driver client stage");
         }
         return false;
@@ -292,6 +382,7 @@ public final class TrainClientDrivingTests {
     private static boolean inverted() { return scenario >= 9; }
     private static boolean stationInverted() { return stationScenario >= 8; }
     private static int stationGear() { return stationScenario / 4 % 2 == 0 ? 1 : R; }
+    private static int parkingGear() { return new int[]{0, 1, R}[parkingScenario % 3]; }
     private static GlobalStation station(Train train, int direction) {
         var point = direction > 0 ? train.carriages.getFirst().getLeadingPoint() : train.carriages.getLast().getTrailingPoint();
         var station = new GlobalStation(); station.setType(EdgePointType.STATION); station.setId(UUID.randomUUID());

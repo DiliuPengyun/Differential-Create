@@ -1,6 +1,7 @@
 """Create-native textures and compact additions to the existing bogey meshes."""
 import json
 import math
+from copy import deepcopy
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +51,17 @@ def bogey():
          'textures': {'engine': 'create:block/engine', 'linkage': 'create:block/cam_linkage',
                       'particle': 'create:block/copper_underside'},
          'elements': cover})
+    # The condenser changes only the existing flush panel's texture.
+    # Keep the original brass, inlet, screws and complete native bogey mesh.
+    # Reuse the engine atlas layout and UVs, so its 14x14 top and 14x4 side
+    # texels have exactly the same density as the uncooled engine cover.
+    cooled = deepcopy(cover)
+    save(MODELS / 'steam_bogey/condenser_cover.json', {'parent': 'minecraft:block/block',
+         'render_type': 'minecraft:cutout_mipped', 'ambientocclusion': False,
+         'textures': {'engine': 'differentialcreate:block/steam_bogey/condenser_panel',
+                      'linkage': 'create:block/cam_linkage',
+                      'particle': 'differentialcreate:block/steam_bogey/condenser_panel'},
+         'elements': cooled})
 
 def levers():
     # Bake the rigid handle into a mesh so all forward detents can be on one
@@ -108,22 +120,13 @@ def levers():
     save(MODELS.parents[1] / 'blockstates/gear_lever.json', {'variants': {
         f'gear={gear}': {'model': f'differentialcreate:block/gear_lever_{gear}'} for gear in range(7)}})
 
-def hose_item():
-    # A compact coil with native rubber-hose and pipe-coupling textures.
-    elements = []
-    for low, high in [([3, 3, 6], [6, 12, 9]), ([10, 3, 6], [13, 12, 9]),
-                      ([5, 2, 6], [11, 5, 9]), ([5, 10, 6], [11, 13, 9])]:
-        elements.append(box(low, high, '#hose', (12, 0, 16, 16)))
-    elements.append(box([2.5, 11, 5.5], [6.5, 14, 9.5], '#pipes', (1, 11, 6, 16)))
-    elements.append(box([9.5, 1, 5.5], [13.5, 4, 9.5], '#pipes', (1, 11, 6, 16)))
-    save(MODELS.parent / 'item/steam_hose.json', {'parent': 'minecraft:block/block',
-        'textures': {'hose': 'create:block/hose', 'pipes': 'create:block/pipes', 'particle': 'create:block/hose'},
-        'elements': elements,
-        'display': {'gui': {'rotation': [20, -30, 0], 'translation': [0, 0, 0], 'scale': [1.05, 1.05, 1.05]},
-                    'firstperson_righthand': {'rotation': [0, -90, 25], 'translation': [1.13, 3.2, 1.13], 'scale': [.65, .65, .65]},
-                    'thirdperson_righthand': {'rotation': [0, -90, 25], 'translation': [0, 3, 1], 'scale': [.5, .5, .5]}}})
+def item_sprites():
+    # Standard flat inventory/held-item sprites; no hand-built cuboid meshes.
+    for name in ('steam_hose', 'condenser_pipe'):
+        save(MODELS.parent / f'item/{name}.json', {'parent': 'minecraft:item/generated',
+             'textures': {'layer0': f'differentialcreate:item/{name}'}})
 
 if __name__ == '__main__':
     bogey()
     levers()
-    hose_item()
+    item_sprites()

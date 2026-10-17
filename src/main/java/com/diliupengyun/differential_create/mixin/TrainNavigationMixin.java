@@ -4,6 +4,7 @@ import com.diliupengyun.differential_create.trains.TrainPhysics;
 import com.diliupengyun.differential_create.trains.TrainMechanics;
 import com.simibubi.create.content.trains.entity.Navigation;
 import com.simibubi.create.content.trains.entity.Train;
+import com.simibubi.create.content.trains.graph.EdgePointType;
 import com.simibubi.create.content.trains.station.GlobalStation;
 import net.minecraft.world.level.Level;
 import org.spongepowered.asm.mixin.Mixin;
@@ -32,9 +33,19 @@ public abstract class TrainNavigationMixin {
         double downhill = -TrainPhysics.state(train).grade * Math.signum(train.speed);
         return TrainMechanics.stoppingDistance(Math.abs(train.speed) * 20, downhill) + Math.abs(train.speed) * 2 + .1;
     }
-    @Inject(method = "tick", at = @At("HEAD"))
+    @Inject(method = "tick", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$assistSignals(Level level, CallbackInfo ci) {
-        var train = ((Navigation) (Object) this).train;
+        var navigation = (Navigation) (Object) this;
+        var train = navigation.train;
+        // A removed station is no longer visited by the edge-point listener.
+        // Interrupt transit so the runtime can retry its destination search.
+        if (navigation.destination != null && train.graph != null
+            && train.graph.getPoint(EdgePointType.STATION, navigation.destination.id) != navigation.destination) {
+            navigation.cancelNavigation();
+            TrainPhysics.state(train).brake = true;
+            ci.cancel();
+            return;
+        }
         if (TrainPhysics.state(train).stationAssist) train.manualTick = false;
     }
     @Redirect(method = "tick", at = @At(value = "INVOKE", target = "Lcom/simibubi/create/content/trains/entity/Train;leaveStation()V"))

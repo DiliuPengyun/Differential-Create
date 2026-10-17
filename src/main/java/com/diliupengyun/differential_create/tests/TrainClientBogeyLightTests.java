@@ -16,13 +16,14 @@ import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 
-/** Actual daylight pixels from the carriage bogey visual, which receives no packed-light updates. */
+/** Actual daylit carriage pixels, including live condenser texture changes in the instanced visual. */
 public final class TrainClientBogeyLightTests {
     private static int stage, frames;
     private static CompletableFuture<?> work;
     private static Vec3 originalPosition, cameraPosition;
     private static float yaw, pitch;
     private static boolean hideGui, bob, flying;
+    private static int[] warm;
     private TrainClientBogeyLightTests() {}
 
     public static boolean tick(Minecraft mc, CarriageContraptionEntity entity) {
@@ -30,6 +31,7 @@ public final class TrainClientBogeyLightTests {
         switch (stage) {
             case 0 -> {
                 if (!bogey.bogeyData.getBoolean(SteamBogey.ENGINE)) throw new AssertionError("Light fixture did not assemble an installed engine");
+                if (bogey.bogeyData.getBoolean(SteamBogey.CONDENSER)) throw new AssertionError("Light fixture must start with a copper engine cover");
                 if (!VisualizationManager.supportsVisualization(mc.level)) throw new AssertionError("Carriage light check needs the actual instanced rendering path");
                 originalPosition = mc.player.position(); yaw = mc.player.getYRot(); pitch = mc.player.getXRot();
                 hideGui = mc.options.hideGui; bob = mc.options.bobView().get(); flying = mc.player.getAbilities().flying;
@@ -51,51 +53,72 @@ public final class TrainClientBogeyLightTests {
                 mc.player.setYRot((float) Math.toDegrees(Math.atan2(-delta.x, delta.z)));
                 mc.player.setXRot((float) -Math.toDegrees(Math.atan2(delta.y, Math.sqrt(delta.x * delta.x + delta.z * delta.z))));
                 if (++frames < 30) return false;
-                try (var image = Screenshot.takeScreenshot(mc.getMainRenderTarget())) {
-                    Path path = Path.of("../../..", "train-interaction", "bogey-moving-core-lighting.png").toAbsolutePath().normalize();
-                    image.writeToFile(path);
-                    int checks = 0;
-                    for (float x : new float[]{.3f, .7f}) for (float z : new float[]{.3f, .7f}) {
-                        var camera = mc.gameRenderer.getMainCamera();
-                        var point = world(entity, x, z).subtract(camera.getPosition());
-                        var view = new Quaternionf(camera.rotation()).conjugate().transform(point.toVector3f());
-                        var clip = mc.gameRenderer.getProjectionMatrix(fov(mc)).transform(new Vector4f(view, 1));
-                        int px = (int) ((clip.x / clip.w * .5 + .5) * image.getWidth());
-                        int py = (int) ((.5 - clip.y / clip.w * .5) * image.getHeight());
-                        if (clip.w <= 0 || px < 2 || py < 2 || px >= image.getWidth() - 2 || py >= image.getHeight() - 2)
-                            throw new AssertionError("Cover lighting sample is outside the camera");
-                        int red = 0, green = 0, blue = 0;
-                        for (int dx = -2; dx <= 2; dx++) for (int dy = -2; dy <= 2; dy++) {
-                            int pixel = image.getPixelRGBA(px + dx, py + dy);
-                            red += pixel & 255; green += pixel >>> 8 & 255; blue += pixel >>> 16 & 255;
-                        }
-                        DifferentialCreate.LOGGER.info("DC_TRAIN_BOGEY_LIGHT_SAMPLE: {},{} screen={},{} rgb={},{},{}", x, z, px, py, red / 25, green / 25, blue / 25);
-                        if (red / 25 < 60 || red <= green * 1.4 || red <= blue * 1.8)
-                            throw new AssertionError("Daylit moving engine cover is black or lost its native copper color");
-                        checks++;
-                    }
-                    DifferentialCreate.LOGGER.info("DC_TRAIN_BOGEY_LIGHT_PASS: {} actual daylit copper-cover pixels in a native carriage visual", checks);
-                } catch (java.io.IOException error) { throw new AssertionError(error); }
-                finally {
-                    mc.options.hideGui = hideGui; mc.options.bobView().set(bob);
-                    mc.player.setYRot(yaw); mc.player.setXRot(pitch);
-                    work = mc.getSingleplayerServer().submit(() -> {
-                        var player = mc.getSingleplayerServer().getPlayerList().getPlayers().getFirst();
-                        player.getAbilities().flying = flying; player.onUpdateAbilities();
-                        player.teleportTo(originalPosition.x, originalPosition.y, originalPosition.z); return null;
-                    });
-                    stage = 2;
-                }
+                warm = sample(mc, entity, false, "bogey-moving-core-lighting.png");
+                // Exercise the native visual's existing instance without rebuilding the carriage.
+                bogey.bogeyData.putBoolean(SteamBogey.CONDENSER, true);
+                frames = 0; stage = 2;
             }
             case 2 -> {
+                if (++frames < 25) return false;
+                sample(mc, entity, true, "bogey-moving-condenser.png");
+                bogey.bogeyData.remove(SteamBogey.CONDENSER);
+                frames = 0; stage = 3;
+            }
+            case 3 -> {
+                if (++frames < 25) return false;
+                sample(mc, entity, false, "bogey-moving-condenser-removed.png");
+                DifferentialCreate.LOGGER.info("DC_TRAIN_BOGEY_CONDENSER_PIXELS_PASS: native carriage visual changes copper to cooled panels and back");
+                mc.options.hideGui = hideGui; mc.options.bobView().set(bob);
+                mc.player.setYRot(yaw); mc.player.setXRot(pitch);
+                work = mc.getSingleplayerServer().submit(() -> {
+                    var player = mc.getSingleplayerServer().getPlayerList().getPlayers().getFirst();
+                    player.getAbilities().flying = flying; player.onUpdateAbilities();
+                    player.teleportTo(originalPosition.x, originalPosition.y, originalPosition.z); return null;
+                });
+                stage = 4;
+            }
+            case 4 -> {
                 if (!work.isDone()) return false;
                 work.join(); if (mc.player.position().distanceTo(originalPosition) > .2) return false;
-                stage = 3;
+                stage = 5;
             }
-            case 3 -> { return true; }
+            case 5 -> { return true; }
             default -> throw new AssertionError("Unknown bogey light stage");
         }
         return false;
+    }
+
+    private static int[] sample(Minecraft mc, CarriageContraptionEntity entity, boolean cold, String name) {
+        try (var image = Screenshot.takeScreenshot(mc.getMainRenderTarget())) {
+            image.writeToFile(Path.of("../../..", "train-interaction", name).toAbsolutePath().normalize());
+            int[] colors = new int[12]; int checks = 0;
+            for (float x : new float[]{.3f, .7f}) for (float z : new float[]{.3f, .7f}) {
+                var camera = mc.gameRenderer.getMainCamera();
+                var point = world(entity, x, z).subtract(camera.getPosition());
+                var view = new Quaternionf(camera.rotation()).conjugate().transform(point.toVector3f());
+                var clip = mc.gameRenderer.getProjectionMatrix(fov(mc)).transform(new Vector4f(view, 1));
+                int px = (int) ((clip.x / clip.w * .5 + .5) * image.getWidth());
+                int py = (int) ((.5 - clip.y / clip.w * .5) * image.getHeight());
+                if (clip.w <= 0 || px < 2 || py < 2 || px >= image.getWidth() - 2 || py >= image.getHeight() - 2)
+                    throw new AssertionError("Cover lighting sample is outside the camera");
+                int red = 0, green = 0, blue = 0;
+                for (int dx = -2; dx <= 2; dx++) for (int dy = -2; dy <= 2; dy++) {
+                    int pixel = image.getPixelRGBA(px + dx, py + dy);
+                    red += pixel & 255; green += pixel >>> 8 & 255; blue += pixel >>> 16 & 255;
+                }
+                red /= 25; green /= 25; blue /= 25;
+                DifferentialCreate.LOGGER.info("DC_TRAIN_BOGEY_LIGHT_SAMPLE: cold={} {},{} screen={},{} rgb={},{},{}", cold, x, z, px, py, red, green, blue);
+                if (cold) {
+                    if (blue < 60 || blue <= red || Math.abs(red - warm[checks * 3]) + Math.abs(green - warm[checks * 3 + 1]) + Math.abs(blue - warm[checks * 3 + 2]) < 80)
+                        throw new AssertionError("Condenser did not replace the copper panel with a lit cold-colored texture");
+                } else if (red < 60 || red <= green * 1.4 || red <= blue * 1.8)
+                    throw new AssertionError("Daylit moving engine cover is black or lost its native copper color");
+                colors[checks * 3] = red; colors[checks * 3 + 1] = green; colors[checks * 3 + 2] = blue;
+                checks++;
+            }
+            DifferentialCreate.LOGGER.info("DC_TRAIN_BOGEY_LIGHT_PASS: {} actual daylit cover pixels, cold={}", checks, cold);
+            return colors;
+        } catch (java.io.IOException error) { throw new AssertionError(error); }
     }
 
     private static double fov(Minecraft mc) {

@@ -14,6 +14,10 @@ public final class StrengthRegistry {
 	private StrengthRegistry() {}
 	public static double of(KineticBlockEntity be) {
 		if (be instanceof CreativeMotorBlockEntity) return Double.POSITIVE_INFINITY;
-		return be.getBlockState().is(BRASS) ? PhysicsTuning.BRASS_STRENGTH : PhysicsTuning.ANDESITE_STRENGTH;
+		return of(be.getBlockState().getBlock());
+	}
+	public static double of(Block block) {
+		if (block == com.simibubi.create.AllBlocks.CREATIVE_MOTOR.get()) return Double.POSITIVE_INFINITY;
+		return block.defaultBlockState().is(BRASS) ? PhysicsTuning.BRASS_STRENGTH : PhysicsTuning.ANDESITE_STRENGTH;
 	}
 }

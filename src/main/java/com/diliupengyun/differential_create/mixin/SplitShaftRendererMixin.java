@@ -32,7 +32,6 @@ public abstract class SplitShaftRendererMixin {
 	private void differentialcreate$animateClutch(SplitShaftBlockEntity be, float partialTicks, PoseStack pose,
 		MultiBufferSource buffers, int light, int overlay, CallbackInfo ci) {
 		if (!(be instanceof ClutchBlockEntity) && !(be instanceof SequencedGearshiftBlockEntity)) return;
-		if (be instanceof SequencedGearshiftBlockEntity seq && seq.isVirtual()) return;
 		ci.cancel();
 		if (VisualizationManager.supportsVisualization(be.getLevel())) return;
 		var axis = KineticBlockEntityRenderer.getRotationAxisOf(be);

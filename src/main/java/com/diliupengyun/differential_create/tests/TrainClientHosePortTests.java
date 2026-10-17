@@ -41,7 +41,7 @@ public final class TrainClientHosePortTests {
 
     public static boolean tick(Minecraft mc) throws Exception {
         if (scenario == SCENARIOS) return true;
-        if (++age > 1200) throw new AssertionError("Client precise hose point timed out: " + scenario + " stage " + stage);
+        if (++age > 1200) throw new AssertionError("Client centred hose point timed out: " + scenario + " stage " + stage);
         mc.player.setYRot(0); mc.player.setXRot(25);
         switch (stage) {
             case 0 -> {
@@ -74,7 +74,7 @@ public final class TrainClientHosePortTests {
                     || mc.level.getBlockEntity(member()) == null || mc.level.getBlockEntity(WHEEL) == null
                     || mc.player.position().distanceToSqr(new Vec3(7.5, -57.2, -39.5)) > 1) return false;
                 if (!click(mc, engineFirst() ? engineHit() : tankHit()).consumesAction())
-                    throw new AssertionError("First precise endpoint click was not consumed");
+                    throw new AssertionError("First endpoint click was not consumed");
                 advance(2);
             }
             case 2 -> {
@@ -83,12 +83,12 @@ public final class TrainClientHosePortTests {
                 if (!engineFirst()) checkPort(SteamHoseItem.selectedTankPort(held));
                 mc.hitResult = engineFirst() ? tankHit() : engineHit(); SteamHosePreview.tick();
                 preview = SteamHosePreview.connection();
-                if (!SteamHosePreview.valid() || preview == null) throw new AssertionError("Precise point has no valid live preview");
+                if (!SteamHosePreview.valid() || preview == null) throw new AssertionError("Face centre has no valid live preview");
                 close(preview.tank().point(), port().position(member()).add(port().normal().scale(.015)));
                 close(preview.tank().normal(), port().normal());
                 close(preview.engine().point(), Vec3.atCenterOf(WHEEL).add(0, .515, 0));
                 close(preview.engine().normal(), new Vec3(0, 1, 0));
-                if (!click(mc, (BlockHitResult) mc.hitResult).consumesAction()) throw new AssertionError("Second precise endpoint click was not consumed");
+                if (!click(mc, (BlockHitResult) mc.hitResult).consumesAction()) throw new AssertionError("Second endpoint click was not consumed");
                 advance(3);
             }
             case 3 -> {
@@ -103,7 +103,7 @@ public final class TrainClientHosePortTests {
                 close(installed.tank().point(), preview.tank().point()); close(installed.tank().normal(), preview.tank().normal());
                 close(installed.engine().point(), preview.engine().point()); close(installed.engine().normal(), preview.engine().normal());
                 SteamHosePreview.tick();
-                if (SteamHosePreview.active() || SteamHosePreview.connection() != null) throw new AssertionError("Completed precise connection retained its preview");
+                if (SteamHosePreview.active() || SteamHosePreview.connection() != null) throw new AssertionError("Completed connection retained its preview");
                 if (scenario == 1 || scenario == 2) {
                     if (age < 20) return false;
                     Path path = Path.of("../../..", "train-interaction", "hose-click-" + face().getName() + ".png").toAbsolutePath().normalize();
@@ -112,7 +112,7 @@ public final class TrainClientHosePortTests {
                 scenario++; advance(0);
                 if (scenario == SCENARIOS) DifferentialCreate.LOGGER.info("DC_TRAIN_CLIENT_PORTS_PASS: {} six-face/order/hand preview and native packet scenarios", scenario);
             }
-            default -> throw new AssertionError("Unknown precise port stage");
+            default -> throw new AssertionError("Unknown port stage");
         }
         return false;
     }
@@ -121,8 +121,19 @@ public final class TrainClientHosePortTests {
     private static BlockPos member() { return face() == Direction.DOWN ? TANK : TANK.above(); }
     private static boolean engineFirst() { return scenario >= 12; }
     private static InteractionHand hand() { return scenario / 6 % 2 == 0 ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND; }
-    private static SteamHosePort port() { return SteamHosePort.fromHit(BlockPos.ZERO, face(), new Vec3(.25, .6875, .8125)); }
-    private static BlockHitResult tankHit() { return new BlockHitResult(port().position(member()), face(), member(), false); }
+    private static SteamHosePort port() {
+        var face = face();
+        return new SteamHosePort(face, new Vec3(.5 + .5 * face.getStepX(), .5 + .5 * face.getStepY(), .5 + .5 * face.getStepZ()));
+    }
+    private static BlockHitResult tankHit() {
+        var face = face();
+        var point = switch (face.getAxis()) {
+            case X -> new Vec3(face.getStepX() > 0 ? 1 : 0, .6875, .8125);
+            case Y -> new Vec3(.25, face.getStepY() > 0 ? 1 : 0, .8125);
+            case Z -> new Vec3(.25, .6875, face.getStepZ() > 0 ? 1 : 0);
+        };
+        return new BlockHitResult(Vec3.atLowerCornerOf(member()).add(point), face, member(), false);
+    }
     private static BlockHitResult engineHit() { return new BlockHitResult(Vec3.atCenterOf(WHEEL), Direction.NORTH, WHEEL, false); }
     private static CompoundTag data(ItemStack stack) { return stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag(); }
     private static InteractionResult click(Minecraft mc, BlockHitResult hit) {
@@ -154,7 +165,7 @@ public final class TrainClientHosePortTests {
         close(actual.point(), port().point());
     }
     private static void close(Vec3 actual, Vec3 expected) {
-        if (actual.distanceToSqr(expected) > 1e-12) throw new AssertionError("Precise hose point differs: " + actual + " / " + expected);
+        if (actual.distanceToSqr(expected) > 1e-12) throw new AssertionError("Centred hose point differs: " + actual + " / " + expected);
     }
     private static void advance(int next) { stage = next; age = 0; verification = null; }
 }

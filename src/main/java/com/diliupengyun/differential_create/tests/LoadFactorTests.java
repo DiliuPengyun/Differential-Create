@@ -108,7 +108,8 @@ public final class LoadFactorTests {
         var readings = List.of(new LoadFactor.Reading(LoadFactor.Status.AVAILABLE, .25),
             new LoadFactor.Reading(LoadFactor.Status.AVAILABLE, 2),
             new LoadFactor.Reading(LoadFactor.Status.AVAILABLE, Double.POSITIVE_INFINITY),
-            LoadFactor.Reading.NO_POWER, new LoadFactor.Reading(LoadFactor.Status.BRAKING, 0), LoadFactor.Reading.UNKNOWN);
+            LoadFactor.Reading.NO_POWER, new LoadFactor.Reading(LoadFactor.Status.BRAKING, 0), LoadFactor.Reading.UNKNOWN,
+            LoadFactor.Reading.UNDEFINED);
         for (var reading : readings) {
             var payload = new RotorStatePayload(h.getLevel().dimension().location(), source.network, 123.5, 57.125, reading,
                 List.of(new RotorStatePayload.Rotor(source.getBlockPos(), -12, 45.25, -16, 0, 12.25),
