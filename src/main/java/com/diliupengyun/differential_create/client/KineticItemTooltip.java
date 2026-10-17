@@ -43,6 +43,18 @@ public final class KineticItemTooltip {
         List<Component> lines = new ArrayList<>();
         boolean goggles = player != null && GogglesItem.isWearingGoggles(player);
         if (block instanceof SteamEngineBlock) {
+            // The engine's rotor is the powered shaft. From the player's point of
+            // view this is one machine, so present those rotor properties as the
+            // steam engine's own instead of exposing the internal component name.
+            if (expanded) {
+                title(lines, "mechanical_properties");
+                property(lines, "inertia", InertiaRegistry.getBaseInertia(AllBlocks.POWERED_SHAFT.get()));
+                double strength = StrengthRegistry.of(AllBlocks.POWERED_SHAFT.get());
+                if (Double.isInfinite(strength)) lines.add(Component.translatable("tooltip.differentialcreate.unlimited_strength")
+                    .withStyle(ChatFormatting.DARK_GRAY));
+                else property(lines, "strength", strength);
+                lines.add(CommonComponents.EMPTY);
+            }
             rating(lines, "torque_output", BlockStressValues.getCapacity(block) * PhysicsTuning.STEAM_TORQUE_PER_CAPACITY, true, goggles);
             return lines;
         }

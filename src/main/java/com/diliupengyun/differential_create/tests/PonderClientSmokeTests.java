@@ -453,13 +453,11 @@ public final class PonderClientSmokeTests {
             require(stats.stream().noneMatch(line -> line.getString().contains("x RPM")), "Old nominal stress statistic survived: " + block);
             var expanded = KineticItemTooltip.describe(block, null, true);
             require(!expanded.isEmpty(), "Missing physical inventory stats for " + block);
-            if (!(block instanceof com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlock)) {
-                require(expanded.getFirst().getContents() instanceof TranslatableContents title
-                    && title.getKey().equals("tooltip.differentialcreate.mechanical_properties"), "Missing Shift properties group");
-                var collapsed = KineticItemTooltip.describe(block, null, false);
-                require(collapsed.stream().noneMatch(line -> line.getString().contains("su/RPM³")
-                    || line.getString().contains("结构强度")), "Bare properties leaked outside Shift details");
-            }
+            require(expanded.getFirst().getContents() instanceof TranslatableContents title
+                && title.getKey().equals("tooltip.differentialcreate.mechanical_properties"), "Missing Shift properties group");
+            var collapsed = KineticItemTooltip.describe(block, null, false);
+            require(collapsed.stream().noneMatch(line -> line.getString().contains("su/RPM³")
+                || line.getString().contains("结构强度")), "Bare properties leaked outside Shift details");
         }
         var press = KineticItemTooltip.describe(AllBlocks.MECHANICAL_PRESS.get(), null, false);
         require(press.size() == 2 && press.getFirst().getStyle().getColor().equals(net.minecraft.network.chat.TextColor.fromLegacyFormat(net.minecraft.ChatFormatting.GRAY))
