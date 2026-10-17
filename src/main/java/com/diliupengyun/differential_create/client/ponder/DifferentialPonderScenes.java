@@ -23,7 +23,6 @@ import com.simibubi.create.content.kinetics.gauge.SpeedGaugeBlockEntity;
 import com.simibubi.create.content.kinetics.gauge.StressGaugeBlockEntity;
 import com.simibubi.create.content.kinetics.press.MechanicalPressBlockEntity;
 import com.simibubi.create.content.kinetics.press.PressingBehaviour;
-import com.simibubi.create.content.logistics.depot.DepotBlockEntity;
 import com.simibubi.create.content.kinetics.steamEngine.PoweredShaftBlock;
 import com.simibubi.create.content.kinetics.steamEngine.PoweredShaftBlockEntity;
 import com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlock;
@@ -167,7 +166,8 @@ public final class DifferentialPonderScenes {
 
         ItemStack ingots = new ItemStack(Items.COPPER_INGOT, 4);
         ItemStack sheets = new ItemStack(AllItems.COPPER_SHEET.get(), 4);
-        scene.world().createItemOnBeltLike(OUTPUT, Direction.UP, ingots);
+        scene.world().createItemOnBeltLike(OUTPUT, Direction.NORTH, ingots);
+        scene.overlay().showControls(util.vector().centerOf(OUTPUT), Pointing.UP, 30).withItem(ingots);
         scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
         target(scene, util.select().position(input), 64);
@@ -177,10 +177,13 @@ public final class DifferentialPonderScenes {
         scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour()
                 .makePressingParticleEffect(util.vector().centerOf(OUTPUT).add(0, 8 / 16f, 0), ingots));
-        scene.world().modifyBlockEntity(OUTPUT, DepotBlockEntity.class, depot -> depot.setHeldItem(sheets.copy()));
+        scene.world().removeItemsFromBelt(OUTPUT);
+        scene.world().createItemOnBeltLike(OUTPUT, Direction.NORTH, sheets.copy());
+        scene.overlay().showControls(util.vector().centerOf(OUTPUT), Pointing.UP, 40).withItem(sheets);
         scene.idle(40);
 
-        scene.world().modifyBlockEntity(OUTPUT, DepotBlockEntity.class, depot -> depot.setHeldItem(ingots.copy()));
+        scene.world().removeItemsFromBelt(OUTPUT);
+        scene.world().createItemOnBeltLike(OUTPUT, Direction.NORTH, ingots.copy());
         scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
         target(scene, util.select().position(input), 0);
@@ -189,7 +192,9 @@ public final class DifferentialPonderScenes {
         scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour()
                 .makePressingParticleEffect(util.vector().centerOf(OUTPUT).add(0, 8 / 16f, 0), ingots));
-        scene.world().modifyBlockEntity(OUTPUT, DepotBlockEntity.class, depot -> depot.setHeldItem(sheets.copy()));
+        scene.world().removeItemsFromBelt(OUTPUT);
+        scene.world().createItemOnBeltLike(OUTPUT, Direction.NORTH, sheets.copy());
+        scene.overlay().showControls(util.vector().centerOf(OUTPUT), Pointing.UP, 40).withItem(sheets);
         scene.idle(40);
 
         BlockPos upperCog = new BlockPos(2, 4, 3);
@@ -203,8 +208,10 @@ public final class DifferentialPonderScenes {
         block(scene, util, gearedSupport, Blocks.SMOOTH_STONE.defaultBlockState());
         block(scene, util, gearedPress, axis(AllBlocks.MECHANICAL_PRESS.getDefaultState(), Axis.X));
         block(scene, util, gearedDepot, AllBlocks.DEPOT.getDefaultState());
-        scene.world().createItemOnBeltLike(gearedDepot, Direction.UP, ingots.copy());
-        scene.world().modifyBlockEntity(OUTPUT, DepotBlockEntity.class, depot -> depot.setHeldItem(ingots.copy()));
+        scene.world().createItemOnBeltLike(gearedDepot, Direction.NORTH, ingots.copy());
+        scene.overlay().showControls(util.vector().centerOf(gearedDepot), Pointing.UP, 30).withItem(ingots);
+        scene.world().removeItemsFromBelt(OUTPUT);
+        scene.world().createItemOnBeltLike(OUTPUT, Direction.NORTH, ingots.copy());
         scene.world().modifyBlockEntity(gearedPress, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
         // Keep the main-shaft press running as the 1x reference; the new press
@@ -219,11 +226,15 @@ public final class DifferentialPonderScenes {
         scene.world().modifyBlockEntity(gearedPress, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour()
                 .makePressingParticleEffect(util.vector().centerOf(gearedDepot).add(0, 8 / 16f, 0), ingots));
-        scene.world().modifyBlockEntity(gearedDepot, DepotBlockEntity.class, depot -> depot.setHeldItem(sheets.copy()));
+        scene.world().removeItemsFromBelt(gearedDepot);
+        scene.world().createItemOnBeltLike(gearedDepot, Direction.NORTH, sheets.copy());
+        scene.overlay().showControls(util.vector().centerOf(gearedDepot), Pointing.UP, 40).withItem(sheets);
         scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour()
                 .makePressingParticleEffect(util.vector().centerOf(OUTPUT).add(0, 8 / 16f, 0), ingots));
-        scene.world().modifyBlockEntity(OUTPUT, DepotBlockEntity.class, depot -> depot.setHeldItem(sheets.copy()));
+        scene.world().removeItemsFromBelt(OUTPUT);
+        scene.world().createItemOnBeltLike(OUTPUT, Direction.NORTH, sheets.copy());
+        scene.overlay().showControls(util.vector().centerOf(OUTPUT), Pointing.UP, 40).withItem(sheets);
         scene.idle(40);
 
         scene.overlay().showOutline(PonderPalette.RED, new Object(), util.select().fromTo(1, 3, 2, 2, 3, 2), 80);
