@@ -15,6 +15,7 @@ import com.simibubi.create.AllPartialModels;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntityRenderer;
 import com.simibubi.create.content.kinetics.transmission.ClutchBlockEntity;
+import com.simibubi.create.content.kinetics.transmission.GearshiftBlockEntity;
 import com.simibubi.create.content.kinetics.transmission.SplitShaftBlockEntity;
 import com.simibubi.create.content.kinetics.transmission.SplitShaftRenderer;
 
@@ -31,10 +32,24 @@ public abstract class SplitShaftRendererMixin {
 		at = @At("HEAD"), cancellable = true)
 	private void differentialcreate$animateClutch(SplitShaftBlockEntity be, float partialTicks, PoseStack pose,
 		MultiBufferSource buffers, int light, int overlay, CallbackInfo ci) {
-		if (!(be instanceof ClutchBlockEntity) && !(be instanceof SequencedGearshiftBlockEntity)) return;
+		if (!(be instanceof ClutchBlockEntity) && !(be instanceof SequencedGearshiftBlockEntity)
+			&& !(be instanceof GearshiftBlockEntity)) return;
 		ci.cancel();
 		if (VisualizationManager.supportsVisualization(be.getLevel())) return;
 		var axis = KineticBlockEntityRenderer.getRotationAxisOf(be);
+		if (be instanceof GearshiftBlockEntity) {
+			// The ordinary split-shaft renderer takes both face phases from the
+			// client render clock. Each gearshift face belongs to the network
+			// block it connects to, so follow that same-axis neighbour instead.
+			for (var face : Iterate.directionsInAxis(axis)) {
+				KineticBlockEntity owner = ClientKineticAngles.splitShaftFaceOwner(be, face);
+				float angle = ClientKineticAngles.splitShaftAngle(be, face);
+				var shaft = CachedBuffers.partialFacing(AllPartialModels.SHAFT_HALF, be.getBlockState(), face);
+				KineticBlockEntityRenderer.kineticRotationTransform(shaft, owner, axis, angle, light)
+					.renderInto(pose, buffers.getBuffer(RenderType.solid()));
+			}
+			return;
+		}
 		for (var face : Iterate.directionsInAxis(axis)) {
 			boolean outputFace = be.hasSource() ? face != be.getSourceFacing()
 				: be instanceof SequencedGearshiftBlockEntity && face.getAxisDirection() == net.minecraft.core.Direction.AxisDirection.POSITIVE;

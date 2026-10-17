@@ -45,9 +45,11 @@ final class PonderAnimationAudit {
     private final Map<BlockPos, WheelPose> wheels = new LinkedHashMap<>();
     private final Map<String, Integer> steamContacts = new LinkedHashMap<>();
     private final PonderFanAudit fans = new PonderFanAudit();
+    private final PonderGearshiftAudit gearshifts = new PonderGearshiftAudit();
 
     void sample(PonderScene scene) {
         fans.sample(scene);
+        gearshifts.sample(scene);
         int tick = scene.getCurrentTime();
         var physics = PonderKinetics.of(scene.getWorld());
         var rotors = new ArrayList<RotorFrame>();
@@ -231,6 +233,7 @@ final class PonderAnimationAudit {
 
     void verify(PonderScene scene) {
         fans.verify(scene);
+        gearshifts.verify(scene);
         if (!failures.isEmpty()) throw new AssertionError("Discontinuous animation in " + scene.getId() + ": " + failures);
     }
 
