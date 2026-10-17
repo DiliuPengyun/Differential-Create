@@ -219,7 +219,7 @@
   "differentialcreate.ponder.dynamics.header": "How Torque, Inertia, and Flywheels Work",
   "differentialcreate.ponder.dynamics.text_1": "Limited torque and shaft inertia make speed change gradually.",
   "differentialcreate.ponder.dynamics.text_2": "Flywheels store energy and can keep machines working after power is cut.",
-  "differentialcreate.ponder.dynamics.text_3": "Gearing up trades torque for speed; gearing down increases torque.",
+  "differentialcreate.ponder.dynamics.text_3": "Gearing up trades torque for speed; the small gear's press processes faster.",
   "differentialcreate.ponder.dynamics.text_4": "Connections flex; torque exceeding a component's strength breaks it.",
   "differentialcreate.ponder.clutch.header": "Clutches, Slip, and the Brass Clutch",
   "differentialcreate.ponder.clutch.text_1": "Full engagement limits: standard 1024, Brass 32768 su/RPM.",

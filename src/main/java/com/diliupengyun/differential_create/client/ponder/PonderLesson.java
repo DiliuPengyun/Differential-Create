@@ -11,7 +11,7 @@ public enum PonderLesson {
         "How Torque, Inertia, and Flywheels Work",
         "Limited torque and shaft inertia make speed change gradually.",
         "Flywheels store energy and can keep machines working after power is cut.",
-        "Gearing up trades torque for speed; gearing down increases torque.",
+        "Gearing up trades torque for speed; the small gear's press processes faster.",
         "Connections flex; torque exceeding a component's strength breaks it."
     ),
     CLUTCH("clutch",

@@ -163,17 +163,19 @@ public final class DifferentialPonderScenes {
         BlockPos input = INPUT.above(2), control = CONTROL.above(2), output = OUTPUT.above(2);
         drive(scene, util, AllBlocks.FLYWHEEL.getDefaultState(), AllBlocks.MECHANICAL_PRESS.getDefaultState(), 3);
         block(scene, util, OUTPUT, AllBlocks.DEPOT.getDefaultState());
-        scene.world().createItemOnBeltLike(OUTPUT, Direction.UP, new ItemStack(Items.COPPER_INGOT));
+        scene.world().createItemOnBeltLike(OUTPUT, Direction.UP, new ItemStack(Items.COPPER_INGOT, 4));
         scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
         target(scene, util.select().position(input), 64);
         scene.effects().rotationSpeedIndicator(control);
         PonderLesson.DYNAMICS.show(scene, util, control, 0);
+        scene.idle(180);
 
         scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
         target(scene, util.select().position(input), 0);
         PonderLesson.DYNAMICS.show(scene, util, output, 1);
+        scene.idle(180);
 
         BlockPos upperCog = new BlockPos(2, 4, 3);
         BlockPos gearedShaft = new BlockPos(3, 4, 3);
@@ -186,17 +188,18 @@ public final class DifferentialPonderScenes {
         block(scene, util, gearedSupport, Blocks.SMOOTH_STONE.defaultBlockState());
         block(scene, util, gearedPress, axis(AllBlocks.MECHANICAL_PRESS.getDefaultState(), Axis.X));
         block(scene, util, gearedDepot, AllBlocks.DEPOT.getDefaultState());
-        // The main-shaft press is replaced by the geared load, not duplicated: the
-        // step shows one visible load on the 2x small gear. Reuse the scene's
-        // hide/replace/reveal helper so the outgoing sections slide out first.
-        replaceBlock(scene, util, new BlockPos(OUTPUT.getX(), 3, OUTPUT.getZ()), Blocks.AIR.defaultBlockState());
-        replaceBlock(scene, util, OUTPUT, Blocks.AIR.defaultBlockState());
-        scene.world().createItemOnBeltLike(gearedDepot, Direction.UP, new ItemStack(Items.COPPER_INGOT));
+        scene.world().createItemOnBeltLike(gearedDepot, Direction.UP, new ItemStack(Items.COPPER_INGOT, 4));
         scene.world().modifyBlockEntity(gearedPress, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
+        // Keep the main-shaft press running as the 1x reference; the new press
+        // sits on the 2x small gear, so its ingots are consumed at a higher rate.
+        scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
+            press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
+        scene.rotateCameraY(-90);
         target(scene, util.select().position(input), 32);
         scene.effects().rotationSpeedIndicator(upperCog);
         PonderLesson.DYNAMICS.show(scene, util, upperCog, 2, PonderPalette.GREEN);
+        scene.idle(240);
 
         scene.overlay().showOutline(PonderPalette.RED, new Object(), util.select().fromTo(1, 3, 2, 2, 3, 2), 80);
         PonderLesson.DYNAMICS.show(scene, util, new BlockPos(1, 3, 2), 3, PonderPalette.RED);

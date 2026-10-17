@@ -219,7 +219,7 @@
   "differentialcreate.ponder.dynamics.header": "扭矩、惯性与飞轮储能",
   "differentialcreate.ponder.dynamics.text_1": "扭矩有限，轴系有惯量，转速会逐渐变化。",
   "differentialcreate.ponder.dynamics.text_2": "飞轮储存动能，断开动力后仍能带动加工。",
-  "differentialcreate.ponder.dynamics.text_3": "齿轮增速会减小扭矩；减速则增大扭矩。",
+  "differentialcreate.ponder.dynamics.text_3": "齿轮增速会减小扭矩；小齿轮带动压机加工得更快。",
   "differentialcreate.ponder.dynamics.text_4": "连接会弹性扭转，传递扭矩超过强度就会断裂。",
   "differentialcreate.ponder.clutch.header": "离合器、滑差与黄铜离合器",
   "differentialcreate.ponder.clutch.text_1": "满接合限扭：普通1024，黄铜32768 su/RPM。",
