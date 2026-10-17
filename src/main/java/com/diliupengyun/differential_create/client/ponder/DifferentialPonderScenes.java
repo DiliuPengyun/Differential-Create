@@ -169,13 +169,13 @@ public final class DifferentialPonderScenes {
         target(scene, util.select().position(input), 64);
         scene.effects().rotationSpeedIndicator(control);
         PonderLesson.DYNAMICS.show(scene, util, control, 0);
-        scene.idle(180);
+        scene.idle(120);
 
         scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
         target(scene, util.select().position(input), 0);
         PonderLesson.DYNAMICS.show(scene, util, output, 1);
-        scene.idle(180);
+        scene.idle(120);
 
         BlockPos upperCog = new BlockPos(2, 4, 3);
         BlockPos gearedShaft = new BlockPos(3, 4, 3);
@@ -195,11 +195,11 @@ public final class DifferentialPonderScenes {
         // sits on the 2x small gear, so its ingots are consumed at a higher rate.
         scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
-        scene.rotateCameraY(-90);
+        scene.rotateCameraY(90);
         target(scene, util.select().position(input), 32);
         scene.effects().rotationSpeedIndicator(upperCog);
         PonderLesson.DYNAMICS.show(scene, util, upperCog, 2, PonderPalette.GREEN);
-        scene.idle(240);
+        scene.idle(120);
 
         scene.overlay().showOutline(PonderPalette.RED, new Object(), util.select().fromTo(1, 3, 2, 2, 3, 2), 80);
         PonderLesson.DYNAMICS.show(scene, util, new BlockPos(1, 3, 2), 3, PonderPalette.RED);
