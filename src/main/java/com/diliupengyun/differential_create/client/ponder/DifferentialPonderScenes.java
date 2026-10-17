@@ -170,12 +170,16 @@ public final class DifferentialPonderScenes {
         scene.effects().rotationSpeedIndicator(control);
         PonderLesson.DYNAMICS.show(scene, util, control, 0);
         scene.idle(120);
+        scene.world().removeItemsFromBelt(OUTPUT);
+        scene.world().createItemOnBeltLike(OUTPUT, Direction.UP, new ItemStack(AllItems.COPPER_SHEET.get(), 4));
 
         scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
         target(scene, util.select().position(input), 0);
         PonderLesson.DYNAMICS.show(scene, util, output, 1);
         scene.idle(120);
+        scene.world().removeItemsFromBelt(OUTPUT);
+        scene.world().createItemOnBeltLike(OUTPUT, Direction.UP, new ItemStack(AllItems.COPPER_SHEET.get(), 4));
 
         BlockPos upperCog = new BlockPos(2, 4, 3);
         BlockPos gearedShaft = new BlockPos(3, 4, 3);
@@ -200,6 +204,10 @@ public final class DifferentialPonderScenes {
         scene.effects().rotationSpeedIndicator(upperCog);
         PonderLesson.DYNAMICS.show(scene, util, upperCog, 2, PonderPalette.GREEN);
         scene.idle(120);
+        scene.world().removeItemsFromBelt(OUTPUT);
+        scene.world().createItemOnBeltLike(OUTPUT, Direction.UP, new ItemStack(AllItems.COPPER_SHEET.get(), 4));
+        scene.world().removeItemsFromBelt(gearedDepot);
+        scene.world().createItemOnBeltLike(gearedDepot, Direction.UP, new ItemStack(AllItems.COPPER_SHEET.get(), 4));
 
         scene.overlay().showOutline(PonderPalette.RED, new Object(), util.select().fromTo(1, 3, 2, 2, 3, 2), 80);
         PonderLesson.DYNAMICS.show(scene, util, new BlockPos(1, 3, 2), 3, PonderPalette.RED);
