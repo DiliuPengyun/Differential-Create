@@ -258,7 +258,7 @@ public final class NetworkTopology {
 				dynamics.differentialcreate$data().initialized = true;
 				dynamics.differentialcreate$data().anchor = group.savedAnchor;
 				dynamics.differentialcreate$data().jammed = group.jammed;
-				dynamics.differentialcreate$setSpeed(group.speed);
+				NetworkDynamics.setReferenceSpeed(dynamics, group.speed);
 				dynamics.differentialcreate$setLastNonZeroTarget(16);
 				dynamics.differentialcreate$getRatios().putAll(group.ratios);
 				for (var entry : group.ratios.entrySet()) {
@@ -292,6 +292,10 @@ public final class NetworkTopology {
 					}
 				}
 				network.updateNetwork();
+				// The merged group speed is only a placeholder summary. The members
+				// kept their own physical speeds; publish the real reference from
+				// them instead of projecting the placeholder back onto the members.
+				ElasticKinetics.publishReference(network);
 				for (KineticBlockEntity be : group.ratios.keySet()) {
 					be.onSpeedChanged(previous.get(be));
 					be.sendData();

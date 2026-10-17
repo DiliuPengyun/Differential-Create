@@ -31,13 +31,27 @@ public final class NetworkDynamics {
 			? localSpeed(be, be.getOrCreateNetwork()) : be.getSpeed();
 	}
 
+	/**
+	 * Updates the network's reference speed without projecting that average onto
+	 * every member. Member physical speeds are simulation state, not a function
+	 * of the reference; topology rebuilds and NBT restoration must preserve them.
+	 */
+	public static void setReferenceSpeed(INetworkDynamics dynamics, double speed) {
+		dynamics.differentialcreate$data().publishingReference = true;
+		try {
+			dynamics.differentialcreate$setSpeed(speed);
+		} finally {
+			dynamics.differentialcreate$data().publishingReference = false;
+		}
+	}
+
 	public static void restoreMember(KineticBlockEntity be, KineticNetwork network) {
 		IMemberDynamics member = (IMemberDynamics) be;
 		INetworkDynamics dynamics = (INetworkDynamics) network;
 		MemberState saved = member.differentialcreate$member();
 		double pending = member.differentialcreate$getPendingNetworkSpeed();
 		if (Double.isFinite(pending) && !dynamics.differentialcreate$data().initialized) {
-			dynamics.differentialcreate$setSpeed(pending);
+			setReferenceSpeed(dynamics, pending);
 			dynamics.differentialcreate$setLastNonZeroTarget(saved.savedNominal);
 			dynamics.differentialcreate$data().anchor = saved.savedAnchor;
 			dynamics.differentialcreate$data().initialized = true;
