@@ -179,15 +179,20 @@ public final class DifferentialPonderScenes {
         BlockPos gearedShaft = new BlockPos(3, 4, 3);
         BlockPos gearedPress = new BlockPos(4, 4, 3);
         BlockPos gearedDepot = new BlockPos(4, 2, 3);
+        BlockPos gearedSupport = new BlockPos(4, 1, 3);
         replaceBlock(scene, util, control, axis(AllBlocks.LARGE_COGWHEEL.getDefaultState(), Axis.X));
         block(scene, util, upperCog, axis(AllBlocks.COGWHEEL.getDefaultState(), Axis.X));
         block(scene, util, gearedShaft, axis(AllBlocks.SHAFT.getDefaultState(), Axis.X));
+        block(scene, util, gearedSupport, Blocks.SMOOTH_STONE.defaultBlockState());
         block(scene, util, gearedPress, axis(AllBlocks.MECHANICAL_PRESS.getDefaultState(), Axis.X));
         block(scene, util, gearedDepot, AllBlocks.DEPOT.getDefaultState());
+        // The main-shaft press is replaced by the geared load, not duplicated: the
+        // step shows one visible load on the 2x small gear. Reuse the scene's
+        // hide/replace/reveal helper so the outgoing sections slide out first.
+        replaceBlock(scene, util, new BlockPos(OUTPUT.getX(), 3, OUTPUT.getZ()), Blocks.AIR.defaultBlockState());
+        replaceBlock(scene, util, OUTPUT, Blocks.AIR.defaultBlockState());
         scene.world().createItemOnBeltLike(gearedDepot, Direction.UP, new ItemStack(Items.COPPER_INGOT));
         scene.world().modifyBlockEntity(gearedPress, MechanicalPressBlockEntity.class,
-            press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
-        scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
         target(scene, util.select().position(input), 32);
         scene.effects().rotationSpeedIndicator(upperCog);
