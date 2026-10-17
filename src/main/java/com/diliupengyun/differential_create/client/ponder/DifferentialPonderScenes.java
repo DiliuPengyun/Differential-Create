@@ -176,8 +176,17 @@ public final class DifferentialPonderScenes {
         PonderLesson.DYNAMICS.show(scene, util, output, 1);
 
         BlockPos upperCog = new BlockPos(2, 4, 3);
+        BlockPos gearedShaft = new BlockPos(3, 4, 3);
+        BlockPos gearedPress = new BlockPos(4, 4, 3);
+        BlockPos gearedDepot = new BlockPos(4, 2, 3);
         replaceBlock(scene, util, control, axis(AllBlocks.LARGE_COGWHEEL.getDefaultState(), Axis.X));
         block(scene, util, upperCog, axis(AllBlocks.COGWHEEL.getDefaultState(), Axis.X));
+        block(scene, util, gearedShaft, axis(AllBlocks.SHAFT.getDefaultState(), Axis.X));
+        block(scene, util, gearedPress, axis(AllBlocks.MECHANICAL_PRESS.getDefaultState(), Axis.X));
+        block(scene, util, gearedDepot, AllBlocks.DEPOT.getDefaultState());
+        scene.world().createItemOnBeltLike(gearedDepot, Direction.UP, new ItemStack(Items.COPPER_INGOT));
+        scene.world().modifyBlockEntity(gearedPress, MechanicalPressBlockEntity.class,
+            press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
         scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
             press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
         target(scene, util.select().position(input), 32);
