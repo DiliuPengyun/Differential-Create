@@ -9,7 +9,6 @@ import com.diliupengyun.differential_create.trains.GearLeverBlock;
 import com.diliupengyun.differential_create.trains.SteamBogey;
 import com.simibubi.create.AllBlocks;
 import com.simibubi.create.AllItems;
-import com.simibubi.create.content.contraptions.actors.psi.PortableStorageInterfaceBlockEntity;
 import com.simibubi.create.content.contraptions.mounted.CartAssembleRailType;
 import com.simibubi.create.content.contraptions.mounted.CartAssemblerBlock;
 import com.simibubi.create.content.fluids.pump.PumpBlock;
@@ -66,7 +65,6 @@ public final class DifferentialPonderScenes {
         // Tall machines need headroom at 16:9; low benches can use the closer view.
         scene.scaleSceneView(switch (lesson.id) {
             case "dynamics", "crusher_work", "steam_power" -> 0.9f;
-            case "portable_docking" -> 1.1f;
             default -> 1.3f;
         });
         scene.world().setBlocks(util.select().fromTo(-1, 1, -1, 7, 6, 7), Blocks.AIR.defaultBlockState(), false);
@@ -932,86 +930,6 @@ public final class DifferentialPonderScenes {
         scene.markAsFinished();
     }
 
-    public static void docking(SceneBuilder builder, SceneBuildingUtil util, boolean fluid) {
-        var scene = start(builder, util, PonderLesson.PORTABLE_DOCKING);
-        BlockState interfaceState = (fluid ? AllBlocks.PORTABLE_FLUID_INTERFACE : AllBlocks.PORTABLE_STORAGE_INTERFACE)
-            .getDefaultState();
-        BlockPos stationPos = new BlockPos(0, 3, 2);
-        BlockPos shaftAnchor = new BlockPos(3, 1, 2);
-        BlockPos carriagePos = new BlockPos(3, 2, 2);
-        BlockPos movingInterface = new BlockPos(3, 3, 2);
-        BlockPos storagePos = new BlockPos(4, 3, 2);
-        BlockPos lever = stationPos.above(), comparator = stationPos.north(), wire = comparator.north();
-
-        block(scene, util, INPUT, AllBlocks.ANDESITE_CASING.getDefaultState());
-        block(scene, util, stationPos.below(), AllBlocks.ANDESITE_CASING.getDefaultState());
-        block(scene, util, stationPos, interfaceState.setValue(BlockStateProperties.FACING, Direction.EAST));
-        block(scene, util, lever, Blocks.LEVER.defaultBlockState().setValue(BlockStateProperties.ATTACH_FACE, AttachFace.FLOOR));
-        for (var pos : new BlockPos[]{comparator, wire})
-            block(scene, util, pos.below(), AllBlocks.ANDESITE_CASING.getDefaultState());
-        block(scene, util, comparator, Blocks.COMPARATOR.defaultBlockState().setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.SOUTH));
-        block(scene, util, wire, Blocks.REDSTONE_WIRE.defaultBlockState());
-        for (int x = 1; x <= 3; x++)
-            block(scene, util, new BlockPos(x, 1, 2), AllBlocks.GANTRY_SHAFT.getDefaultState()
-                .setValue(com.simibubi.create.content.kinetics.gantry.GantryShaftBlock.FACING, Direction.EAST));
-        connectGantryShafts(scene, util.select().fromTo(1, 1, 2, 3, 1, 2));
-        Drive input = driveInput(scene, util, OUTPUT, Direction.EAST);
-
-        scene.world().setBlock(storagePos,
-            fluid ? AllBlocks.FLUID_TANK.getDefaultState() : Blocks.BARREL.defaultBlockState(), false);
-        scene.world().setBlock(movingInterface, interfaceState.setValue(BlockStateProperties.FACING, Direction.WEST), false);
-        scene.world().setBlock(carriagePos, AllBlocks.GANTRY_CARRIAGE.getDefaultState()
-            .setValue(BlockStateProperties.FACING, Direction.UP)
-            .setValue(com.simibubi.create.content.contraptions.gantry.GantryCarriageBlock.AXIS_ALONG_FIRST_COORDINATE, false), false);
-        ElementLink<WorldSectionElement> contraption = scene.world()
-            .showIndependentSection(util.select().fromTo(carriagePos, storagePos), Direction.DOWN);
-        scene.idle(10);
-
-        // Start at the already taught docking position. This lesson is about the
-        // optional settings, not a second explanation of how to install a pair.
-        dockingSetting(scene, util, stationPos, true, 1);
-        translateSection(scene, shaftAnchor, contraption, Direction.WEST);
-        scene.addInstruction(s -> PonderSimulation.of(s.getWorld()).dock(s.getWorld(), s.resolve(contraption),
-            stationPos, movingInterface, shaftAnchor));
-        PonderLesson.PORTABLE_DOCKING.showFor(scene, util, stationPos, 0, PonderPalette.WHITE, 150);
-        scene.idle(15);
-        input.setSpeed(scene, util, 4);
-        scene.idle(100); // Longer than the native idle timeout; there is no cargo to renew it.
-        dockingRedstone(scene, util, lever);
-        scene.idle(40);
-
-        dockingSetting(scene, util, stationPos, false, 1);
-        PonderLesson.PORTABLE_DOCKING.showFor(scene, util, comparator, 1, PonderPalette.GREEN, 120);
-        dockingRedstone(scene, util, lever);
-        scene.idle(85);
-        dockingRedstone(scene, util, lever);
-        scene.idle(40);
-
-        dockingSetting(scene, util, stationPos, false, 2);
-        PonderLesson.PORTABLE_DOCKING.showFor(scene, util, comparator, 2, PonderPalette.BLUE, 180);
-        scene.idle(30); // 0: no connection.
-        dockingRedstone(scene, util, lever);
-        scene.idle(80); // Real extension/braking passes through 8, then connected gives 15.
-        dockingRedstone(scene, util, lever);
-        scene.idle(35);
-        dockingRedstone(scene, util, lever);
-        scene.idle(40);
-        scene.markAsFinished();
-    }
-
-    private static void dockingSetting(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pos, boolean release, int option) {
-        scene.overlay().showControls(util.vector().blockSurface(pos, Direction.NORTH), Pointing.LEFT, 25)
-            .rightClick().withItem(AllItems.WRENCH.asStack());
-        scene.addInstruction(s -> ((PortableStorageInterfaceBlockEntity) s.getWorld().getBlockEntity(pos)).getBehaviour(release
-            ? com.diliupengyun.differential_create.kinetics.portable.DockingSettingBehaviour.RELEASE
-            : com.diliupengyun.differential_create.kinetics.portable.DockingSettingBehaviour.OUTPUT).setValue(option));
-    }
-
-    private static void dockingRedstone(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos lever) {
-        scene.world().toggleRedstonePower(util.select().position(lever));
-        scene.effects().indicateRedstone(lever);
-    }
-
     private static CreateSceneBuilder trainStart(SceneBuilder builder, SceneBuildingUtil util, PonderLesson lesson) {
         var scene = new CreateSceneBuilder(builder);
         lesson.title(scene);
@@ -1208,8 +1126,10 @@ public final class DifferentialPonderScenes {
         BlockPos bearing, ElementLink<WorldSectionElement> moving,
         Set<ContraptionGeometry.Cell> cells, Axis rotationAxis, int duration) {
         scene.addInstruction(s -> {
-            if (s.getWorld().getBlockEntity(bearing) instanceof com.simibubi.create.content.kinetics.base.KineticBlockEntity be)
+            if (s.getWorld().getBlockEntity(bearing) instanceof com.simibubi.create.content.kinetics.base.KineticBlockEntity be) {
+                PonderSimulation.of(s.getWorld()).attach(s.resolve(moving), be, true, rotationAxis.ordinal(), 1);
                 PonderSimulation.of(s.getWorld()).mounting().bind(s.resolve(moving), be, true, rotationAxis.ordinal(), cells, 1);
+            }
         });
         scene.addInstruction(new net.createmod.ponder.foundation.instruction.PonderInstruction() {
             private int elapsed;
@@ -1217,16 +1137,6 @@ public final class DifferentialPonderScenes {
             @Override public void reset(net.createmod.ponder.foundation.PonderScene s) { elapsed = 0; }
             @Override public void tick(net.createmod.ponder.foundation.PonderScene s) {
                 elapsed++;
-                if (!(s.getWorld().getBlockEntity(bearing) instanceof com.simibubi.create.content.kinetics.base.KineticBlockEntity be)) return;
-                var section = s.resolve(moving);
-                if (section != null && section.isVisible()) {
-                    Double angle = PonderKinetics.of(s.getWorld()).outputAngle(be, 1);
-                    double degrees = angle == null ? 0 : angle;
-                    section.setAnimatedRotation(util.vector().of(rotationAxis == Axis.X ? degrees : 0,
-                        rotationAxis == Axis.Y ? degrees : 0, rotationAxis == Axis.Z ? degrees : 0), false);
-                    if (be instanceof com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity bearingEntity)
-                        bearingEntity.setAngle(angle == null ? 0 : angle.floatValue());
-                }
             }
         });
     }

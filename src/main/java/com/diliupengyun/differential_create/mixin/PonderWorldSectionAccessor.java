@@ -9,4 +9,7 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface PonderWorldSectionAccessor {
     @Accessor("section") Selection differentialcreate$selection();
     @Accessor("centerOfRotation") net.minecraft.world.phys.Vec3 differentialcreate$centre();
+    @Accessor("prevAnimatedRotation") net.minecraft.world.phys.Vec3 differentialcreate$previousRotation();
+    @Accessor("prevAnimatedOffset") net.minecraft.world.phys.Vec3 differentialcreate$previousOffset();
+    @Accessor("stabilizationAnchor") net.minecraft.world.phys.Vec3 differentialcreate$stabilization();
 }

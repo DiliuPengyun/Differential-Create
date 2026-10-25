@@ -7,19 +7,15 @@ import com.simibubi.create.infrastructure.ponder.scenes.BearingScenes;
 
 import net.createmod.catnip.math.Pointing;
 import net.createmod.ponder.api.element.ElementLink;
-import net.createmod.ponder.api.element.TextElementBuilder;
 import net.createmod.ponder.api.element.WorldSectionElement;
 import net.createmod.ponder.api.scene.SceneBuilder;
 import net.createmod.ponder.api.scene.SceneBuildingUtil;
-import net.createmod.ponder.api.scene.OverlayInstructions;
 import net.minecraft.core.Direction;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.phys.Vec3;
 
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /** Keep the native stages and timing; assembly and disassembly now require an empty-hand click. */
@@ -57,26 +53,9 @@ public abstract class BearingSceneMixin {
             Pointing.DOWN, 30).rightClick();
     }
 
-    @WrapOperation(method = "bearingModes", at = @At(value = "INVOKE",
-        target = "Lcom/simibubi/create/foundation/ponder/CreateSceneBuilder$WorldInstructions;rotateSection(Lnet/createmod/ponder/api/element/ElementLink;DDDI)V"))
-    private static void differentialcreate$manualTransition(CreateSceneBuilder.WorldInstructions world,
-        ElementLink<WorldSectionElement> section, double x, double y, double z, int duration, Operation<Void> original,
-        SceneBuilder builder, SceneBuildingUtil util) {
-        builder.overlay().showControls(util.vector().blockSurface(util.grid().at(5, 2, 2), Direction.NORTH),
-            Pointing.DOWN, 40).rightClick();
-        original.call(world, section, x, y, z, duration);
-    }
-
-    @Redirect(method = "bearingModes", at = @At(value = "INVOKE",
-        target = "Lnet/createmod/ponder/api/scene/OverlayInstructions;showFilterSlotInput(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/core/Direction;I)V"))
-    private static void differentialcreate$noAutomaticDisassemblySetting(OverlayInstructions overlay,
-        Vec3 location, Direction side, int duration) {
-        // The native right-click cue stays; the removed automatic-disassembly value box does not.
-    }
-
-    @Redirect(method = "bearingModes", at = @At(value = "INVOKE",
-        target = "Lnet/createmod/ponder/api/element/TextElementBuilder;sharedText(Ljava/lang/String;)Lnet/createmod/ponder/api/element/TextElementBuilder;"))
-    private static TextElementBuilder differentialcreate$manualControls(TextElementBuilder text, String key) {
-        return text.sharedText(ResourceLocation.fromNamespaceAndPath("differentialcreate", "bearing_manual"));
+    @Inject(method = "bearingModes", at = @At("HEAD"), cancellable = true)
+    private static void differentialcreate$manualModes(SceneBuilder builder, SceneBuildingUtil util, CallbackInfo ci) {
+        com.diliupengyun.differential_create.client.ponder.PonderBearingModes.build(builder, util);
+        ci.cancel();
     }
 }

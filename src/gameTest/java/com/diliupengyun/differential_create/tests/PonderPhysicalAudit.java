@@ -30,6 +30,7 @@ final class PonderPhysicalAudit {
         source(false); source(true); honeySource(); shortWaterNetwork(); deployer(false); deployer(true);
         basin(false, false); basin(true, false); basin(false, true); basin(true, true); hopper();
         breaking(false); breaking(true); clockwork(false); clockwork(true); hoseMotion(false); hoseMotion(true); linearEndpoints(); roller(false); roller(true);
+        pulleyStroke(false); pulleyStroke(true); gantryDisassembly();
         mountTransitions(); toolReplacement(); dockTransitions(false); dockTransitions(true); templateCommands(); isolatedCallbacks();
         depotPressing(4, false); depotPressing(1, true); depotPressing(4, true); depotPressing(64, true);
         DifferentialCreate.LOGGER.info("DC_PONDER_PHYSICAL_INPUTS: finite/renewable water, reserved stock, filter refusal, zero-drive work, paid recipes, native block loot, inventory transfer, tool wear and clock isolation passed");
@@ -247,6 +248,57 @@ final class PonderPhysicalAudit {
         for (int i = 0; i < 100; i++) { world.tick(); simulation.finish(world); }
         require(Math.abs(moving.getAnimatedOffset().x) < 1e-6, "reversal must leave the endpoint immediately without unwinding fictitious excess travel");
         require(extra.getAnimatedOffset().distanceToSqr(moving.getAnimatedOffset()) < 1e-12, "attached tools must reverse with their carriage");
+    }
+    private static void pulleyStroke(boolean powered) {
+        var world = world(); var pos = new BlockPos(0, 4, 0);
+        world.setBlock(pos, AllBlocks.ROPE_PULLEY.getDefaultState(), 3);
+        world.setBlock(pos.below(), Blocks.GLASS.defaultBlockState(), 3);
+        world.setBlock(pos.below(3), Blocks.BLUE_ORCHID.defaultBlockState(), 3);
+        world.setBlock(pos.below(4), Blocks.GRASS_BLOCK.defaultBlockState(), 3);
+        var pulley = (com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity) world.getBlockEntity(pos); pulley.initialize();
+        var body = section(pos.below(), pos.below());
+        var simulation = PonderSimulation.of(world); var physics = PonderKinetics.of(world);
+        physics.useExplicitSources(); physics.boundary(world, pos, powered ? 32 : 0);
+        simulation.pulley(pulley).command(2, false);
+        simulation.attach(body, pulley, false, 1, -1);
+        for (int i = 0; i < 200; i++) { world.tick(); simulation.finish(world); }
+        require(Math.abs(pulley.offset - (powered ? 2 : 0)) < 1e-6 && Math.abs(body.getAnimatedOffset().y + pulley.offset) < 1e-6,
+            "rope and load need actual signed work and must share the endpoint, without treating flowers as solid supports");
+        simulation.pulley(pulley).command(-2, false); physics.boundary(world, pos, powered ? -32 : 0);
+        for (int i = 0; i < 200; i++) { world.tick(); simulation.finish(world); }
+        require(Math.abs(pulley.offset) < 1e-6 && Math.abs(body.getAnimatedOffset().y) < 1e-6,
+            "rope reversal must not unwind excess shaft turns accumulated at the endpoint");
+        body.setVisible(false); world.tick(); simulation.finish(world);
+        simulation.pulley(pulley).command(2, false); physics.boundary(world, pos, powered ? 32 : 0);
+        for (int i = 0; i < 200; i++) { world.tick(); simulation.finish(world); }
+        require(Math.abs(pulley.offset - (powered ? 2 : 0)) < 1e-6,
+            "an unloaded rope must return to its driving shaft after the old load disappears");
+    }
+    private static void gantryDisassembly() {
+        var world = world(); var pos = new BlockPos(0, 1, 0);
+        var state = AllBlocks.GANTRY_SHAFT.getDefaultState().setValue(com.simibubi.create.content.kinetics.gantry.GantryShaftBlock.FACING, Direction.EAST);
+        for (int x = 0; x <= 3; x++) world.setBlock(pos.east(x), state, 3);
+        world.setBlock(pos.above(), AllBlocks.GANTRY_CARRIAGE.getDefaultState().setValue(BlockStateProperties.FACING, Direction.UP), 3);
+        world.setBlock(pos.above().north(), Blocks.OAK_PLANKS.defaultBlockState(), 3);
+        var carriage = section(pos.above(), pos.above()); var load = section(pos.above().north(), pos.above().north());
+        var shaft = (com.simibubi.create.content.kinetics.base.KineticBlockEntity) world.getBlockEntity(pos); shaft.initialize();
+        var physics = PonderKinetics.of(world); var simulation = PonderSimulation.of(world);
+        physics.useExplicitSources(); physics.boundary(world, pos, -32);
+        simulation.attach(carriage, shaft, false, 0, 1); simulation.attach(load, shaft, false, 0, 1);
+        for (int i = 0; i < 100 && carriage.getAnimatedOffset().x < .65; i++) { world.tick(); simulation.finish(world); }
+        require(carriage.getAnimatedOffset().x > .6 && carriage.getAnimatedOffset().x < .9, "fixture must stop between grid points");
+        world.setBlock(pos, state.setValue(com.simibubi.create.content.kinetics.gantry.GantryShaftBlock.POWERED, true), 3);
+        world.tick(); simulation.finish(world);
+        require(carriage.getAnimatedOffset().x == 1 && load.getAnimatedOffset().x == 1
+            && !simulation.mountedBlock(pos.above()) && !simulation.mounting().owners().containsKey(shaft),
+            "redstone must settle all parts on the same integer cell and release mounted mass and actors");
+        physics.boundary(world, pos, 32);
+        for (int i = 0; i < 30; i++) { world.tick(); simulation.finish(world); }
+        require(carriage.getAnimatedOffset().x == 1, "an unbound carriage must stay on its settled block");
+        world.setBlock(pos, state, 3);
+        for (int i = 0; i < 100; i++) { world.tick(); simulation.finish(world); }
+        require(Math.abs(carriage.getAnimatedOffset().x) < 1e-6 && Math.abs(load.getAnimatedOffset().x) < 1e-6,
+            "reassembly must restart from the settled cell and respect the original rail endpoint");
     }
     private static void roller(boolean powered) {
         var world = world(); var rollerPos = new BlockPos(0, 2, 0); var bogeyPos = rollerPos.east(); var chestPos = bogeyPos.above();

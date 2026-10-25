@@ -120,6 +120,8 @@
     "SpoutSceneMixin",
     "SteamSceneMixin",
     "PistonSceneMixin",
+    "PulleySceneMixin",
+    "GantrySceneMixin",
     "GantryCarriageRendererMixin",
     "HosePulleySceneMixin",
     "DrainSceneMixin",

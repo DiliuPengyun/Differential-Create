@@ -74,18 +74,24 @@ public final class PonderPhysicalSection extends PonderInstruction {
         Vec3 centre = ((PonderWorldSectionAccessor) section).differentialcreate$centre();
         KineticBlockEntity actuator = null;
         double best = Double.POSITIVE_INFINITY;
-        for (var be : world.getBlockEntities()) if (be instanceof KineticBlockEntity candidate
-            && (rotation ? be instanceof IBearingBlockEntity : be instanceof LinearActuatorBlockEntity || be instanceof GantryCarriageBlockEntity)) {
-            if (!((com.diliupengyun.differential_create.kinetics.PhysicsPreview) world).differentialcreate$physical(be.getBlockPos())) continue;
+        for (var candidatePos : world.getBlockMap().keySet()) if (world.getBlockEntity(candidatePos) instanceof KineticBlockEntity candidate
+            && (rotation ? candidate instanceof IBearingBlockEntity : candidate instanceof LinearActuatorBlockEntity || candidate instanceof GantryCarriageBlockEntity)) {
+            if (!((com.diliupengyun.differential_create.kinetics.PhysicsPreview) world).differentialcreate$physical(candidatePos)) continue;
             if (!rotation && candidate instanceof GantryCarriageBlockEntity) {
                 var face = candidate.getBlockState().getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.FACING);
                 var behind = com.diliupengyun.differential_create.kinetics.PhysicsPreview.neighbor(world, candidate.getBlockPos(), face.getOpposite());
                 if (!(world.getBlockEntity(behind) instanceof com.simibubi.create.content.kinetics.gantry.GantryShaftBlockEntity shaft)
                     || shaft.getBlockState().getValue(com.simibubi.create.content.kinetics.gantry.GantryShaftBlock.FACING).getAxis().ordinal() != axis) continue;
             }
-            double score = rotation ? centre.distanceToSqr(Vec3.atCenterOf(be.getBlockPos())) : Double.POSITIVE_INFINITY;
+            double score = rotation ? centre.add(section.getAnimatedOffset()).distanceToSqr(PonderSimulation.of(world).point(candidatePos).add(.5, .5, .5)) : Double.POSITIVE_INFINITY;
             if (!rotation) for (var pos : selection)
-                score = Math.min(score, PonderSimulation.of(world).point(pos).distanceToSqr(PonderSimulation.of(world).point(be.getBlockPos())));
+                score = Math.min(score, PonderSimulation.of(world).point(pos).distanceToSqr(PonderSimulation.of(world).point(candidatePos)));
+            // A fully extended rope can be much longer than the adjacent-block search radius.
+            if (!rotation && axis == 1 && candidate instanceof com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity pulley) {
+                var hook = PonderSimulation.of(world).point(candidatePos).add(0, -pulley.offset - 1, 0);
+                for (var pos : selection) if (!world.getBlockState(pos).isAir())
+                    score = Math.min(score, PonderSimulation.of(world).point(pos).distanceToSqr(hook));
+            }
             if (score < best && score <= (rotation ? 2.01 : 4.01)) { actuator = candidate; best = score; }
         }
         if (actuator == null) return false;

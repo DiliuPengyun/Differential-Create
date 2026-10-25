@@ -62,7 +62,6 @@ public final class PortableMachineTests {
             if (fluid) root.getContraption().getStorage().getFluids().fill(new FluidStack(Fluids.WATER, 4000), FluidAction.EXECUTE);
             else net.neoforged.neoforge.items.ItemHandlerHelper.insertItem(root.getContraption().getStorage().getAllItems(), new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.STONE, 16), false);
             var owner = (PortableStorageInterfaceBlockEntity) h.getLevel().getBlockEntity(h.absolutePos(target));
-            owner.getBehaviour(DockingSettingBehaviour.OUTPUT).setValue(1);
             var state = ((PortableEndpoint) owner).differentialcreate$docking();
             class Cycle {
                 int ticks, cycles, opened, openedAt;

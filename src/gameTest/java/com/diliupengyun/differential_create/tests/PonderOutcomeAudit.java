@@ -166,7 +166,7 @@ final class PonderOutcomeAudit {
         for (var item : expected) if (!seen.contains(item)) throw new AssertionError(id + " never produced its actual recipe result " + item + "; observed=" + seen);
         if ((id.equals("create:train_controls") || id.equals("create:train_schedule") || id.equals("differentialcreate:train_driving")) && (distance < .01 || maximumEngine <= 0))
             throw new AssertionError(id + " never moved with a running physical engine; distance=" + distance + ", engine=" + maximumEngine);
-        if ((id.equals("differentialcreate:portable_docking") || id.equals("create:portable_storage_interface") || id.equals("create:portable_fluid_interface")) && !transfer) throw new AssertionError(id + " never completed actual stopped docking");
+        if ((id.equals("create:portable_storage_interface") || id.equals("create:portable_fluid_interface")) && !transfer) throw new AssertionError(id + " never completed actual stopped docking");
         if (id.equals("create:mechanical_arm") && !armTransfer) throw new AssertionError(id + " never transferred its actual copper input to the output depot");
         if (id.equals("create:fan_processing") && !fanDepotFinished) throw new AssertionError(id + " never completed actual depot washing (which may legitimately yield no clay)");
         if (id.equals("create:hose_pulley") && !hoseFilled) throw new AssertionError(id + " never placed actual source water from its supplied inventory");

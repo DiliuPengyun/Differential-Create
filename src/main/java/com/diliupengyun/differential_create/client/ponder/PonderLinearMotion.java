@@ -18,12 +18,16 @@ final class PonderLinearMotion {
     private final Direction.Axis axis;
     private final double sign, initialExtension;
     private final double floorAllowance;
+    private final double initialTravel;
     private double previousAngle, position;
-    private boolean blocked;
+    private boolean blocked, disassemble;
     boolean blocked() { return blocked; }
+    boolean disassemble() { return disassemble; }
     PonderLinearMotion(PonderLevel world, net.createmod.ponder.api.element.WorldSectionElement section,
         KineticBlockEntity actuator, int axis, double angle, double fallbackSign) {
         this.actuator = actuator; this.axis = Direction.Axis.values()[axis]; previousAngle = angle;
+        initialTravel = section.getAnimatedOffset().get(this.axis)
+            - PonderSimulation.of(world).point(actuator.getBlockPos()).subtract(net.minecraft.world.phys.Vec3.atLowerCornerOf(actuator.getBlockPos())).get(this.axis);
         sign = actuator instanceof GantryShaftBlockEntity ? -actuator.getBlockState().getValue(GantryShaftBlock.FACING).getAxisDirection().getStep()
             : actuator instanceof MechanicalPistonBlockEntity ? this.axis == Direction.Axis.Z ? 1 : -1
             : actuator instanceof com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity ? -1 : fallbackSign;
@@ -46,7 +50,7 @@ final class PonderLinearMotion {
                 var point = PonderSimulation.of(world).point(cursor);
                 for (var pos : world.getBlockMap().keySet()) {
                     var state = world.getBlockState(pos);
-                    if (selection.test(pos) || state.isAir() || !PonderSimulation.of(world).physical(world, pos)
+                    if (selection.test(pos) || state.isAir() || state.getCollisionShape(world, pos).isEmpty() || !PonderSimulation.of(world).physical(world, pos)
                         || com.simibubi.create.api.contraption.BlockMovementChecks.isBrittle(state)) continue;
                     var support = PonderSimulation.of(world).point(pos);
                     if (Math.abs(point.x - support.x) < .01 && Math.abs(point.z - support.z) < .01 && support.y < point.y)
@@ -55,16 +59,19 @@ final class PonderLinearMotion {
             }
         }
         floorAllowance = ground;
+        if (actuator instanceof com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity pulley)
+            PonderSimulation.of(world).pulley(pulley).limit(initialExtension + floorAllowance);
     }
     double advance(PonderLevel world, double angle) {
         double delta = Math.clamp(Math.toRadians(angle - previousAngle) * ContraptionGeometry.LINEAR_RADIUS * sign, -.49, .49);
         previousAngle = angle;
         blocked = false;
+        disassemble = false;
         double low = Double.NEGATIVE_INFINITY, high = Double.POSITIVE_INFINITY;
         if (actuator instanceof GantryShaftBlockEntity) {
             var state = world.getBlockState(actuator.getBlockPos());
-            if (state.getValue(GantryShaftBlock.POWERED)) { blocked = true; return position; }
-            low = high = 0;
+            if (state.getValue(GantryShaftBlock.POWERED)) { blocked = disassemble = true; return position; }
+            low = high = -initialTravel;
             var positive = Direction.fromAxisAndDirection(axis, Direction.AxisDirection.POSITIVE);
             var negative = positive.getOpposite();
             for (int step = 1; step <= 128; step++) {
@@ -72,14 +79,14 @@ final class PonderLinearMotion {
                 var next = world.getBlockState(pos);
                 if (!PonderSimulation.of(world).physical(world, pos) || !AllBlocks.GANTRY_SHAFT.has(next)
                     || next.getValue(GantryShaftBlock.FACING) != state.getValue(GantryShaftBlock.FACING)) break;
-                high = step;
+                high = step - initialTravel;
             }
             for (int step = 1; step <= 128; step++) {
                 var pos = PhysicsPreview.relative(world, actuator.getBlockPos(), BlockPos.ZERO.relative(negative, step));
                 var next = world.getBlockState(pos);
                 if (!PonderSimulation.of(world).physical(world, pos) || !AllBlocks.GANTRY_SHAFT.has(next)
                     || next.getValue(GantryShaftBlock.FACING) != state.getValue(GantryShaftBlock.FACING)) break;
-                low = -step;
+                low = -step - initialTravel;
             }
         } else if (actuator instanceof MechanicalPistonBlockEntity) {
             int poles = 0;
@@ -93,14 +100,15 @@ final class PonderLinearMotion {
             double a = -initialExtension * step, b = (poles - initialExtension) * step;
             low = Math.min(a, b); high = Math.max(a, b);
         } else if (actuator instanceof com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity) {
-            int range = ((com.diliupengyun.differential_create.mixin.LinearActuatorAccessor) actuator).differentialcreate$extensionRange();
-            low = -Math.min(floorAllowance, range - initialExtension); high = initialExtension;
+            var pulley = (com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity) actuator;
+            var motion = PonderSimulation.of(world).pulley(pulley);
+            motion.limit(initialExtension + floorAllowance);
+            blocked = motion.arrived();
+            return initialExtension - pulley.offset;
         }
         double next = Math.max(low, Math.min(high, position + delta));
         blocked = Math.abs(next - position) < 1e-10 && Math.abs(delta) > 1e-10;
         position = next;
-        if (actuator instanceof com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity pulley)
-            pulley.animateOffset((float) (initialExtension - position));
         return position;
     }
 }

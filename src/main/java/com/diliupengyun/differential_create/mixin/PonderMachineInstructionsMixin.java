@@ -27,13 +27,15 @@ public abstract class PonderMachineInstructionsMixin {
         }
         var selection = net.createmod.ponder.foundation.SelectionImpl.of(new net.minecraft.world.level.levelgen.structure.BoundingBox(pos));
         this$0.addInstruction(new net.createmod.ponder.foundation.instruction.TickingInstruction(false, duration) {
-            private boolean suppliesInput;
-            @Override public void reset(net.createmod.ponder.foundation.PonderScene scene) { super.reset(scene); suppliesInput = false; }
+            private boolean suppliesInput, stabilized;
+            @Override public void reset(net.createmod.ponder.foundation.PonderScene scene) { super.reset(scene); suppliesInput = stabilized = false; }
             @Override public void tick(net.createmod.ponder.foundation.PonderScene scene) {
                 boolean first = remainingTicks == totalTicks;
                 super.tick(scene);
                 var physics = com.diliupengyun.differential_create.client.ponder.PonderKinetics.of(scene.getWorld());
-                if (first) suppliesInput = com.diliupengyun.differential_create.client.ponder.PonderSimulation.of(scene.getWorld()).motionInput(scene.getWorld(), pos);
+                var simulation = com.diliupengyun.differential_create.client.ponder.PonderSimulation.of(scene.getWorld());
+                if (first) stabilized = simulation.stabilizeBearing(scene.getWorld(), pos);
+                if (first && !stabilized) suppliesInput = simulation.motionInput(scene.getWorld(), pos);
                 if (first && suppliesInput) physics.command(scene.getWorld(), selection, rpm -> degrees / (.3f * duration));
             }
         });
@@ -54,11 +56,15 @@ public abstract class PonderMachineInstructionsMixin {
     }
     @Inject(method = "moveDeployer", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$hand(BlockPos pos, float distance, int duration, CallbackInfo ci) {
-        this$0.addInstruction(new com.diliupengyun.differential_create.client.ponder.PonderShaftAnimation(pos, distance, duration, true)); ci.cancel();
+        this$0.addInstruction(new com.diliupengyun.differential_create.client.ponder.PonderShaftAnimation(pos, distance, duration)); ci.cancel();
     }
     @Inject(method = "movePulley", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$rope(BlockPos pos, float distance, int duration, CallbackInfo ci) {
-        this$0.addInstruction(new com.diliupengyun.differential_create.client.ponder.PonderShaftAnimation(pos, distance, duration, false)); ci.cancel();
+        this$0.addInstruction(scene -> {
+            if (scene.getWorld().getBlockEntity(pos) instanceof com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity pulley)
+                com.diliupengyun.differential_create.client.ponder.PonderSimulation.of(scene.getWorld()).pulley(pulley).command(distance, duration <= 0);
+        });
+        ci.cancel();
     }
     @Inject(method = "instructArm", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$armInventory(BlockPos pos, ArmBlockEntity.Phase phase, ItemStack held,

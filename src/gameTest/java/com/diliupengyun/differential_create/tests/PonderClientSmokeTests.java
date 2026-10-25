@@ -126,7 +126,6 @@ public final class PonderClientSmokeTests {
                 PonderTextAudit.verify();
                 PonderFanAudit.verifyRenderer();
                 ShaftRenderingAudit.verify();
-                DockingSettingsAudit.verify();
                 started = true;
             }
             if (PonderVideoCapture.enabled()) {
@@ -248,9 +247,7 @@ public final class PonderClientSmokeTests {
             if (AUDIT && previewIndex == 0)
                 Files.writeString(directory.resolve("manifest.txt"), String.join("\n", captures.stream()
                     .map(capture -> capture.name() + "\t" + capture.time()).toList()) + "\n");
-            String name = previewIndex < captures.size() ? captures.get(previewIndex).name()
-                : previewIndex == captures.size() ? "inventory-tooltips"
-                : previewIndex == captures.size() + 1 ? "portable-release-settings" : "portable-output-settings";
+            String name = previewIndex < captures.size() ? captures.get(previewIndex).name() : "inventory-tooltips";
             try (var image = Screenshot.takeScreenshot(mc.getMainRenderTarget())) {
                 image.writeToFile(directory.resolve(name + ".png"));
             }
@@ -282,8 +279,6 @@ public final class PonderClientSmokeTests {
                     mc.setScreen(new Preview(captures.get(previewIndex).scene()));
             }
             else if (previewIndex == captures.size()) mc.setScreen(new TooltipPreview());
-            else if (previewIndex == captures.size() + 1) mc.setScreen(DockingSettingsAudit.screen(true));
-            else if (previewIndex == captures.size() + 2) mc.setScreen(DockingSettingsAudit.screen(false));
             else {
                 require(playbackFailures.isEmpty(), "Storyboard failures: " + String.join("; ", playbackFailures));
                 DifferentialCreate.LOGGER.info("DC_PONDER_CLIENT_PASS: {} registrations played to completion; {} lessons checked; {} scene frames captured; unique visible section ownership, torque-driven acceleration/coast/reversal, continuous angles, bilingual resources, native tooltip layout and index reload checked",
@@ -436,7 +431,7 @@ public final class PonderClientSmokeTests {
                 var pair = new com.diliupengyun.differential_create.kinetics.CrushingKinetics.Pair(null, a, b);
                 crusherFeed |= Math.abs(pair.speed()) > 1 && pair.facing() == net.minecraft.core.Direction.DOWN;
             }
-            if (scene.getId().getPath().equals("structure_load") || scene.getId().getPath().equals("portable_docking")) {
+            if (scene.getId().getPath().equals("structure_load")) {
                 double[] movement = {0};
                 scene.forEach(net.createmod.ponder.api.element.WorldSectionElement.class, section -> {
                     var offset = section.getAnimatedOffset(); var previous = offsets.put(section, offset);
@@ -978,7 +973,8 @@ public final class PonderClientSmokeTests {
                         materialPlayback(scene, true);
                     }
                     if (scene.getId().getPath().equals("portable_fluid_interface") || redstoneInterface
-                        || scene.getId().getPath().equals("piston_pole")) attachmentReplay(scene);
+                        || java.util.Set.of("piston_pole", "mechanical_bearing", "stabilized_bearings", "bearing_modes",
+                            "rope_pulley", "rope_pulley_modes", "gantry_redstone", "gantry_cascaded").contains(scene.getId().getPath())) attachmentReplay(scene);
                 } catch (Throwable failure) {
                     playbackFailures.add(scene.getId() + ": " + failure);
                     DifferentialCreate.LOGGER.error("DC_PONDER_NATIVE_FAIL: {}", scene.getId(), failure);

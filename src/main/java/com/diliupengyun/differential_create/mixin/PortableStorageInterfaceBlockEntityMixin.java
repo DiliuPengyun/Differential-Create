@@ -1,10 +1,8 @@
 package com.diliupengyun.differential_create.mixin;
 
-import java.util.List;
 import com.diliupengyun.differential_create.kinetics.portable.*;
 import com.simibubi.create.content.contraptions.Contraption;
 import com.simibubi.create.content.contraptions.actors.psi.PortableStorageInterfaceBlockEntity;
-import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
 import net.createmod.catnip.animation.LerpedFloat;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -59,11 +57,6 @@ public abstract class PortableStorageInterfaceBlockEntityMixin implements Portab
             ((PortableStorageInterfaceBlockEntity) (Object) this).getLevel()))
             throw new IllegalStateException("Shared render animation is only valid in a physical preview");
         differentialcreate$animationSource = source;
-    }
-    @Inject(method = "addBehaviours", at = @At("TAIL"))
-    private void differentialcreate$settings(List<BlockEntityBehaviour> behaviours, CallbackInfo ci) {
-        var owner = (PortableStorageInterfaceBlockEntity) (Object) this;
-        behaviours.add(DockingSettingBehaviour.output(owner)); behaviours.add(DockingSettingBehaviour.release(owner));
     }
     @Inject(method = "initialize", at = @At("TAIL"))
     private void differentialcreate$register(CallbackInfo ci) { PortableDocking.register(differentialcreate$docking()); }

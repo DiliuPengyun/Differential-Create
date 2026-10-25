@@ -80,8 +80,6 @@ public final class PortableFluidNetworkTests {
                 var mounted = root.getContraption().getStorage().getFluids();
                 if (!inlet) mounted.fill(new FluidStack(Fluids.WATER, 4000), FluidAction.EXECUTE);
                 var owner = (PortableStorageInterfaceBlockEntity) h.getLevel().getBlockEntity(h.absolutePos(target));
-                owner.getBehaviour(DockingSettingBehaviour.OUTPUT).setValue(1);
-                owner.getBehaviour(DockingSettingBehaviour.RELEASE).setValue(1);
                 h.setBlock(target.above(), Blocks.AIR); drive.generatedSpeed.setValue(4);
                 class Loop {
                     int ticks, connections, receivedAtOpen, reopenAt = -1;
@@ -137,7 +135,6 @@ public final class PortableFluidNetworkTests {
             h.getLevel().setBlockAndUpdate(source, AllBlocks.CREATIVE_MOTOR.getDefaultState().setValue(BlockStateProperties.FACING, outward));
             var motor = (CreativeMotorBlockEntity) h.getLevel().getBlockEntity(source); motor.generatedSpeed.setValue(0);
             var owner = (PortableStorageInterfaceBlockEntity) h.getLevel().getBlockEntity(target);
-            owner.getBehaviour(DockingSettingBehaviour.RELEASE).setValue(1);
             var mounted = f.root.getContraption().getStorage().getFluids();
             h.runAfterDelay(15, () -> {
                 var fixed = h.getLevel().getCapability(Capabilities.FluidHandler.BLOCK, tank, null);

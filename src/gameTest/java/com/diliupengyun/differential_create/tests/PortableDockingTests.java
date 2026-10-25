@@ -48,7 +48,7 @@ public final class PortableDockingTests {
             }
             h.succeed();
         });
-        for (boolean fluid : new boolean[]{false, true}) for (String mode : new String[]{"idle", "creeping", "fast", "redstone", "retained", "reconnect", "removed", "disabled", "settings", "simulation"})
+        for (boolean fluid : new boolean[]{false, true}) for (String mode : new String[]{"idle", "creeping", "fast", "redstone", "retained", "reconnect", "removed", "disabled", "simulation"})
             add(result, "dock_cart_" + (fluid ? "fluid_" : "item_") + mode, h -> cart(h, fluid, mode));
         return result;
     }
@@ -90,8 +90,7 @@ public final class PortableDockingTests {
                         connectedAt = elapsed; first = state.session();
                         h.assertTrue(owner.canTransfer(), "stable physical contact opens inventory");
                         h.assertTrue(f.cart.getDeltaMovement().lengthSqr() < 1e-16, "cart is physically stopped before storage opens");
-                        state.owner.getBehaviour(DockingSettingBehaviour.OUTPUT).setValue(1);
-                        h.assertTrue(state.signal() == 15, "occupation output isolates a clutch throughout transfer");
+                        h.assertTrue(state.signal() == 15, "default comparator output follows transfer permission");
                         oldFluid = fluid ? h.getLevel().getCapability(Capabilities.FluidHandler.BLOCK, target, null) : null;
                         oldItem = fluid ? null : h.getLevel().getCapability(Capabilities.ItemHandler.BLOCK, target, null);
                         if (mode.equals("creeping")) h.assertTrue(state.dissipated > 0, "residual motion paid finite braking work");
@@ -99,21 +98,10 @@ public final class PortableDockingTests {
                     if (connectedAt >= 0 && !acted) {
                         acted = true;
                         switch (mode) {
-                            case "redstone" -> owner.getBehaviour(DockingSettingBehaviour.RELEASE).setValue(1);
+                            case "redstone" -> power(true);
                             case "retained", "reconnect" -> power(true);
                             case "removed" -> h.getLevel().setBlockAndUpdate(target, Blocks.AIR.defaultBlockState());
                             case "disabled" -> f.root.getContraption().setActorsActive(new ItemStack(block.get()), false);
-                            case "settings" -> {
-                                owner.getBehaviour(DockingSettingBehaviour.RELEASE).setValue(1);
-                                owner.getBehaviour(DockingSettingBehaviour.OUTPUT).setValue(2);
-                                var saved = owner.saveWithoutMetadata(h.getLevel().registryAccess());
-                                var clone = (PortableStorageInterfaceBlockEntity) owner.getType().create(target, owner.getBlockState());
-                                clone.loadWithComponents(saved, h.getLevel().registryAccess());
-                                var restored = ((PortableEndpoint) clone).differentialcreate$docking();
-                                h.assertTrue(restored.outputMode == 2 && restored.releaseMode == 1, "both wrench settings survive save/load");
-                                h.assertFalse(restored.session().valid(), "loading NBT cannot restore an old capability grant");
-                                f.cleanup(); h.succeed(); return;
-                            }
                             case "simulation" -> {
                                 int stored = fluid ? f.root.getContraption().getStorage().getFluids().getFluidInTank(0).getAmount() : MinecartOperationTests.items(f, Items.STONE);
                                 if (fluid) { oldFluid.fill(new FluidStack(Fluids.WATER, 25), FluidAction.SIMULATE); oldFluid.drain(25, FluidAction.SIMULATE); }
@@ -126,12 +114,9 @@ public final class PortableDockingTests {
                             }
                         }
                     }
-                    if (mode.equals("redstone") && connectedAt >= 0) {
-                        if (elapsed == connectedAt + 90) { h.assertTrue(owner.canTransfer(), "redstone release holds beyond automatic timeout"); power(true); }
-                    }
                     if (state.phase == DockingState.Phase.RETRACTING) {
                         h.assertFalse(owner.canTransfer(), "storage closes before retraction");
-                        h.assertTrue(state.signal() == 15, "clutch occupation continues while heads retract");
+                        h.assertTrue(state.signal() == 0, "default comparator drops when transfer permission closes");
                         checkOld(); checkedClosed = true;
                     }
                     if (connectedAt >= 0 && state.phase == DockingState.Phase.IDLE) {

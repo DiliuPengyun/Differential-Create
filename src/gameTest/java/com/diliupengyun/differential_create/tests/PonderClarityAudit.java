@@ -31,7 +31,6 @@ final class PonderClarityAudit {
     private final Map<BlockPos, Integer> comparedSheets = new HashMap<>();
     private int comparedBatch;
     private int flywheelBatch, flywheelInputs, flywheelSheets;
-    private int heldInterfaceTicks;
 
     private boolean caption(PonderScene scene, List<String> active, int number) {
         return active.contains(PonderIndex.getLangAccess().getSpecific(scene.getId(), "text_" + number));
@@ -53,7 +52,6 @@ final class PonderClarityAudit {
                     seen.add("windmill-grid-aligned");
                 });
             }
-            case "differentialcreate:portable_docking" -> dockingSettings(scene, active);
             case "create:piston_pole" -> pistonPassenger(scene);
             case "create:portable_fluid_interface" -> portableFluid(scene, active);
             case "create:portable_storage_interface_redstone" -> portableRedstone(scene, active);
@@ -273,27 +271,6 @@ final class PonderClarityAudit {
         }
     }
 
-    private void dockingSettings(PonderScene scene, List<String> active) {
-        var world = scene.getWorld();
-        if (!(world.getBlockEntity(new BlockPos(0, 3, 2))
-            instanceof com.diliupengyun.differential_create.kinetics.portable.PortableEndpoint endpoint)) return;
-        var state = endpoint.differentialcreate$docking();
-        int signal = state.signal();
-        if (world.getBlockEntity(new BlockPos(0, 3, 1)) instanceof net.minecraft.world.level.block.entity.ComparatorBlockEntity comparator
-            && comparator.getOutputSignal() != signal) throw new AssertionError("Portable tutorial comparator does not show the actual interface output");
-        if (caption(scene, active, 1) && state.permission()) {
-            if (state.releaseMode != 1) throw new AssertionError("Wait-for-redstone caption did not configure the interface");
-            if (++heldInterfaceTicks > 70) seen.add("docking-held-without-cargo");
-        }
-        if (state.releaseMode == 1 && world.hasNeighborSignal(new BlockPos(0, 3, 2))
-            && state.phase == com.diliupengyun.differential_create.kinetics.portable.DockingState.Phase.RETRACTING)
-            seen.add("docking-redstone-release");
-        if (caption(scene, active, 2) && state.outputMode == 1
-            && state.phase == com.diliupengyun.differential_create.kinetics.portable.DockingState.Phase.RETRACTING && signal == 15)
-            seen.add("docking-occupied-retraction");
-        if (caption(scene, active, 3) && state.outputMode == 2) seen.add("docking-stage-" + signal);
-    }
-
     private void portableRedstone(PonderScene scene, List<String> active) {
         var world = scene.getWorld();
         var station = new BlockPos(1, 1, 3);
@@ -445,8 +422,6 @@ final class PonderClarityAudit {
         String id = scene.getId().toString();
         var expected = switch (id) {
             case "create:windmill_source" -> List.of("windmill-grid-aligned");
-            case "differentialcreate:portable_docking" -> List.of("docking-held-without-cargo", "docking-redstone-release",
-                "docking-occupied-retraction", "docking-stage-0", "docking-stage-8", "docking-stage-15");
             case "create:piston_pole" -> List.of("piston-passenger-arrived");
             case "differentialcreate:continuous_work" -> List.of("press-start", "press-slow", "press-coast-finished");
             case "differentialcreate:dynamics" -> List.of("flywheel-disconnected", "flywheel-coast-work",

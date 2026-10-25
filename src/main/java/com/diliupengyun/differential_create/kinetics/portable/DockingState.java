@@ -27,7 +27,6 @@ public final class DockingState {
     public final PortableStorageInterfaceBlockEntity owner;
     public Phase phase = Phase.IDLE;
     public boolean managed, opening;
-    public int outputMode, releaseMode;
     public double torque, speed, pointSpeed, dissipated;
     public String failure = "none";
     public MovementContext context;
@@ -53,10 +52,8 @@ public final class DockingState {
     }
     public int signal() {
         if (!managed) return permission() ? 15 : 0;
-        if (owner.getLevel() != null && owner.getLevel().isClientSide)
-            return outputMode == 1 ? occupied() ? 15 : 0 : phase == Phase.TRANSFER ? 15 : outputMode == 2 && phase != Phase.IDLE ? 8 : 0;
-        return outputMode == 1 ? occupied() ? 15 : 0 : outputMode == 2
-            ? phase == Phase.IDLE ? 0 : permission() ? 15 : 8 : permission() ? 15 : 0;
+        if (owner.getLevel() != null && owner.getLevel().isClientSide) return phase == Phase.TRANSFER ? 15 : 0;
+        return permission() ? 15 : 0;
     }
     private boolean loaded() {
         var level = owner.getLevel();
@@ -69,7 +66,7 @@ public final class DockingState {
         if (!loaded() || owner.isPowered() || owner.getLevel().hasNeighborSignal(owner.getBlockPos())) return false;
         if (!managed) return bridge().differentialcreate$nativePermission();
         return phase == Phase.TRANSFER && (context != null || preview != null) && live() && contact
-            && (releaseMode == 1 || PortableDocking.time(owner.getLevel()) < deadline)
+            && PortableDocking.time(owner.getLevel()) < deadline
             && (preview != null ? preview.valid() : PortableDocking.validGeometry(this));
     }
     public DockingSession session() { return new DockingSession(this, generation, storageEntity); }
@@ -158,7 +155,7 @@ public final class DockingState {
                     changed();
                 }
             }
-            case TRANSFER -> { remaining = (int) Math.max(0, deadline - lastTick); if (releaseMode == 0 && remaining <= 0) cancel(); }
+            case TRANSFER -> { remaining = (int) Math.max(0, deadline - lastTick); if (remaining <= 0) cancel(); }
             case RETRACTING -> { if (ticks >= ANIMATION) release("none"); }
             default -> { }
         }
@@ -199,7 +196,7 @@ public final class DockingState {
     public void suspend() {
         if (context != null && context.contraption.entity != null) {
             restoreEntity = context.contraption.entity.getUUID(); restoreActor = context.localPos.asLong();
-            restorePhase = phase; restoreRemaining = phase == Phase.TRANSFER && releaseMode == 0
+            restorePhase = phase; restoreRemaining = phase == Phase.TRANSFER
                 ? (int) Math.max(0, deadline - PortableDocking.time(owner.getLevel())) : remaining;
         }
         release("missing");
@@ -214,7 +211,7 @@ public final class DockingState {
     }
     public void write(CompoundTag tag) {
         tag.putBoolean("Managed", managed); tag.putString("Phase", phase.name()); tag.putInt("Ticks", ticks);
-        tag.putInt("Remaining", phase == Phase.TRANSFER && releaseMode == 0 && owner.getLevel() != null && !owner.getLevel().isClientSide
+        tag.putInt("Remaining", phase == Phase.TRANSFER && owner.getLevel() != null && !owner.getLevel().isClientSide
             ? (int) Math.max(0, deadline - PortableDocking.time(owner.getLevel())) : remaining);
         tag.putBoolean("Contact", contact); tag.putFloat("Distance", distance);
         tag.putDouble("Speed", speed); tag.putDouble("Load", torque); tag.putDouble("Heat", dissipated);

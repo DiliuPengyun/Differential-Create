@@ -100,6 +100,38 @@ public final class PonderSimulation {
     private record Attachment(KineticBlockEntity actuator, boolean rotation, int axis, double sign,
                               double angle, net.minecraft.world.phys.Vec3 start) {}
     private final Map<WorldSectionElement, Attachment> attachments = new java.util.IdentityHashMap<>();
+    private final Map<WorldSectionElement, Attachment> settledGantries = new java.util.IdentityHashMap<>();
+    private final Map<KineticBlockEntity, WorldSectionElement> stabilizedBearings = new java.util.IdentityHashMap<>();
+    private final Map<com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity, PonderPulleyMotion> pulleys = new java.util.IdentityHashMap<>();
+    public PonderPulleyMotion pulley(com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity be) {
+        return pulleys.computeIfAbsent(be, PonderPulleyMotion::new);
+    }
+    public boolean pulleysArrived() { return pulleys.values().stream().allMatch(PonderPulleyMotion::arrived); }
+    public boolean stabilizeBearing(PonderLevel world, BlockPos pos) {
+        if (!(world.getBlockEntity(pos) instanceof KineticBlockEntity be)) return false;
+        for (var entry : attachments.entrySet()) if (entry.getValue().rotation() && entry.getKey().isVisible()
+            && ((PonderWorldSectionAccessor) entry.getKey()).differentialcreate$selection().test(pos)) {
+            stabilizedBearings.put(be, entry.getKey());
+            return true;
+        }
+        return false;
+    }
+    /** Both top renderers and the wooden section interpolate the same tick endpoints. */
+    public Double bearingAngle(KineticBlockEntity be, float partialTick) {
+        var parent = stabilizedBearings.get(be);
+        if (parent != null && parent.isVisible()) {
+            int axis = be.getBlockState().getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.FACING).getAxis().ordinal();
+            return -sectionAngle(parent, axis, partialTick);
+        }
+        for (var entry : attachments.entrySet()) if (entry.getValue().actuator() == be
+            && entry.getValue().rotation() && entry.getKey().isVisible())
+            return sectionAngle(entry.getKey(), entry.getValue().axis(), partialTick);
+        return null;
+    }
+    private static double sectionAngle(WorldSectionElement section, int axis, float partialTick) {
+        var previous = ((PonderWorldSectionAccessor) section).differentialcreate$previousRotation();
+        return previous.lerp(section.getAnimatedRotation(), partialTick).get(net.minecraft.core.Direction.Axis.values()[axis]);
+    }
     public KineticBlockEntity adjacentActuator(PonderLevel world, WorldSectionElement section, int axis) {
         var selected = ((PonderWorldSectionAccessor) section).differentialcreate$selection();
         for (var binding : attachments.entrySet()) {
@@ -205,6 +237,8 @@ public final class PonderSimulation {
         clockwork.release(section);
         mounting.release(section);
         attachments.remove(section); linearMotions.remove(section); parents.remove(section); trains.remove(section); cartLoads.remove(section); valveHandles.remove(section);
+        settledGantries.remove(section);
+        stabilizedBearings.values().removeIf(parent -> parent == section);
         var actors = actorSections.remove(section);
         if (!actorSections.containsValue(actors)) actorDrives.values().removeIf(drive -> drive == actors);
     }
@@ -217,8 +251,16 @@ public final class PonderSimulation {
             release(section);
         }
         Double angle = PonderKinetics.of((PonderLevel) be.getLevel()).outputAngle(be, 1);
-        attachments.put(section, new Attachment(be, rotation, axis, sign, angle == null ? 0 : angle,
-            rotation ? section.getAnimatedRotation() : section.getAnimatedOffset()));
+        var binding = new Attachment(be, rotation, axis, sign, angle == null ? 0 : angle,
+            rotation ? section.getAnimatedRotation() : section.getAnimatedOffset());
+        if (rotation && ((PonderWorldSectionAccessor) section).differentialcreate$stabilization() != null) {
+            for (var entry : attachments.entrySet()) if (entry.getValue().actuator() == be && entry.getKey().isVisible()) {
+                binding = entry.getValue();
+                section.setAnimatedRotation(entry.getKey().getAnimatedRotation(), true);
+                break;
+            }
+        }
+        attachments.put(section, binding);
         var world = (PonderLevel) be.getLevel();
         if (!rotation) linearMotions.put(section, new PonderLinearMotion(world, section, be, axis, angle == null ? 0 : angle, sign));
         var existing = actorSections.values().stream().filter(work -> work.actuator() == be).findFirst();
@@ -262,11 +304,18 @@ public final class PonderSimulation {
         for (var be : machines) if (visible.contains(be.getBlockPos())
             && be instanceof com.simibubi.create.content.kinetics.deployer.DeployerBlockEntity hand)
             hands.computeIfAbsent(hand, key -> new PonderDeployerProcessing()).tick(hand);
+        pulleys.entrySet().removeIf(entry -> entry.getKey().isRemoved() || world.getBlockEntity(entry.getKey().getBlockPos()) != entry.getKey());
+        pulleys.values().forEach(PonderPulleyMotion::tick);
+        var disassembling = new java.util.ArrayList<WorldSectionElement>();
         attachments.forEach((section, binding) -> {
             if (!section.isVisible() || binding.actuator().isRemoved()) return;
             Double angle = PonderKinetics.of(world).outputAngle(binding.actuator(), 1);
             double travel = ((angle == null ? binding.angle() : angle) - binding.angle()) * binding.sign();
-            if (!binding.rotation()) travel = linearMotions.get(section).advance(world, angle == null ? binding.angle() : angle);
+            if (!binding.rotation()) {
+                var motion = linearMotions.get(section);
+                travel = motion.advance(world, angle == null ? binding.angle() : angle);
+                if (motion.disassemble()) disassembling.add(section);
+            }
             var delta = new net.minecraft.world.phys.Vec3(binding.axis() == 0 ? travel : 0,
                 binding.axis() == 1 ? travel : 0, binding.axis() == 2 ? travel : 0);
             if (binding.rotation()) {
@@ -275,10 +324,22 @@ public final class PonderSimulation {
                     bearing.setAngle((float) (binding.start().get(net.minecraft.core.Direction.Axis.values()[binding.axis()]) + travel));
             } else section.setAnimatedOffset(binding.start().add(delta), false);
         });
+        for (var section : disassembling) {
+            var binding = attachments.get(section);
+            var offset = section.getAnimatedOffset();
+            section.setAnimatedOffset(new net.minecraft.world.phys.Vec3(Math.round(offset.x), Math.round(offset.y), Math.round(offset.z)), true);
+            release(section);
+            settledGantries.put(section, binding);
+        }
         parents.forEach((section, parent) -> {
             if (!section.isVisible()) return;
             section.setAnimatedOffset(parent.follows() ? parent.parent().getAnimatedOffset()
-                : section.getAnimatedOffset().add(parent.parent().getAnimatedOffset().subtract(parent.baseline())), false);
+                : section.getAnimatedOffset().add(parent.parent().getAnimatedOffset().subtract(parent.baseline())),
+                disassembling.contains(parent.parent()));
+        });
+        stabilizedBearings.forEach((be, parent) -> {
+            if (be instanceof com.simibubi.create.content.contraptions.bearing.IBearingBlockEntity bearing && parent.isVisible())
+                bearing.setAngle(bearingAngle(be, 1).floatValue());
         });
         clockwork.tick();
         new java.util.HashSet<>(actorSections.values()).forEach(PonderActorWork::tick);
@@ -326,6 +387,7 @@ public final class PonderSimulation {
     }
     public void reset(PonderLevel world) {
         clockwork.reset(); mounting.reset(); linearMotions.clear(); parents.clear(); passengers.clear();
+        settledGantries.clear(); stabilizedBearings.clear(); pulleys.clear();
         PonderLoot.reset(world);
         visible.clear(); placements.clear(); displayed.clear(); fluidBoundaries.clear(); trains.clear(); attachments.clear(); valveHandles.clear(); actorSections.clear(); actorDrives.clear(); docks.clear(); dockedEndpoints.clear(); carts.clear(); couplings.clear(); cartLoads.clear(); hands.clear(); time = 0;
         initializedInventories.clear(); materialSupplies.clear(); motionInputs.clear(); punches.clear(); FluidKinetics.resetPreview(world);
@@ -333,6 +395,15 @@ public final class PonderSimulation {
     public Map<KineticBlockEntity, Double> advance(PonderLevel world) {
         previewWorld = world;
         time++;
+        for (var entry : java.util.List.copyOf(settledGantries.entrySet())) {
+            var be = entry.getValue().actuator();
+            if (!entry.getKey().isVisible() || be.isRemoved() || world.getBlockEntity(be.getBlockPos()) != be) {
+                settledGantries.remove(entry.getKey());
+            } else if (!be.getBlockState().getValue(com.simibubi.create.content.kinetics.gantry.GantryShaftBlock.POWERED)) {
+                settledGantries.remove(entry.getKey());
+                attach(entry.getKey(), be, false, entry.getValue().axis(), entry.getValue().sign());
+            }
+        }
         for (var entry : java.util.List.copyOf(attachments.entrySet()))
             if (entry.getValue().actuator().isRemoved() || world.getBlockEntity(entry.getValue().actuator().getBlockPos()) != entry.getValue().actuator()) release(entry.getKey());
         trains.values().forEach(train -> train.tick(world));

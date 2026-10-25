@@ -104,12 +104,6 @@ public enum PonderLesson {
         "Brake near the station; stop before finishing your drive.",
         "When stopped, right-click the Controls again to finish driving."
     ),
-    PORTABLE_DOCKING("portable_docking",
-        "Wrench Settings for Portable Interfaces",
-        "Select Wait for Redstone with a Wrench. Empty interfaces stay connected until powered.",
-        "While Docked keeps the comparator at 15 until the heads fully retract.",
-        "Docking Stage outputs 0 when idle, 8 while docking or retracting, and 15 when connected."
-    ),
     MINECART_DYNAMICS("minecart_dynamics",
         "Inertia and Reversing Minecart Structures",
         "The loaded minecart gradually accelerates when the rails drive it.",

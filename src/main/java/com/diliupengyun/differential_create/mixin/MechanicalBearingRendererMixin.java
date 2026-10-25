@@ -28,6 +28,11 @@ public abstract class MechanicalBearingRendererMixin {
 	@Inject(method = "getInterpolatedAngle", at = @At("HEAD"), cancellable = true)
 	private void differentialcreate$physicalPose(float partialTicks, CallbackInfoReturnable<Float> cir) {
 		var self = (MechanicalBearingBlockEntity) (Object) this;
+		if (self.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel preview) {
+			var angle = com.diliupengyun.differential_create.client.ponder.PonderSimulation.of(preview).bearingAngle(self, partialTicks + 1);
+			if (angle != null) cir.setReturnValue(angle.floatValue());
+			return;
+		}
 		if (self.getLevel() == null || !self.getLevel().isClientSide || self.getMovedContraption() == null) return;
 		var frame = ClientNetworkSpeeds.bearingRotationOf(self, self.getMovedContraption().getId());
 		if (frame != null) {

@@ -31,8 +31,6 @@ public final class DifferentialPonderPlugin implements PonderPlugin {
         add(helper, DifferentialPonderScenes::speedGauge, AllBlocks.SPEEDOMETER);
         add(helper, DifferentialPonderScenes::pumpDirection, AllBlocks.MECHANICAL_PUMP);
         add(helper, DifferentialPonderScenes::bearing, AllBlocks.MECHANICAL_BEARING);
-        add(helper, (s, u) -> DifferentialPonderScenes.docking(s, u, false), AllBlocks.PORTABLE_STORAGE_INTERFACE);
-        add(helper, (s, u) -> DifferentialPonderScenes.docking(s, u, true), AllBlocks.PORTABLE_FLUID_INTERFACE);
         add(helper, DifferentialPonderScenes::continuousWork, AllBlocks.MECHANICAL_PRESS, AllBlocks.MILLSTONE,
             AllBlocks.MECHANICAL_MIXER, AllBlocks.MECHANICAL_SAW, AllBlocks.MECHANICAL_DRILL, AllBlocks.DEPLOYER,
             AllBlocks.MECHANICAL_CRAFTER, AllBlocks.MECHANICAL_ARM, AllBlocks.BASIN);
@@ -40,10 +38,8 @@ public final class DifferentialPonderPlugin implements PonderPlugin {
         add(helper, DifferentialPonderScenes::crusher, AllBlocks.CRUSHING_WHEEL);
         add(helper, DifferentialPonderScenes::steam, AllBlocks.STEAM_ENGINE);
         add(helper, DifferentialPonderScenes::fan, AllBlocks.ENCASED_FAN);
-        add(helper, DifferentialPonderScenes::structureLoad, AllBlocks.MECHANICAL_BEARING,
-            AllBlocks.ROPE_PULLEY, AllBlocks.ELEVATOR_PULLEY,
-            AllBlocks.CLOCKWORK_BEARING, AllBlocks.GANTRY_SHAFT, AllBlocks.GANTRY_CARRIAGE,
-            AllBlocks.MECHANICAL_HARVESTER, AllBlocks.MECHANICAL_PLOUGH, AllBlocks.MECHANICAL_ROLLER);
+        add(helper, DifferentialPonderScenes::structureLoad, AllBlocks.GANTRY_SHAFT,
+            AllBlocks.GANTRY_CARRIAGE, AllBlocks.MECHANICAL_HARVESTER);
         add(helper, DifferentialPonderScenes::pumpNetwork, AllBlocks.FLUID_PIPE);
         add(helper, DifferentialPonderScenes::minecart, AllBlocks.CART_ASSEMBLER, AllBlocks.CONTROLLER_RAIL);
         for (var item : new ItemLike[]{AllBlocks.STEAM_ENGINE, AllBlocks.TRAIN_CONTROLS, AllBlocks.TRACK_STATION,
@@ -54,7 +50,11 @@ public final class DifferentialPonderPlugin implements PonderPlugin {
     }
 
     @Override public void registerSharedText(SharedTextRegistrationHelper helper) {
-        helper.registerSharedText("bearing_manual", "Right-click the Bearing with an empty hand to assemble or disassemble it.");
+        helper.registerSharedText("bearing_assemble", "Right-click with an empty hand to assemble the structure.");
+        helper.registerSharedText("bearing_power", "Switch the Clutch on to drive the assembled structure.");
+        helper.registerSharedText("bearing_coast", "Cutting power lets the structure coast; it remains assembled.");
+        helper.registerSharedText("bearing_disassemble", "Right-click with an empty hand to place the structure at the nearest grid-aligned angle.");
+        helper.registerSharedText("bearing_reassemble", "Right-click with an empty hand again to reassemble before restoring power.");
     }
 
     private static void add(PonderSceneRegistrationHelper<ResourceLocation> helper, PonderStoryBoard board, ItemLike... items) {
