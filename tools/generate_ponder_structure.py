@@ -35,7 +35,7 @@ def main():
     blocks = [block((x, 0, z), (x + z) % 2) for x in range(7) for z in range(7)]
     blocks.append(block((6, 5, 6), 2))
     palette = [compound(tag(8, "Name", string(name))) for name in
-               ("minecraft:white_concrete", "minecraft:light_gray_concrete", "minecraft:barrier")]
+               ("minecraft:white_concrete", "minecraft:snow_block", "minecraft:barrier")]
     document = tag(10, "", compound(
         tag(3, "DataVersion", struct.pack(">i", 3955)),
         tag(8, "author", string("Differential Create")),

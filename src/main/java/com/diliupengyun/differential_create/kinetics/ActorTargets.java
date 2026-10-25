@@ -13,14 +13,14 @@ import net.minecraft.world.level.Level;
 public final class ActorTargets {
     private static final Map<Level, Map<Long, Set<ContraptionActorWork>>> targets = new WeakHashMap<>();
     private ActorTargets() {}
-    static void watch(ContraptionActorWork work, BlockPos pos) {
+    static synchronized void watch(ContraptionActorWork work, BlockPos pos) {
         if (pos.equals(work.watchedTarget)) return;
         forget(work);
         work.watchedTarget = pos.immutable();
         targets.computeIfAbsent(work.context().world, $ -> new HashMap<>())
             .computeIfAbsent(pos.asLong(), $ -> Collections.newSetFromMap(new WeakHashMap<>())).add(work);
     }
-    public static void forget(ContraptionActorWork work) {
+    public static synchronized void forget(ContraptionActorWork work) {
         if (work.watchedTarget == null) return;
         var level = work.context().world; var positions = targets.get(level);
         if (positions != null) {
@@ -30,7 +30,7 @@ public final class ActorTargets {
         }
         work.watchedTarget = null;
     }
-    public static void changed(Level level, BlockPos pos) {
+    public static synchronized void changed(Level level, BlockPos pos) {
         if (level.isClientSide) return;
         var positions = targets.get(level); if (positions == null) return;
         var owners = positions.get(pos.asLong()); if (owners == null) return;

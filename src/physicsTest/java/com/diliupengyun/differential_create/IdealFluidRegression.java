@@ -357,29 +357,31 @@ public final class IdealFluidRegression {
             near(trial.energyChange(), trial.forceWork() + trial.boundaryWork(), 1e-10, "column work and kinetic energy");
         }
         near(0, IdealFluidSolver.coupling(WATER, 0, 12) * 0, 0, "stopped pump has finite zero pressure power");
-        check(IdealFluidSolver.coupling(WATER, 0, 12) * 12 < 0, "moving fluid can start a stopped rotor");
-        check(IdealFluidSolver.coupling(WATER, 64, 64) * 64 < 0, "overspeed fluid returns energy to a rotor");
+        near(0, IdealFluidSolver.pumpReaction(WATER, 0, 12), 0, "moving fluid cannot start a stopped rotor");
+        check(IdealFluidSolver.pumpReaction(WATER, 64, 64) < 0, "overrunning flow cannot return shaft energy");
     }
     private static void coupledRotor() {
-        // The midpoint equations have an analytical two-by-two solve when their
-        // shared coupling is frozen. No independent torque or efficiency fit is used.
         double mass = WATER.inertia(12), inertia = .01, rpm = 128, flow = 0;
-        double initialEnergy = .5 * inertia * rpm * rpm + .5 * mass * flow * flow;
+        double energy = .5 * inertia * rpm * rpm;
         for (int step = 0; step < 4000; step++) {
-            double guessRpm = rpm, guessFlow = flow, nextRpm = rpm, nextFlow = flow;
+            double midpointRpm = rpm, midpointFlow = flow;
             for (int iteration = 0; iteration < 100; iteration++) {
-                double g = IdealFluidSolver.coupling(WATER, guessRpm, guessFlow);
-                double a = H * g / (2 * inertia), b = H * g / (2 * mass);
-                double midpointRpm = (rpm - a * flow) / (1 + a * b);
-                double midpointFlow = flow + b * midpointRpm;
-                nextRpm = 2 * midpointRpm - rpm; nextFlow = 2 * midpointFlow - flow;
-                if (Math.abs(midpointRpm - guessRpm) + Math.abs(midpointFlow - guessFlow) < 1e-12) break;
-                guessRpm = midpointRpm; guessFlow = midpointFlow;
+                double load = WATER.pumpScale() / (64 * 64) * Math.max(0, midpointFlow);
+                double nextRpm = rpm / (1 + H * load / (2 * inertia));
+                double rate = nextRpm / 64;
+                double nextFlow = (flow + H * WATER.pumpScale() * rate * rate / (2 * mass))
+                    / (1 + H * WATER.pumpScale() * rate / (32 * 2 * mass));
+                if (Math.abs(nextRpm-midpointRpm)+Math.abs(nextFlow-midpointFlow)<1e-12) {
+                    midpointRpm=nextRpm; midpointFlow=nextFlow; break;
+                }
+                midpointRpm=nextRpm; midpointFlow=nextFlow;
             }
-            rpm = nextRpm; flow = nextFlow;
-            near(initialEnergy, .5 * inertia * rpm * rpm + .5 * mass * flow * flow, 1e-9, "isolated pump and fluid conserve joint energy");
+            rpm=Math.max(0,2*midpointRpm-rpm); flow=2*midpointFlow-flow;
+            double next=.5*inertia*rpm*rpm+.5*mass*flow*flow;
+            check(next<=energy+1e-9,"one-way pump cannot increase joint energy"); energy=next;
         }
-        check(flow > 0 && rpm < 128, "initial rotor energy accelerates water and slows the shaft");
+        check(flow>0 && rpm<128,"rotor inertia powers liquid while hydraulic losses dissipate energy");
+        near(0,IdealFluidSolver.pumpReaction(WATER,0,flow),0,"remaining fluid motion cannot restart the rotor");
     }
 
     private static void timestepRefinement() {

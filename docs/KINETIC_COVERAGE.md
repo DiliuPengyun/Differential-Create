@@ -24,7 +24,7 @@
 
 ## 真实游戏划分
 
-入口：[SequencerIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/SequencerIntegrationTests.java)，独立命名空间 `differentialcreate_motion`。每例在普通服务端 tick 中操作真实创造马达、齿轮箱、轴、飞轮或轴承；初始化和变更动力通过原生设置，停车后输入继续旋转。用例结束清理自建动力方块，避免相邻批次形成传动旁路。
+入口：[SequencerIntegrationTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/SequencerIntegrationTests.java)，独立命名空间 `differentialcreate_motion`。每例在普通服务端 tick 中操作真实创造马达、齿轮箱、轴、飞轮或轴承；初始化和变更动力通过原生设置，停车后输入继续旋转。用例结束清理自建动力方块，避免相邻批次形成传动旁路。
 
 | 分组 | 数量 | 内容 |
 | --- | ---: | --- |
@@ -58,7 +58,7 @@
 
 ## 背罐充气
 
-入口：[BacktankChargeRegression](../src/physicsTest/java/com/diliupengyun/differential_create/BacktankChargeRegression.java)、[BacktankIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/BacktankIntegrationTests.java) 和 [BacktankTests](../src/main/java/com/diliupengyun/differential_create/tests/BacktankTests.java)。2026-10-15 数值回归 42 次检查、铜／下界合金两种材质共 16 项 GameTest 通过。
+入口：[BacktankChargeRegression](../src/physicsTest/java/com/diliupengyun/differential_create/BacktankChargeRegression.java)、[BacktankIntegrationTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/BacktankIntegrationTests.java) 和 [BacktankTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/BacktankTests.java)。2026-10-15 数值回归 42 次检查、铜／下界合金两种材质共 16 项 GameTest 通过。
 
 | 分组 | 验证内容 |
 | --- | --- |
@@ -72,7 +72,7 @@
 
 ## 弹射置物台
 
-入口：[EjectorChargeRegression](../src/physicsTest/java/com/diliupengyun/differential_create/EjectorChargeRegression.java)、[EjectorIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/EjectorIntegrationTests.java)、[EjectorTests](../src/main/java/com/diliupengyun/differential_create/tests/EjectorTests.java) 和 [EjectorClientSmokeTests](../src/main/java/com/diliupengyun/differential_create/tests/EjectorClientSmokeTests.java)。2026-10-15 数值回归 30 次检查、服务端专项 19 项 GameTest 通过；其中一项复用既有机器负载回归，不计为新增独立场景。
+入口：[EjectorChargeRegression](../src/physicsTest/java/com/diliupengyun/differential_create/EjectorChargeRegression.java)、[EjectorIntegrationTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/EjectorIntegrationTests.java)、[EjectorTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/EjectorTests.java) 和 [EjectorClientSmokeTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/EjectorClientSmokeTests.java)。2026-10-15 数值回归 30 次检查、服务端专项 19 项 GameTest 通过；其中一项复用既有机器负载回归，不计为新增独立场景。
 
 | 分组 | 验证内容 |
 | --- | --- |
@@ -89,7 +89,11 @@
 
 ## 粉碎轮双轮作业
 
-入口：[CrushingPairRegression](../src/physicsTest/java/com/diliupengyun/differential_create/CrushingPairRegression.java)、[CrushingIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/CrushingIntegrationTests.java) 和 [CrushingTests](../src/main/java/com/diliupengyun/differential_create/tests/CrushingTests.java)。2026-10-15 数值回归 416 次检查、服务端专项 27 项 GameTest 通过；其中两项复用既有机器负载与多机器耗功回归。
+入口：[CrushingPairRegression](../src/physicsTest/java/com/diliupengyun/differential_create/CrushingPairRegression.java)、[CrushingIntegrationTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/CrushingIntegrationTests.java) 和 [CrushingTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/CrushingTests.java)。2026-10-15 数值回归 416 次检查、服务端专项 27 项 GameTest 通过；其中两项复用既有机器负载与多机器耗功回归。
+
+2026-10-24 补查断源后的低速残余动能。两个等惯量粉碎轮通过无阻尼、反向弹性连接耦合，粉碎负载只消耗相对转动；共同摆动可在动能与弹性储能之间交换，不能据动能暂时为零判断网络已静止。初速 20／−12 RPM、各自惯量 0.1 的独立夹具中，初始总能量 27.2，粉碎消耗 25.6，剩余 1.6 在两种储能间往复；相对行程及新增加工功均为零。对称初速 16／−16 RPM 的对照则完全停下。该回归使用三种子步长各运行 1200 tick，逐步核对能量账本；不添加隐藏阻尼或强制清零。此夹具验证现有共同进给模型，未模拟材料剪切滑移等额外损耗，也不等于测量了任意玩家网络的全部能量。
+
+静止进给的显示使用与求解器相同的相对速度容差，避免浮点误差触发粒子或翻转出料方向；实际低速进给仍正常显示。新增服务端检查覆盖共同运动、正负微小误差、无虚假加工进度和真实慢转，服务端专项现为 28 项，全部通过。
 
 | 分组 | 验证内容 |
 | --- | --- |
@@ -106,7 +110,7 @@
 
 2026-10-16 基于 Create 6.0.10-281 的专项包含 **60 项默认服务端 GameTest**；同次完整物理回归通过，其中 [ChainConveyorRegression](../src/physicsTest/java/com/diliupengyun/differential_create/ChainConveyorRegression.java) 有 1584 次分割路径与正反向首达检查。客户端烟测通过了 10 个正反向乘链出口用例、实际方块数据中的包裹／方向往返、虚拟 Ponder 连续 tick 与原生渲染器存在性检查。
 
-入口为 [Create6LogisticsTests](../src/main/java/com/diliupengyun/differential_create/tests/Create6LogisticsTests.java)、[列车邮件测试](../src/main/java/com/diliupengyun/differential_create/tests/Create6TrainPackageTests.java)、[工厂配料测试](../src/main/java/com/diliupengyun/differential_create/tests/Create6FactoryTests.java)、[商店测试](../src/main/java/com/diliupengyun/differential_create/tests/Create6CommerceTests.java) 和 [客户端烟测](../src/main/java/com/diliupengyun/differential_create/tests/Create6ClientSmokeTests.java)。
+入口为 [Create6LogisticsTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/Create6LogisticsTests.java)、[列车邮件测试](../src/gameTest/java/com/diliupengyun/differential_create/tests/Create6TrainPackageTests.java)、[工厂配料测试](../src/gameTest/java/com/diliupengyun/differential_create/tests/Create6FactoryTests.java)、[商店测试](../src/gameTest/java/com/diliupengyun/differential_create/tests/Create6CommerceTests.java) 和 [客户端烟测](../src/gameTest/java/com/diliupengyun/differential_create/tests/Create6ClientSmokeTests.java)。
 
 | 分组 | 默认数量 | 覆盖与边界 |
 | --- | ---: | --- |

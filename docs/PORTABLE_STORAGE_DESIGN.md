@@ -302,7 +302,7 @@ handler 的每次查询、模拟和执行均检查自己的会话仍有效、双
 
 多个接口指向同一车载合并库存时，供液与受液预算按真实库存身份共享；访问许可仍按各自会话分别检查。不能因为 handler 包装对象不同，就把同一份库存和容量重复分配。
 
-接口首版仍作为[现有泛用机器水头边界](FLUIDS.md)；泵压、阻力与泵耗功沿用连续流体求解器。车载储罐的真实水位几何、液压力对载具的反作用和内容物质量属于后续流体与结构耦合范围。
+接口采用[统一的库存边界](FLUIDS.md)，不从车载储罐液位推算额外压力；泵压、阻力与泵耗功沿用连续流体求解器。液压力对载具的反作用和内容物质量属于后续流体与结构耦合范围。
 
 ## 多接头与再次停靠
 
@@ -324,7 +324,7 @@ handler 的每次查询、模拟和执行均检查自己的会话仍有效、双
 
 ## 实现顺序与验收
 
-当前已接入功能区、控制信号、统一会话保护、首次完整等待、关闭时序、真实管网和公共驱动的有限制动。列车质量与驱动已适配，接口制动从整列等效动能中扣除，路径导航和站点调度仍使用原生流程；直轨场景由 [TrainOperationTests](../src/main/java/com/diliupengyun/differential_create/tests/TrainOperationTests.java) 验证。稳定子结构、双底车、多个夹点、特殊控制器与高速弯轨仍需扩大验收，下表是完整目标范围，不表示每行都已通过。
+当前已接入功能区、控制信号、统一会话保护、首次完整等待、关闭时序、真实管网和公共驱动的有限制动。列车质量与驱动已适配，接口制动从整列等效动能中扣除，路径导航和站点调度仍使用原生流程；直轨场景由 [TrainOperationTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/TrainOperationTests.java) 验证。稳定子结构、双底车、多个夹点、特殊控制器与高速弯轨仍需扩大验收，下表是完整目标范围，不表示每行都已通过。
 
 基础验收先跑上述四座完整样机：低速离合器农场、程序变速箱旋转农场、矿车自动卸货站和活塞往返运输平台。每座至少连续完成 100 次到站、装卸和离站；使用小型和大型结构、低速及高速工作档，按预览提示调整进站控制后均能重复运行。低速离合器农场单独验证少量元件即可运行，并测试红石传播延迟、捕获失败后重新驱动和准备阶段不提前断开。控制使用真实轨道、程序步骤和红石回路，不由测试手动调用对接回调、赋值速度或指定终点姿态。旋转农场须确认结构停住时卸料泵和输送线仍正常供能。自动空闲放行、红石放行及多人观察各自验证，不把以下局部物理测试通过等同于样机可用。
 
@@ -349,6 +349,6 @@ handler 的每次查询、模拟和执行均检查自己的会话仍有效、双
 | 比较器和客户端伸缩 | 连接许可和阶段模式的 15 与真实传输许可一致；占用 15 从实际制动持续至释放；阶段 0 等待完全释放；播放服务器接受后的停靠阶段 |
 | 停车点、程序到位和供能分支 | 位置可按标准布局重复搭建；停靠不抢占指令到位；卸料支路持续供能 |
 
-物理回归核对驱动做功、动能与弹性储能变化、现有损耗和接头耗散的平衡。库存回归核对双方库存与外部缓冲总量。当前 [PortableDockingTests](../src/main/java/com/diliupengyun/differential_create/tests/PortableDockingTests.java) 已检查断开或换车后旧 handler 拒绝访问；历史研究工具保留缺陷复现判据，仅用于研究版本，不能直接充当当前方案验收。
+物理回归核对驱动做功、动能与弹性储能变化、现有损耗和接头耗散的平衡。库存回归核对双方库存与外部缓冲总量。当前 [PortableDockingTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/PortableDockingTests.java) 已检查断开或换车后旧 handler 拒绝访问；历史研究工具保留缺陷复现判据，仅用于研究版本，不能直接充当当前方案验收。
 
 主要维护入口是 [ContraptionMotion](../src/main/java/com/diliupengyun/differential_create/kinetics/ContraptionMotion.java)、[ContraptionPhysics](../src/main/java/com/diliupengyun/differential_create/kinetics/ContraptionPhysics.java)、[ElasticKinetics](../src/main/java/com/diliupengyun/differential_create/kinetics/ElasticKinetics.java)、[MinecartActorMotion](../src/main/java/com/diliupengyun/differential_create/kinetics/MinecartActorMotion.java)、[MinecartPhysics](../src/main/java/com/diliupengyun/differential_create/kinetics/MinecartPhysics.java) 和 [FluidKinetics](../src/main/java/com/diliupengyun/differential_create/kinetics/FluidKinetics.java)。新停靠状态独立于切削任务，物理试算不得预约站点、改库存或发布 capability；接触提交后才执行这些世界操作。

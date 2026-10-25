@@ -42,7 +42,13 @@ public class DifferentialCreate {
         // Clientbound per-network speed sync (structure + state packets)
         modEventBus.addListener((net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent event) -> {
             // Bearing poses and rotor states describe the same physical instant.
-            event.registrar("22")
+            event.registrar("23")
+                .playToServer(com.diliupengyun.differential_create.ponder.PonderLootPayloads.Request.TYPE,
+                    com.diliupengyun.differential_create.ponder.PonderLootPayloads.Request.STREAM_CODEC,
+                    com.diliupengyun.differential_create.ponder.PonderLootPayloads.Request::handle)
+                .playToClient(com.diliupengyun.differential_create.ponder.PonderLootPayloads.Result.TYPE,
+                    com.diliupengyun.differential_create.ponder.PonderLootPayloads.Result.STREAM_CODEC,
+                    com.diliupengyun.differential_create.ponder.PonderLootPayloads.Result::handle)
                 .playToServer(com.diliupengyun.differential_create.kinetics.RatioSettingPayload.TYPE,
                     com.diliupengyun.differential_create.kinetics.RatioSettingPayload.STREAM_CODEC,
                     com.diliupengyun.differential_create.kinetics.RatioSettingPayload::handle)

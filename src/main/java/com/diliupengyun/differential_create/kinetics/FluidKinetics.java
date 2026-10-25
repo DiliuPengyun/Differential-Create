@@ -21,18 +21,18 @@ import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.fluids.capability.IFluidHandler;
 import net.neoforged.neoforge.fluids.capability.IFluidHandler.FluidAction;
 
-/** Main-thread native adapter: conserved ordered phases and one bounded update per tick. */
+/** Main-thread native adapter: conserved ordered phases with bounded transport substeps. */
 public final class FluidKinetics {
     public static final long FLUID_BUDGET_NANOS = 4_000_000;
-    private static final Map<Level, Map<BlockPos, WeakReference<FluidTransportBehaviour>>> pipes = new WeakHashMap<>();
-    private static final Map<LevelAccessor, Map<BlockPos, PipeHydraulics>> replacements = new WeakHashMap<>();
-    private static final Map<Level, Frame> frames = new WeakHashMap<>();
-    private static final Map<Level, WorkBudget> budgets = new WeakHashMap<>();
+    private static final Map<Level, Map<BlockPos, WeakReference<FluidTransportBehaviour>>> pipes = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<LevelAccessor, Map<BlockPos, PipeHydraulics>> replacements = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<Level, Frame> frames = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<Level, WorkBudget> budgets = Collections.synchronizedMap(new WeakHashMap<>());
     private static final class WorkBudget {
         long tick = Long.MIN_VALUE, used; int cursor;
         double airInitialised, airIn, airOut;
         final Map<Object, Double> receipts = new IdentityHashMap<>();
-        void begin(Level level) { if (tick != level.getGameTime()) { tick = level.getGameTime(); used = 0; } }
+        void begin(Level level) { if (tick != PhysicsPreview.time(level)) { tick = PhysicsPreview.time(level); used = 0; } }
     }
     public record AirAudit(double initialised, double incoming, double outgoing) {}
     public static AirAudit airAudit(Level level) {
@@ -44,7 +44,8 @@ public final class FluidKinetics {
     }
     public static void register(FluidTransportBehaviour pipe) {
         Level level = pipe.getWorld();
-        if (level == null || level.isClientSide || pipe.blockEntity.isVirtual()) return;
+        if (level == null || !PhysicsPreview.enabled(level) && (level.isClientSide || pipe.blockEntity.isVirtual())) return;
+        if (PhysicsPreview.enabled(level) && !ticking(level, pipe.getPos())) return;
         var registry = pipes.computeIfAbsent(level, key -> new HashMap<>()); var old = registry.get(pipe.getPos());
         if (old != null && old.get() == pipe) return;
         // A newly placed channel owns air at construction, including before a
@@ -59,12 +60,20 @@ public final class FluidKinetics {
         if (change > 0) audit.airInitialised += change; else audit.airOut -= change;
         registry.put(pipe.getPos(), new WeakReference<>(pipe)); frames.remove(level);
     }
-    public static boolean manages(Level level, BlockPos pos) { return !level.isClientSide && pipes.getOrDefault(level, Map.of()).containsKey(pos); }
+    public static boolean manages(Level level, BlockPos pos) { return (!level.isClientSide || PhysicsPreview.enabled(level)) && pipes.getOrDefault(level, Map.of()).containsKey(pos); }
     public static boolean hasPipes(Level level) { return !pipes.getOrDefault(level, Map.of()).isEmpty(); }
-    public static Set<Level> levels() { return new HashSet<>(pipes.keySet()); }
+    public static Set<Level> levels() {
+        synchronized (pipes) {
+            var result = new HashSet<>(pipes.keySet()); result.removeIf(PhysicsPreview::enabled); return result;
+        }
+    }
     public static void invalidate(Level level) { frames.remove(level); }
     public static void clear() { pipes.clear(); replacements.clear(); frames.clear(); budgets.clear(); }
-    public static void beginTick(Level level) { var b = budgets.computeIfAbsent(level, key -> new WorkBudget()); b.tick = level.getGameTime(); b.used = 0; }
+    public static void resetPreview(Level level) {
+        if (!PhysicsPreview.enabled(level)) throw new IllegalArgumentException("Not a physics preview");
+        pipes.remove(level); replacements.remove(level); frames.remove(level); budgets.remove(level);
+    }
+    public static void beginTick(Level level) { var b = budgets.computeIfAbsent(level, key -> new WorkBudget()); b.tick = PhysicsPreview.time(level); b.used = 0; }
     public static PipeHydraulics state(FluidTransportBehaviour pipe) { return ((IPipeDynamics) pipe).differentialcreate$fluidState(); }
     private static BlockEntity loadedEntity(Level level, BlockPos pos) {
         if (!(level instanceof ServerLevel server)) return level.getBlockEntity(pos);
@@ -78,11 +87,12 @@ public final class FluidKinetics {
         return loadedEntity(level, pos) instanceof SmartBlockEntity smart ? smart.getBehaviour(FluidTransportBehaviour.TYPE) : null;
     }
     private static boolean ticking(Level level, BlockPos pos) {
+        if (level instanceof PhysicsPreview preview) return preview.differentialcreate$physical(pos);
         return level instanceof ServerLevel server ? server.getChunkSource().isPositionTicking(net.minecraft.world.level.ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4)) : level.isLoaded(pos);
     }
     public static void cacheState(LevelAccessor level, BlockPos pos) {
         var pipe = FluidPropagator.getPipe(level, pos);
-        if (pipe != null && !level.isClientSide()) replacements.computeIfAbsent(level, key -> new HashMap<>()).put(pos.immutable(), state(pipe));
+        if (pipe != null && (!level.isClientSide() || level instanceof PhysicsPreview)) replacements.computeIfAbsent(level, key -> new HashMap<>()).put(pos.immutable(), state(pipe));
     }
     public static void restoreState(LevelAccessor level, BlockPos pos) {
         var cache = replacements.get(level); if (cache == null) return;
@@ -108,13 +118,13 @@ public final class FluidKinetics {
         // Create's empty-stack predicate passes smart filters but checks valves.
         return pipe.canHaveFlowToward(block, side) && pipe.canPullFluidFrom(phase, block, side);
     }
-    private static int request(double amount) { return (int) Math.max(1, Math.min(Integer.MAX_VALUE, Math.ceil(amount))); }
+    private static int request(double amount) { return FluidBudget.reservationAmount(amount); }
     private static boolean same(FluidStack a, FluidStack b) { return FluidMaterials.same(a, b); }
     private static void restorePhysicalConnections(FluidTransportBehaviour pipe) {
         if (pipe.interfaces == null) pipe.getConnection(Direction.DOWN);
         for (var side : Direction.values()) if (pipe.canHaveFlowToward(pipe.blockEntity.getBlockState(), side)) {
             var retired = state(pipe).retainedPorts.get(side);
-            if (retired != null && ticking(pipe.getWorld(), pipe.getPos().relative(side))
+            if (retired != null && ticking(pipe.getWorld(), PhysicsPreview.neighbor(pipe.getWorld(), pipe.getPos(), side))
                 && FluidPropagator.isOpenEnd(pipe.getWorld(), pipe.getPos(), side)) {
                 // Reopening the same exterior face restores its original native
                 // placement counter as well as its already extracted input.
@@ -158,13 +168,13 @@ public final class FluidKinetics {
         Endpoint(FluidTransportBehaviour pipe, Direction side, FlowSource source) {
             this.pipe = pipe; this.side = side; this.source = source;
             buffer = state(pipe).buffers.computeIfAbsent(side, key -> new PipeHydraulics.Buffer());
-            face = pipe.getPos().getY() + .5 * side.getStepY(); refresh();
+            face = PhysicsPreview.height(pipe.getWorld(), pipe.getPos()) + .5 * side.getStepY(); refresh();
         }
         boolean allowsInput(FluidStack identity) {
             return retained ? pipe.canPullFluidFrom(identity, pipe.blockEntity.getBlockState(), side) : allows(pipe, side, identity);
         }
         void refresh() {
-            var world = pipe.getWorld(); var pos = pipe.getPos().relative(side); var be = loadedEntity(world, pos);
+            var world = pipe.getWorld(); var pos = PhysicsPreview.neighbor(world, pipe.getPos(), side); var be = loadedEntity(world, pos);
             if (!retained && (!ticking(world, pos) || be instanceof FluidTankBlockEntity t && !ticking(world, t.getController()))) {
                 handler = null; tank = null; supplies = false; return;
             }
@@ -184,20 +194,17 @@ public final class FluidKinetics {
                 handler = tank == null ? null : world.getCapability(Capabilities.FluidHandler.BLOCK,
                     tank.getBlockPos(), side.getOpposite());
             }
-            // Generic native machines have no exposed level geometry. Their
-            // finite inventory retains a half-block supply-head approximation;
-            // this starts displacement of air without filling a dry pipe with
-            // an imaginary liquid gravity column.
-            surface = retained ? face : pos.getY() + .5;
-            if (!retained && tank != null && !tank.boiler.isActive()) {
-                var stock = tank.getTankInventory(); double fraction = stock.getCapacity() == 0 ? 0 : (double) stock.getFluidAmount() / stock.getCapacity();
-                surface = tank.getBlockPos().getY() - 3.0 / 16 + (tank.getHeight() - 9.0 / 16) * fraction;
-            } else if (!retained && handler instanceof HosePulleyFluidHandlerAccessor hose) {
+            // Inventories supply and receive at the same reference pressure.
+            // Their rendered level and internal geometry do not restrict a
+            // permitted capability. Only actual world mouths have a water head;
+            // pipe gravity and boundary kinetic-energy losses remain in the solver.
+            surface = face;
+            if (!retained && handler instanceof HosePulleyFluidHandlerAccessor hose) {
                 var root = hose.differentialcreate$rootPosition().get(); var fluid = world.getFluidState(root);
-                surface = fluid.isEmpty() ? root.getY() : root.getY() - .5 + fluid.getHeight(world, root);
+                surface = PhysicsPreview.height(world, root) + (fluid.isEmpty() ? 0 : -.5 + fluid.getHeight(world, root));
             } else if (!retained && source instanceof OpenEndedPipe open) {
                 var external = world.getFluidState(open.getOutputPos());
-                surface = external.isEmpty() ? face : open.getOutputPos().getY() - .5 + external.getHeight(world, open.getOutputPos());
+                surface = external.isEmpty() ? face : PhysicsPreview.height(world, open.getOutputPos()) - .5 + external.getHeight(world, open.getOutputPos());
             }
             offered = FluidStack.EMPTY; supplies = false;
             if (buffer.amount > 0) { offered = buffer.first().identity(); supplies = allowsInput(offered); return; }
@@ -210,15 +217,13 @@ public final class FluidKinetics {
             var available = tank == null ? source.provideFluid(s -> !s.isEmpty() && allows(pipe, side, s))
                 : handler.drain(1, FluidAction.SIMULATE);
             if (!available.isEmpty() && !allows(pipe, side, available)) available = FluidStack.EMPTY;
-            if (!available.isEmpty() && (tank == null || tank.boiler.isActive() || FluidMaterials.isGas(available)
-                || surface > face && tank.getTankInventory().getFluidAmount() > 0)) {
+            if (!available.isEmpty()) {
                 offered = available.copyWithAmount(1); supplies = true; return;
             }
             // Immersion never substitutes air for a rejected or non-source liquid.
             if (source instanceof OpenEndedPipe open) supplies = world.getFluidState(open.getOutputPos()).isEmpty();
             else if (handler instanceof HosePulleyFluidHandlerAccessor hose)
                 supplies = world.getFluidState(hose.differentialcreate$rootPosition().get()).isEmpty();
-            else if (tank != null && !tank.boiler.isActive()) supplies = tank.getTankInventory().getFluidAmount() == 0 || surface <= face;
             else {
                 // A declared empty native slot is an explicit vented machine
                 // boundary. A failed filtered drain alone is not an air source.
@@ -247,8 +252,7 @@ public final class FluidKinetics {
         double pressure(FluidStack contact) {
             if (contact.isEmpty() || FluidMaterials.isGas(contact)) return 0;
             // Each pipe half's gravity is on its edge; world altitude cancels.
-            double head = source instanceof OpenEndedPipe || tank != null && !tank.boiler.isActive()
-                ? Math.max(0, surface - face) : surface - face;
+            double head = source instanceof OpenEndedPipe ? Math.max(0, surface - face) : surface - face;
             return FluidMaterials.of(contact).gravityForce(head);
         }
         double inputSpace(FluidStack phase) {
@@ -260,16 +264,7 @@ public final class FluidKinetics {
                 return held + (same(owned, phase) ? owned.getAmount() : 0);
             }
             var stock = handler.drain(phase.copyWithAmount(Integer.MAX_VALUE), FluidAction.SIMULATE);
-            return held + (same(stock, phase) ? Math.min(stock.getAmount(), accessibleTankStock(phase)) : 0);
-        }
-        double accessibleTankStock(FluidStack phase) {
-            if (tank == null || tank.boiler.isActive() || FluidMaterials.isGas(phase)) return Integer.MAX_VALUE;
-            var inventory = tank.getTankInventory();
-            double span = tank.getHeight() - 9.0 / 16;
-            double contact = Math.max(0, (face - tank.getBlockPos().getY() + 3.0 / 16) * inventory.getCapacity() / span);
-            // A coarse tick must not withdraw stock below a side port merely
-            // because the surface was above it at the start of the tick.
-            return Math.max(0, inventory.getFluidAmount() - Math.ceil(contact - 32 * Math.ulp(Math.max(1, contact))));
+            return held + (same(stock, phase) ? stock.getAmount() : 0);
         }
         double outputSpace(FluidStack phase) {
             if (!receives(phase)) return 0;
@@ -323,7 +318,7 @@ public final class FluidKinetics {
         boolean reserve(FluidStack identity, double amount, double room) {
             if (identity.isEmpty()) return supplies;
             double held = buffer.amount > 0 && same(buffer.first().identity(), identity) ? buffer.first().amount() : 0;
-            if (held + 8 * Math.ulp(Math.max(1, Math.max(held, amount))) >= amount) return true;
+            if (held > 0 && FluidBudget.receiptSpace(amount, held) == 0) return true;
             if (buffer.amount > held + 8 * Math.ulp(Math.max(1, buffer.amount))) return false;
             FluidStack drained;
             if (retained) {
@@ -332,11 +327,11 @@ public final class FluidKinetics {
             } else if (handler instanceof OpenPipeDischarge.Placement p && handler.getFluidInTank(0).isEmpty())
                 drained = p.differentialcreate$takeWorld(identity, request(amount - held), room);
             else {
-                int requested = Math.min(request(amount - held), (int) accessibleTankStock(identity));
-                drained = requested == 0 ? FluidStack.EMPTY : handler.drain(identity.copyWithAmount(requested), FluidAction.EXECUTE);
+                int requested = request(amount - held);
+                drained = handler.drain(identity.copyWithAmount(requested), FluidAction.EXECUTE);
             }
             if (!drained.isEmpty()) { buffer.add(drained, drained.getAmount()); buffer.delivery = false; pipe.blockEntity.setChanged(); }
-            return same(drained, identity) && buffer.amount + 64 * Math.ulp(Math.max(1, amount)) >= amount;
+            return same(drained, identity) && FluidBudget.receiptSpace(amount, buffer.amount) == 0;
         }
     }
     private record Channel(int from, int to, Direction side, Endpoint endpoint, double length) {}
@@ -349,6 +344,7 @@ public final class FluidKinetics {
         final double[] capacity, geometryCapacity;
         boolean active; List<QueuedFluidSolver.Cell> cells; List<QueuedFluidSolver.Link> links;
         TransferPlan candidatePlan;
+        double transportHint = Double.POSITIVE_INFINITY;
         Component(List<FluidTransportBehaviour> members, List<Endpoint> endpoints, Map<BlockPos, FluidTransportBehaviour> live, WorkBudget audit) {
             this.members = members; this.endpoints = endpoints; capacity = new double[members.size()]; geometryCapacity = new double[members.size()];
             for (int n = 0; n < members.size(); n++) { index.put(members.get(n), n); adjacent.add(new ArrayList<>()); }
@@ -366,7 +362,7 @@ public final class FluidKinetics {
                 if (change > 0) audit.airInitialised += change; else audit.airOut -= change;
             }
             for (int n = 0; n < members.size(); n++) for (var d : sides.get(n)) {
-                var next = live.get(members.get(n).getPos().relative(d)); var to = next == null ? null : index.get(next);
+                var next = live.get(PhysicsPreview.neighbor(members.get(n).getWorld(), members.get(n).getPos(), d)); var to = next == null ? null : index.get(next);
                 if (next != null && to != null && n < to && sides.get(to).contains(d.getOpposite())) {
                     if (retainedIntake(members.get(n), d) != null || retainedIntake(next, d.getOpposite()) != null
                         || bufferedInput(members.get(n), d) || bufferedInput(next, d.getOpposite())) continue;
@@ -414,7 +410,7 @@ public final class FluidKinetics {
             if (!c.endpoint.retained && !phase.isEmpty() && c.endpoint.buffer.amount == 0
                 && c.endpoint.handler instanceof OpenPipeDischarge.Placement p && c.endpoint.handler.getFluidInTank(0).isEmpty()) {
                 var whole = p.differentialcreate$worldFluid();
-                return !whole.isEmpty() && intakeSpace(c.endpoint, phase, deadline) >= whole.getAmount();
+                return !whole.isEmpty() && FluidBudget.receiptSpace(p.differentialcreate$worldTransferSize(), intakeSpace(c.endpoint, phase, deadline)) == 0;
             }
             return true;
         }
@@ -430,7 +426,11 @@ public final class FluidKinetics {
                 double rpm = p.blockEntity instanceof PumpBlockEntity pump ? NetworkDynamics.preciseSpeed(pump) : 0;
                 int polarity = p.blockEntity instanceof PumpBlockEntity pump
                     && pump.getBlockState().getValue(PumpBlock.FACING).getAxisDirection() == Direction.AxisDirection.NEGATIVE ? -1 : 1;
-                cells.add(new QueuedFluidSolver.Cell(capacity[n], p.getPos().getY(), density, gravity, rpm, saved.pumpFlow, polarity));
+                // Transport is limited by actually owned parcels, not nominal
+                // geometry. After many transfers their floating-point sum can
+                // be a few ULPs below capacity; never schedule that missing stock.
+                double transportStock = Math.min(capacity[n], saved.phases.volume());
+                cells.add(new QueuedFluidSolver.Cell(transportStock, PhysicsPreview.height(p.getWorld(), p.getPos()), density, gravity, rpm, saved.pumpFlow, polarity));
             }
             var boundary = new QueuedFluidSolver.Boundary[endpoints.size()];
             for (int b = 0; b < endpoints.size(); b++) {
@@ -443,12 +443,76 @@ public final class FluidKinetics {
                 boolean open = (c.endpoint != null && c.endpoint.retained ? c.endpoint.allowsInput(FluidStack.EMPTY) : allows(p, c.side, FluidStack.EMPTY))
                     && (c.endpoint != null ? c.endpoint.handler != null || c.endpoint.retained && bufferedInput(p, c.side)
                     : allows(members.get(c.to), c.side.getOpposite(), FluidStack.EMPTY));
-                links.add(new QueuedFluidSolver.Link(c.from, c.to, c.length, p.getPos().getY() + .5 * c.side.getStepY(), sign(c.from, c.side),
+                links.add(new QueuedFluidSolver.Link(c.from, c.to, c.length, PhysicsPreview.height(p.getWorld(), p.getPos()) + .5 * c.side.getStepY(), sign(c.from, c.side),
                     c.endpoint == null ? sign(c.to, c.side.getOpposite()) : 0, open));
                 origin[e] = state(p).outward.getOrDefault(c.side, 0d);
                 if (c.endpoint == null) origin[e] = .5 * (origin[e] - state(members.get(c.to)).outward.getOrDefault(c.side.getOpposite(), 0d));
             }
             return QueuedFluidSolver.sample(cells, links, boundary, origin, minutes, deadline, (edge, forward) -> contact(edge, forward, deadline));
+        }
+        void advance(double minutes, long deadline, WorkBudget audit, Map<KineticBlockEntity, Double> torques, Frame frame) {
+            frame.scheduledMinutes += minutes;
+            if (System.nanoTime() >= deadline) { resetLoads(); return; }
+            if (uniformClosed()) {
+                // Identical, full parcels in a closed incompressible graph
+                // have exactly zero inventory change at every node. Solve the
+                // real momentum once; repeated FIFO transfers are an identity
+                // operation, even when circulation crosses many cells per tick.
+                var result = sample(minutes, deadline); frame.pressureSolves += result.solves();
+                if (result.solves() != 0 && commit(result, minutes, deadline, audit, torques, true)) {
+                    frame.advancedMinutes += minutes;
+                    frame.shortestStep = Math.min(frame.shortestStep, minutes);
+                } else resetLoads();
+                return;
+            }
+            double remaining = minutes, previousDuration = Math.min(minutes, transportHint);
+            int steps = 0;
+            while (remaining > 0 && steps < 4096 && System.nanoTime() < deadline) {
+                if (steps > 0) begin();
+                if (!active) break;
+                double duration = remaining / Math.max(1, Math.ceil(remaining / previousDuration));
+                var result = sample(duration, deadline); frame.pressureSolves += result.solves();
+                // The momentum trial is detached. If it predicts too much
+                // displacement, retry the shorter interval from the same state;
+                // no pressure impulse, inventory or world operation was committed.
+                int retries = 0;
+                while (result.solves() != 0) {
+                    double allowed = QueuedFluidSolver.transportMinutes(cells, links, result.flow(), duration);
+                    if (allowed >= duration) break;
+                    if (!(allowed > 0) || ++retries > 32) return;
+                    duration = Math.nextDown(allowed);
+                    if (!(duration > 0) || remaining - duration == remaining) return;
+                    frame.retries++;
+                    result = sample(duration, deadline); frame.pressureSolves += result.solves();
+                }
+                if (result.solves() == 0) { if (steps == 0) resetLoads(); break; }
+                result = limit(result, duration, deadline);
+                var partTorques = new HashMap<KineticBlockEntity, Double>();
+                if (!commit(result, duration, deadline, audit, partTorques, false)) break;
+                double weight = duration / minutes;
+                for (var entry : partTorques.entrySet()) torques.merge(entry.getKey(), entry.getValue() * weight, Double::sum);
+                frame.transportSteps++;
+                frame.advancedMinutes += duration;
+                frame.shortestStep = Math.min(frame.shortestStep, duration);
+                steps++;
+                remaining = Math.max(0, remaining - duration);
+                // Grow the next trial when deceleration permits it, while a
+                // steady high flow keeps its already validated transfer size.
+                double safe = QueuedFluidSolver.transportMinutes(cells, links, result.flow(), minutes);
+                transportHint = previousDuration = safe < minutes ? .95 * safe : minutes;
+            }
+        }
+        boolean uniformClosed() {
+            if (!endpoints.isEmpty()) return false;
+            FluidStack identity = null;
+            for (int n = 0; n < members.size(); n++) {
+                var queue = state(members.get(n)).phases;
+                if (queue.size() != 1 || Math.abs(queue.volume() - capacity[n]) > 64 * Math.ulp(capacity[n])) return false;
+                var phase = queue.peek(true).identity();
+                if (identity == null) identity = phase;
+                else if (!same(identity, phase)) return false;
+            }
+            return identity != null;
         }
         /** Count genuine displaceable capacity, never the open end's nominal cache. */
         double intakeSpace(Endpoint inlet, FluidStack identity, long deadline) {
@@ -463,7 +527,7 @@ public final class FluidKinetics {
                     if (!seen[other]) { seen[other] = true; visit.add(other); }
                 }
             }
-            double free = 0; boolean vent = false; int lowest = inlet.pipe.getPos().getY(); boolean driven = false;
+            double free = 0; boolean vent = false; double lowest = PhysicsPreview.height(inlet.pipe.getWorld(), inlet.pipe.getPos()); boolean driven = false;
             var counted = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
             var localPending = new IdentityHashMap<Object, Double>();
             for (var e : endpoints) if (seen[index.get(e.pipe)] && e.handler != null)
@@ -471,7 +535,7 @@ public final class FluidKinetics {
             for (int n : visit) {
                 var pipe = members.get(n); var saved = state(pipe); free += saved.airVolume();
                 for (var b : saved.buffers.values()) free -= b.amount;
-                lowest = Math.min(lowest, pipe.getPos().getY());
+                lowest = Math.min(lowest, PhysicsPreview.height(pipe.getWorld(), pipe.getPos()));
                 if (pipe.blockEntity instanceof PumpBlockEntity pump && NetworkDynamics.preciseSpeed(pump) != 0) driven = true;
             }
             // Retained world stock is already owned, irrespective of endpoint
@@ -492,9 +556,9 @@ public final class FluidKinetics {
                     int probe = request(1000 + Math.max(0, -free) + reserved);
                     free += FluidBudget.receiptSpace(e.handler.fill(identity.copyWithAmount(probe), FluidAction.SIMULATE), reserved);
                 }
-                if (e != inlet && e.receives(FluidStack.EMPTY)) { vent = true; lowest = Math.min(lowest, e.pipe.getPos().relative(e.side).getY()); }
+                if (e != inlet && e.receives(FluidStack.EMPTY)) { vent = true; lowest = Math.min(lowest, PhysicsPreview.height(e.pipe.getWorld(), PhysicsPreview.neighbor(e.pipe.getWorld(), e.pipe.getPos(), e.side))); }
             }
-            return vent && (driven || inlet.pipe.getPos().relative(inlet.side).getY() > lowest) ? Math.max(0, free) : 0;
+            return vent && (driven || PhysicsPreview.height(inlet.pipe.getWorld(), PhysicsPreview.neighbor(inlet.pipe.getWorld(), inlet.pipe.getPos(), inlet.side)) > lowest) ? Math.max(0, free) : 0;
         }
         /** Only other components need this claim: the owner's intake query
          * already subtracts its cached world stock. Cache the bounded walk until
@@ -558,7 +622,8 @@ public final class FluidKinetics {
                 if (!c.endpoint.retained && c.endpoint.handler instanceof OpenPipeDischarge.Placement p
                     && c.endpoint.handler.getFluidInTank(0).isEmpty()) {
                     var whole = p.differentialcreate$worldFluid();
-                    if (whole.isEmpty() || !same(whole, phase) || intakeSpace(c.endpoint, phase, deadline) < whole.getAmount())
+                    if (whole.isEmpty() || !same(whole, phase)
+                        || FluidBudget.receiptSpace(p.differentialcreate$worldTransferSize(), intakeSpace(c.endpoint, phase, deadline)) != 0)
                         // A rejected new bucket does not block stock already
                         // owned at this mouth. Finish that real fractional tail
                         // rather than trying an impossible whole-world receipt.
@@ -590,27 +655,33 @@ public final class FluidKinetics {
                     // may vent air and deliver one real identity in this update,
                     // without turning every small air gap into a world-wide
                     // time boundary. Distinct real identities still queue.
-                    var boundaryPhase = FluidStack.EMPTY; double delivered = 0;
+                    var boundaryPhase = FluidStack.EMPTY; double delivered = 0; boolean rejected = false;
                     for (var part : plan.packets.get(e)) {
                         var phase = part.identity();
                         if (c.endpoint != null && !phase.isEmpty()) {
                             if (boundaryPhase.isEmpty()) boundaryPhase = phase;
-                            else if (!same(boundaryPhase, phase)) break;
+                            else if (!same(boundaryPhase, phase)) { rejected = true; break; }
                         }
                         if (!(allows(members.get(c.from), c.side, phase) && (c.endpoint == null
                             ? allows(members.get(c.to), c.side.getOpposite(), phase)
-                            : c.endpoint.receives(phase)))) break;
+                            : c.endpoint.receives(phase)))) { rejected = true; break; }
                         double taken = part.amount();
                         if (c.endpoint != null && !phase.isEmpty()) {
                             double room = c.endpoint.outputSpace(phase) - receipts.getOrDefault(inventoryKey(c.endpoint.handler), 0d) - delivered;
-                            taken = Math.min(taken, Math.max(0, room)); delivered += taken;
+                            taken = FluidBudget.receiptTransfer(taken, room); delivered += taken;
                         }
                         allowed += taken;
-                        if (taken < part.amount()) break;
+                        if (taken < part.amount()) { rejected = true; break; }
                     }
                     if (c.endpoint != null && delivered > 0) receipts.merge(inventoryKey(c.endpoint.handler), delivered, Double::sum);
-                    if (allowed + 8 * Math.ulp(Math.max(1, wanted)) < wanted) {
-                        restricted = Math.min(restricted, scale * allowed / wanted); break;
+                    if (rejected || allowed + 8 * Math.ulp(Math.max(1, wanted)) < wanted) {
+                        double bound = scale * allowed / wanted;
+                        // A rejected identity must never cross a filter, even
+                        // when its volume is below the ULP of this packet. Stop
+                        // just before that interface and leave it in its donor;
+                        // the next pressure solve then sees the correct phase.
+                        if (rejected && bound > 0) bound = Math.nextDown(Math.min(scale, bound));
+                        restricted = Math.min(restricted, bound); break;
                     }
                 }
                 if (restricted == scale) { candidatePlan = plan; return r.scale(scale, cells, links); }
@@ -645,13 +716,15 @@ public final class FluidKinetics {
             }
             return new TransferPlan(next, packets);
         }
-        boolean commit(QueuedFluidSolver.Result r, double minutes, long deadline, WorkBudget audit, Map<KineticBlockEntity, Double> torques) {
+        boolean commit(QueuedFluidSolver.Result r, double minutes, long deadline, WorkBudget audit, Map<KineticBlockEntity, Double> torques, boolean uniform) {
             worldClaims.clear();
             if (r.solves() == 0) { resetLoads(); return false; }
-            var plan = candidatePlan == null ? withdraw(r, minutes, 1) : candidatePlan; candidatePlan = null;
+            var plan = uniform ? new TransferPlan(members.stream().map(p -> state(p).phases).toList(), Collections.nCopies(channels.size(), null))
+                : candidatePlan == null ? withdraw(r, minutes, 1) : candidatePlan;
+            candidatePlan = null;
             var next = plan.next; var packets = plan.packets;
             var arriving = new ArrayList<List<List<FluidQueue.Part<FluidStack>>>>(Collections.nCopies(members.size(), null));
-            // Every outgoing packet is from tick-start stock. No multi-cell jump.
+            // Every outgoing packet is from substep-start stock. No skipped cell.
             for (int e = 0; e < channels.size(); e++) if (packets.get(e) != null) {
                 var c = channels.get(e); boolean forward = r.flow()[e] > 0;
                 if (forward && c.endpoint != null) continue;
@@ -726,11 +799,19 @@ public final class FluidKinetics {
         final List<Endpoint> retainedInlets = new ArrayList<>();
         final Map<Object, List<Component>> sharedReceivers = new IdentityHashMap<>();
         private long acceptedSteps, jointIterations, retries; private double shortestStep = Double.POSITIVE_INFINITY;
+        private long transportSteps, pressureSolves;
+        private double scheduledMinutes, advancedMinutes;
         Frame(Level level) { this.level = level; }
         public int pipeCount() { return captured.size(); }
         public record Metrics(long acceptedSteps, long jointIterations, long retries, double shortestMinutes) {}
-        public void resetMetrics() { acceptedSteps = jointIterations = retries = 0; shortestStep = Double.POSITIVE_INFINITY; }
+        public void resetMetrics() {
+            acceptedSteps = jointIterations = retries = transportSteps = pressureSolves = 0;
+            scheduledMinutes = advancedMinutes = 0; shortestStep = Double.POSITIVE_INFINITY;
+        }
         public Metrics metrics() { return new Metrics(acceptedSteps, jointIterations, retries, shortestStep); }
+        public long transportSteps() { return transportSteps; }
+        public long pressureSolves() { return pressureSolves; }
+        public double completedFraction() { return scheduledMinutes == 0 ? 1 : advancedMinutes / scheduledMinutes; }
         boolean valid() {
             for (var inlet : retainedInlets) if (retainedIntake(inlet.pipe, inlet.side) == null && !bufferedInput(inlet.pipe, inlet.side)) return false;
             for (var pos : inactive) if (ticking(level, pos)) return false;
@@ -809,7 +890,7 @@ public final class FluidKinetics {
             }
         }
         /** Native tanks can have real sub-mB receipt stock in their adapter.
-         * An immersed port already drawing from that same tank must be able to
+         * A permitted port already drawing from that same tank must be able to
          * draw this stock too. Move only owned FIFO heads, with no capability
          * debit/credit, new inventory, or reclamation of an outside discharge.
          * Generic machines retain their own integer-interface rules. */
@@ -817,8 +898,7 @@ public final class FluidKinetics {
             Endpoint consumer = null;
             for (var e : ports) if (!e.retained && e.tank != null && !e.tank.boiler.isActive()
                 && e.buffer.amount == 0 && state(e.pipe).outward.getOrDefault(e.side, 0d) < 0
-                && e.allowsInput(identity) && e.handler.fill(identity.copyWithAmount(1), FluidAction.SIMULATE) > 0
-                && (FluidMaterials.isGas(identity) || e.surface > e.face)) {
+                && e.allowsInput(identity) && e.handler.fill(identity.copyWithAmount(1), FluidAction.SIMULATE) > 0) {
                 consumer = e; break;
             }
             if (consumer == null) return;
@@ -857,7 +937,7 @@ public final class FluidKinetics {
                 for (var side : Direction.values()) {
                     var connection = p.interfaces.get(side);
                     if (connection == null || !p.canHaveFlowToward(p.blockEntity.getBlockState(), side)) continue;
-                    var adjacent = p.getPos().relative(side);
+                    var adjacent = PhysicsPreview.neighbor(level, p.getPos(), side);
                     // An outlet can border a tank-only chunk: no neighbouring
                     // pipe will register when it resumes. Track the unavailable
                     // position too, so its transition invalidates this frame.
@@ -894,7 +974,7 @@ public final class FluidKinetics {
                     if (next != null) continue;
                     var old = ((IPipePressure)connection).differentialcreate$source(); boolean open = FluidPropagator.isOpenEnd(level, p.getPos(), side);
                     boolean inventory = !open && FluidPropagator.hasFluidCapability(level, adjacent, side.getOpposite());
-                    if (old == null || open && !(old instanceof OpenEndedPipe) || inventory && !(old instanceof FlowSource.FluidHandler)
+                    if (PhysicsPreview.enabled(level) || old == null || open && !(old instanceof OpenEndedPipe) || inventory && !(old instanceof FlowSource.FluidHandler)
                         || !open && !inventory && old.isEndpoint()) connection.determineSource(level, p.getPos());
                     connection.manageSource(level, p.getPos(), p.blockEntity);
                     var source = ((IPipePressure)connection).differentialcreate$source();
@@ -924,11 +1004,10 @@ public final class FluidKinetics {
         boolean budgetReached = false;
         for (int step = 0; step < count; step++) {
             int c = (first + step) % count; var component = frame.components.get(c); long started = System.nanoTime(), before = budget.used;
-            long deadline = started + Math.max(0, FLUID_BUDGET_NANOS - before);
+            // Replays must not depend on machine load or video encoder scheduling.
+            long deadline = PhysicsPreview.enabled(frame.level) ? Long.MAX_VALUE : started + Math.max(0, FLUID_BUDGET_NANOS - before);
             if (component.active) {
-                var result = component.sample(minutes, deadline);
-                if (result.solves() != 0) result = component.limit(result, minutes, deadline);
-                component.commit(result, minutes, deadline, budget, torques);
+                component.advance(minutes, deadline, budget, torques, frame);
             } else component.resetLoads();
             budget.used += System.nanoTime() - started;
             if (before < FLUID_BUDGET_NANOS && budget.used >= FLUID_BUDGET_NANOS) { budget.cursor = c + 1; budgetReached = true; }

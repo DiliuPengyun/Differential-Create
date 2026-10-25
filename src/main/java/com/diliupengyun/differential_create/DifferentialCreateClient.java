@@ -33,17 +33,5 @@ public class DifferentialCreateClient {
         // Advances the client-side network speed extrapolation every tick
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post event) -> ClientNetworkSpeeds.onClientTick());
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post event) -> com.diliupengyun.differential_create.client.PortableDockingPreview.tick());
-        if (Boolean.getBoolean("differentialcreate.trainClientSmoke")) {
-            NeoForge.EVENT_BUS.addListener(com.diliupengyun.differential_create.tests.TrainClientSmokeTests::frame);
-            NeoForge.EVENT_BUS.addListener(com.diliupengyun.differential_create.tests.TrainClientSmokeTests::render);
-        }
-        if (Boolean.getBoolean("differentialcreate.loadGaugeClientSmoke"))
-            NeoForge.EVENT_BUS.addListener(com.diliupengyun.differential_create.tests.LoadGaugeClientSmokeTests::frame);
-        if (Boolean.getBoolean("differentialcreate.ejectorClientSmoke"))
-            NeoForge.EVENT_BUS.addListener(com.diliupengyun.differential_create.tests.EjectorClientSmokeTests::frame);
-        if (Boolean.getBoolean("differentialcreate.logisticsClientSmoke"))
-            NeoForge.EVENT_BUS.addListener(com.diliupengyun.differential_create.tests.Create6ClientSmokeTests::frame);
-        if (Boolean.getBoolean("differentialcreate.ponderClientSmoke"))
-            NeoForge.EVENT_BUS.addListener(com.diliupengyun.differential_create.tests.PonderClientSmokeTests::frame);
     }
 }

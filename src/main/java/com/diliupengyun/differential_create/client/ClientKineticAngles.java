@@ -4,11 +4,8 @@ import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntityRenderer;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntityVisual;
 import com.simibubi.create.content.kinetics.simpleRelays.ICogWheel;
-import com.simibubi.create.content.kinetics.transmission.SplitShaftBlockEntity;
 import net.minecraft.client.Minecraft;
-import net.minecraft.core.Direction;
 import net.minecraft.core.Direction.Axis;
-import net.minecraft.world.level.block.entity.BlockEntity;
 
 /** Both rendering paths use the member's assembly-aligned angle and the shader's clock. */
 public final class ClientKineticAngles {
@@ -19,7 +16,7 @@ public final class ClientKineticAngles {
 		return minecraft.levelRenderer.getTicks() + minecraft.getTimer().getGameTimeDeltaPartialTick(false);
 	}
 
-	public static RotationFrame rotationOf(KineticBlockEntity be, float portSpeed, PortRotation port) {
+	public static RotationFrame rotationOf(KineticBlockEntity be) {
 		if (be.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel level) {
 			Double angle = com.diliupengyun.differential_create.client.ponder.PonderKinetics.of(level)
 				.angle(be, net.createmod.catnip.animation.AnimationTickHolder.getPartialTicks(level));
@@ -27,6 +24,12 @@ public final class ClientKineticAngles {
 		}
 		RotationFrame member = ClientTrainKinetics.rotation(be);
 		if (member == null) member = ClientNetworkSpeeds.rotationOf(be);
+		return member;
+	}
+
+	public static RotationFrame rotationOf(KineticBlockEntity be, float portSpeed, PortRotation port) {
+		RotationFrame member = rotationOf(be);
+		if (be.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel) return member;
 		return member == null ? null : port.resolve(member, be.getSpeed(), portSpeed, renderTick());
 	}
 
@@ -55,30 +58,4 @@ public final class ClientKineticAngles {
 			- KineticBlockEntityRenderer.getRotationOffsetForPosition(be, be.getBlockPos(), axis));
 	}
 
-	/**
-	 * A split shaft's rendered face stub belongs to the network on that side.
-	 * Follow the same-axis block the face connects to, so the visible square
-	 * end keeps the neighbour's phase instead of the client render clock.
-	 * Faces without a kinetic neighbour fall back to the block itself.
-	 */
-	public static KineticBlockEntity splitShaftFaceOwner(SplitShaftBlockEntity be, Direction face) {
-		var level = be.getLevel();
-		BlockEntity neighbour = level == null ? null : level.getBlockEntity(be.getBlockPos().relative(face));
-		if (neighbour instanceof KineticBlockEntity kinetic
-			&& KineticBlockEntityRenderer.getRotationAxisOf(kinetic) == KineticBlockEntityRenderer.getRotationAxisOf(be))
-			return kinetic;
-		return be;
-	}
-
-	/** Face-stub radians; before the preview has a rotor, use the static alignment. */
-	public static float splitShaftAngle(SplitShaftBlockEntity be, Direction face) {
-		KineticBlockEntity owner = splitShaftFaceOwner(be, face);
-		float angle = shaftAngleOf(owner);
-		if (!Float.isFinite(angle) && owner != be) angle = shaftAngleOf(be);
-		if (!Float.isFinite(angle)) {
-			Axis axis = KineticBlockEntityRenderer.getRotationAxisOf(be);
-			angle = (float) Math.toRadians(KineticBlockEntityRenderer.getRotationOffsetForPosition(be, be.getBlockPos(), axis));
-		}
-		return angle;
-	}
 }

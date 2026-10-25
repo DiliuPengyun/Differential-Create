@@ -67,7 +67,7 @@ public abstract class MechanicalCrafterBlockEntityMixin implements ShaftWork {
 	private int differentialcreate$shaftTravel(MechanicalCrafterBlockEntity self) {
 		if (!self.getLevel().isClientSide) self.setChanged();
 		if (differentialcreate$event) return differentialcreate$step;
-		return differentialcreate$work.advance(Math.abs(self.getSpeed()));
+        return differentialcreate$work.advance(com.diliupengyun.differential_create.kinetics.PhysicsPreview.travel(self));
 	}
 	@Inject(method = "write", at = @At("RETURN"))
 	private void differentialcreate$write(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {

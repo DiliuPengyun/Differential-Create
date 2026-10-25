@@ -43,7 +43,8 @@ public abstract class BoilerDataMixin implements BoilerAdmission {
 	@org.spongepowered.asm.mixin.injection.Inject(method = "tick", at = @At("HEAD"), cancellable = true)
 	private void differentialcreate$worldAdmission(com.simibubi.create.content.fluids.tank.FluidTankBlockEntity controller,
 		org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
-		if (controller.getLevel() == null || controller.getLevel().isClientSide || controller.isVirtual()) return;
+        if (controller.getLevel() == null || !com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(controller.getLevel())
+            && (controller.getLevel().isClientSide || controller.isVirtual())) return;
 		SteamBoilerWater.tick(controller);
 		ci.cancel();
 	}

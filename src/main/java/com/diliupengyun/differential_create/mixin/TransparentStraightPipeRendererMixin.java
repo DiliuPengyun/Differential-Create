@@ -29,7 +29,7 @@ public abstract class TransparentStraightPipeRendererMixin {
         at = @At("HEAD"), cancellable = true)
     private void differentialcreate$ownedWater(StraightPipeBlockEntity be, float partial, PoseStack poses,
                                                MultiBufferSource buffer, int light, int overlay, CallbackInfo ci) {
-        if (be.isVirtual()) return;
+        if (be.isVirtual() && !com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(be.getLevel())) return;
         ci.cancel();
         var pipe = be.getBehaviour(FluidTransportBehaviour.TYPE);
         if (pipe == null) return;

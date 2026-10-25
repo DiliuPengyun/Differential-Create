@@ -25,6 +25,9 @@ public abstract class OpenEndFluidHandlerMixin extends FluidTank implements Open
     // stock. Only a new real discharge can advance it or place a source block.
     @Unique private FluidStack differentialcreate$discharged = FluidStack.EMPTY;
     @Unique private double differentialcreate$dischargedAmount;
+    @Unique private double differentialcreate$renewableIntake;
+
+    @Override public double differentialcreate$renewableIntake() { return differentialcreate$renewableIntake; }
 
     protected OpenEndFluidHandlerMixin() {
         super(1000);
@@ -43,21 +46,37 @@ public abstract class OpenEndFluidHandlerMixin extends FluidTank implements Open
             : ((OpenEndedPipeAccessor) this$0).differentialcreate$removeFluidFromSpace(true);
     }
 
+    @Unique private boolean differentialcreate$renewable() {
+        var world = this$0.getWorld(); var pos = this$0.getOutputPos();
+        if (world == null || !world.isLoaded(pos)) return false;
+        var old = world.getFluidState(pos);
+        if (!old.isSource() || !FluidHelper.isWater(old.getType()) || world.getBlockState(pos).hasProperty(BlockStateProperties.WATERLOGGED)) return false;
+        var falling = old.createLegacyBlock().setValue(net.minecraft.world.level.block.LiquidBlock.LEVEL, 14);
+        return falling.getFluidState().getType() instanceof com.simibubi.create.foundation.mixin.accessor.FlowingFluidAccessor flow
+            && flow.create$getNewLiquid(world, pos, falling).equals(old);
+    }
+    @Override public int differentialcreate$worldTransferSize() {
+        return differentialcreate$renewable() ? 1 : differentialcreate$worldFluid().getAmount();
+    }
+
     @Override
     public FluidStack differentialcreate$takeWorld(FluidStack filter, int amount, double receivingSpace) {
         if (amount <= 0 || !getFluid().isEmpty()) return FluidStack.EMPTY;
         var offered = differentialcreate$worldFluid();
+        boolean renewable = differentialcreate$renewable();
         if (offered.isEmpty() || offered.getAmount() > getCapacity()
             || filter != null && !FluidStack.isSameFluidSameComponents(offered, filter)
-            || !(receivingSpace >= offered.getAmount())) return FluidStack.EMPTY;
+            || FluidBudget.receiptSpace(
+                renewable ? Math.min(amount, offered.getAmount()) : offered.getAmount(), receivingSpace) != 0) return FluidStack.EMPTY;
         var boundary = (OpenEndedPipeAccessor) this$0;
         var extracted = boundary.differentialcreate$removeFluidFromSpace(false);
         if (extracted.isEmpty()) return FluidStack.EMPTY;
         int taken = Math.min(amount, extracted.getAmount());
+        if (renewable) differentialcreate$renewableIntake += taken;
         // This is a reservation within the receiving network's real capacity,
         // not an additional tank and not a source of pressure.
         int remainder = extracted.getAmount() - taken;
-        if (remainder > 0) super.fill(extracted.copyWithAmount(remainder), FluidAction.EXECUTE);
+        if (!renewable && remainder > 0) super.fill(extracted.copyWithAmount(remainder), FluidAction.EXECUTE);
         boundary.differentialcreate$setPulling(true);
         differentialcreate$clearDischarge();
         return extracted.copyWithAmount(taken);

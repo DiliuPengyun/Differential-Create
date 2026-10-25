@@ -14,6 +14,11 @@ public final class LoadFactor {
     public record Member(double ratio, double speed, double driveTorque, double loadTorque, boolean powered) {}
     private LoadFactor() {}
 
+    /** Remove only cancellation-sized readout noise, without changing physical forces. */
+    public static double resolvedTorque(double value, double scale) {
+        return Double.isFinite(scale) && Math.abs(value) <= 64 * Math.ulp(scale) ? 0 : value;
+    }
+
     public static Reading calculate(List<Member> members, double transmissionLossPower) {
         if (members.isEmpty()) return Reading.UNKNOWN;
         if (!Double.isFinite(transmissionLossPower) || transmissionLossPower < 0) return Reading.UNDEFINED;

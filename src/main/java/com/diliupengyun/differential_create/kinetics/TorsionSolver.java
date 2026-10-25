@@ -76,6 +76,10 @@ public final class TorsionSolver {
     // The physical step already rounds smaller inertial endpoint speeds to zero.
     private static final double EVENT_DIRECTION_SPEED = 1e-9;
     private static final double EVENT_DIRECTION_TARGET = 1.5e-9;
+    // A squared residual this small is far below any physical torque. A cancellation
+    // RHS can otherwise demand an impossible relative tolerance (norm 3e-35 against
+    // 1e-59) and abort the server on a numerically zero increment.
+    private static final double LINEAR_NORM_FLOOR = 1e-24;
     private record Step(double[] speed, double[] twist, double[] velocity, double[] torque,
                         boolean[] slipping, int broken) {}
     private static final class ConvergenceFailure extends RuntimeException {
@@ -701,6 +705,15 @@ public final class TorsionSolver {
                                        double h, SpeedFrame frame, MatrixGraph matrix) {
         int n = bodies.size(), m = links.size();
         double[] angle = new double[n], travel = new double[n];
+        // Only an unstressed, compatible free component can coast without a solve.
+        if (masslessCoasting(bodies, links, previous, twist)) {
+            double[] speed = previous.clone();
+            for (int i = 0; i < n; i++) {
+                angle[i] = h * speed[i];
+                travel[i] = Math.abs(angle[i]);
+            }
+            return new Result(h, speed, twist.clone(), angle, travel, new double[m], new boolean[m], -1);
+        }
         if (m == 0 && bodies.stream().noneMatch(Body::nonlinearDrive)) {
             double[] speed = new double[n];
             for (int i = 0; i < n; i++) {
@@ -933,6 +946,7 @@ public final class TorsionSolver {
         final double[] ratio, absoluteRatio;
         final Workspace workspace;
         final TreeFactorization tree;
+        final FreeTree freeTree;
         final boolean hasWork;
         private final List<Body> bodies;
         private TreeFactorization recoveryTree;
@@ -950,6 +964,7 @@ public final class TorsionSolver {
                 ratio[e] = link.ratio; absoluteRatio[e] = Math.abs(link.ratio);
             }
             tree = accelerated && !hasWork ? TreeFactorization.create(bodies, a, b, ratio) : null;
+            freeTree = FreeTree.create(bodies, links);
         }
         TreeFactorization recoveryTree() {
             if (!recoveryChecked) {
@@ -957,6 +972,80 @@ public final class TorsionSolver {
                 recoveryChecked = true;
             }
             return recoveryTree;
+        }
+    }
+
+    /** An unforced massless tree has zero torque on every edge, by leaf balance.
+     * Solve its edge strains before recovering node velocities. Forming B K B^T
+     * instead loses the soft equations beside very stiff ones; subtracting the
+     * resulting large node velocities can also erase a small spring's motion.
+     * The root's free speed is a gauge choice, not an artificial inertial anchor. */
+    private record FreeTree(int[] parent, int[] edge, int[] order) {
+        static FreeTree create(List<Body> bodies, List<Link> links) {
+            int n = bodies.size();
+            if (n < 2 || links.size() != n - 1 || !bodies.stream().allMatch(TorsionSolver::passiveMassless)) return null;
+            var adjacent = new ArrayList<List<Integer>>(n);
+            for (int i = 0; i < n; i++) adjacent.add(new ArrayList<>());
+            for (int e = 0; e < links.size(); e++) {
+                Link link = links.get(e);
+                if (link.work || !(link.friction > 0) || !(link.stiffness > 0) || !Double.isFinite(link.stiffness)
+                    || !(link.damping >= 0) || !Double.isFinite(link.damping)
+                    || link.ratio == 0 || !Double.isFinite(link.ratio)) return null;
+                adjacent.get(link.a).add(e); adjacent.get(link.b).add(e);
+            }
+            int[] parent = new int[n], edge = new int[n], order = new int[n];
+            java.util.Arrays.fill(parent, -1);
+            parent[0] = 0;
+            int count = 1;
+            for (int head = 0; head < count; head++) {
+                int a = order[head];
+                for (int e : adjacent.get(a)) {
+                    Link link = links.get(e);
+                    int b = link.a == a ? link.b : link.a;
+                    if (head > 0 && e == edge[a]) continue;
+                    if (parent[b] >= 0) return null;
+                    parent[b] = a; edge[b] = e; order[count++] = b;
+                }
+            }
+            return count == n ? new FreeTree(parent, edge, order) : null;
+        }
+
+        Step step(List<Body> bodies, List<Link> links, Workspace work, double[] previous,
+                  double[] origin, double[] twist, double h) {
+            // Prepared.updateDrives may change an originally passive capture.
+            if (!bodies.stream().allMatch(TorsionSolver::passiveMassless)) return null;
+            int n = bodies.size(), m = links.size(), broken = -1;
+            double[] velocity = new double[n], speed = new double[n], nextTwist = new double[m], torque = new double[m];
+            double[] rates = work.elasticRates, increment = work.initialIncrement, relative = work.relative;
+            boolean[] slipping = new boolean[m];
+            for (int e = 0; e < m; e++) {
+                Link link = links.get(e);
+                double relaxationTime = link.damping / link.stiffness;
+                rates[e] = -twist[e] / (relaxationTime + h / 2);
+                nextTwist[e] = Math.fma(h, rates[e], twist[e]);
+                if (!Double.isFinite(rates[e]) || !Double.isFinite(nextTwist[e]))
+                    throw new ConvergenceFailure("Non-finite free massless strain");
+                relative[e] = link.ratio * origin[link.a] - origin[link.b];
+                // Midpoint torque is zero, but endpoint stress can still break the shaft.
+                double peak = Math.abs(link.stiffness * nextTwist[e] + link.damping * rates[e]);
+                if (peak >= link.strength && broken < 0) broken = e;
+            }
+            velocity[0] = origin[0];
+            for (int k = 1; k < n; k++) {
+                int b = order[k], a = parent[b], e = edge[b];
+                Link link = links.get(e);
+                velocity[b] = link.b == b ? Math.fma(link.ratio, velocity[a], -rates[e])
+                    : (velocity[a] + rates[e]) / link.ratio;
+            }
+            for (int i = 0; i < n; i++) {
+                if (!Double.isFinite(velocity[i])) throw new ConvergenceFailure("Non-finite free massless velocity");
+                speed[i] = Math.abs(velocity[i]) < 1e-9 ? 0 : velocity[i];
+                increment[i] = velocity[i] - origin[i];
+            }
+            java.util.Arrays.fill(work.sticking, false);
+            checkEnergy(bodies, links, previous, speed, twist, nextTwist, velocity, increment, relative,
+                torque, rates, work.sticking, work.signs, h, work.forces);
+            return new Step(speed, nextTwist, velocity, torque, slipping, broken);
         }
     }
 
@@ -1078,6 +1167,19 @@ public final class TorsionSolver {
         return body.inertia == 0 && body.drive == 0 && body.damping == 0 && body.load == 0 && body.drag == 0;
     }
 
+    /** Preserve the free speed selected by topology without bypassing elastic forces
+     * or structural strength. Zero inertia alone does not imply zero stored stress. */
+    private static boolean masslessCoasting(List<Body> bodies, List<Link> links, double[] speed, double[] twist) {
+        if (!bodies.stream().allMatch(TorsionSolver::passiveMassless)) return false;
+        for (double value : speed) if (!Double.isFinite(value)) return false;
+        for (int e = 0; e < links.size(); e++) {
+            Link link = links.get(e);
+            if (link.work || link.friction != Double.POSITIVE_INFINITY || link.damping != 0
+                || !(link.strength > 0) || twist[e] != 0 || link.ratio * speed[link.a] != speed[link.b]) return false;
+        }
+        return true;
+    }
+
     private static SpeedFrame speedFrame(int n, List<Link> links, boolean[] anchors, double[] weights) {
         int[] roots = new int[n], queue = new int[n];
         double[] ratios = new double[n];
@@ -1162,6 +1264,18 @@ public final class TorsionSolver {
                                      boolean recoverSpeeds, SpeedFrame frame, MatrixGraph matrix, IntegrationCache cache) {
         int n = bodies.size(), m = links.size();
         if (links.stream().anyMatch(Link::work)) return integrateWork(bodies, links, initialSpeed, initialTwist, duration, maxStep, locateBreak, recoverSpeeds, frame, matrix);
+        // Share the event path's guard: preloaded or incompatible shafts still need
+        // torque balance, energy accounting and fracture localization.
+        if (masslessCoasting(bodies, links, initialSpeed, initialTwist)) {
+            double[] speed = initialSpeed.clone();
+            double[] angle = new double[n], travel = new double[n];
+            for (int i = 0; i < n; i++) {
+                angle[i] = duration * speed[i];
+                travel[i] = Math.abs(angle[i]);
+            }
+            return new Result(duration, speed, initialTwist.clone(), angle, travel,
+                new double[m], new boolean[m], -1);
+        }
         var prefix = cache.prefix(duration, maxStep);
         double[] speed = prefix == null ? initialSpeed.clone() : prefix.speed.clone();
         double[] twist = prefix == null ? initialTwist.clone() : prefix.twist.clone();
@@ -1240,6 +1354,10 @@ public final class TorsionSolver {
 
     private static Step step(List<Body> bodies, List<Link> links, MatrixGraph matrix, double[] previous, double[] origin,
                              double[] twist, double h) {
+        if (matrix.freeTree != null) {
+            Step free = matrix.freeTree.step(bodies, links, matrix.workspace, previous, origin, twist, h);
+            if (free != null) return free;
+        }
         int n = bodies.size(), m = links.size();
         Workspace work = matrix.workspace;
         double[] increment = work.initialIncrement, v = work.velocity, coefficients = work.coefficients, constants = work.constants;
@@ -1576,7 +1694,7 @@ public final class TorsionSolver {
             rz = nextRz;
         }
         checked = residual(matrix, weights, base, fixed, hasFixed, diagonal, b, bMagnitude, x, r, z, scale, ap, magnitude);
-        if (checked.converged) return x;
+        if (checked.converged || checked.norm <= LINEAR_NORM_FLOOR) return x;
         if (accepted != null) return accepted;
         // At a very short fluid event, rotor and massless-port diagonals can
         // differ by over 10^20. CG may stagnate even on a tree. Its nonnegative
@@ -1590,7 +1708,7 @@ public final class TorsionSolver {
                 recovery.solve(r, p);
                 for (int i = 0; i < n; i++) x[i] += p[i];
                 checked = residual(matrix, weights, base, fixed, hasFixed, diagonal, b, bMagnitude, x, r, z, scale, ap, magnitude);
-                if (checked.converged) return x;
+                if (checked.converged || checked.norm <= LINEAR_NORM_FLOOR) return x;
             }
         }
         throw new ConvergenceFailure("Torsion linear solve did not converge for " + n + " nodes: norm=" + checked.norm

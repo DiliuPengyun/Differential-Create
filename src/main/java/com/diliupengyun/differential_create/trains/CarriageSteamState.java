@@ -88,7 +88,7 @@ public final class CarriageSteamState {
             }
         }
         carriage.forEachPresentEntity(entity -> {
-            if (entity.getContraption() instanceof CarriageContraption cc) apply(cc, gear, true,
+            if (entity.getContraption() instanceof CarriageContraption cc) apply(cc, gear, !com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(entity.level()),
                 carriage.train != null && TrainPhysics.hasLever(carriage.train));
         });
     }

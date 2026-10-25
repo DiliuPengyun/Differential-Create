@@ -8,8 +8,8 @@ import java.util.List;
  * Phase inventories are transported separately by ordered queues, never compressed. */
 public final class QueuedFluidSolver {
     public static final int CONTACT_PASSES = 3;
-    /** Rotation and cached flow use the positive world axis; the block arrow
-     * independently selects the pump's pressure/reaction polarity. */
+    /** Flow uses the positive world axis; the block facing selects inlet/outlet.
+     * Shaft rotation changes the magnitude of pumping, never its direction. */
     public record Cell(double capacity, double height, double density, double gravityDensity, double rpm, double pumpFlow, int pumpPolarity) {
         public Cell(double capacity, double height, double density, double gravityDensity, double rpm, double pumpFlow) {
             this(capacity, height, density, gravityDensity, rpm, pumpFlow, 1);
@@ -87,21 +87,28 @@ public final class QueuedFluidSolver {
                 if (!changed) break;
                 if (pass == CONTACT_PASSES - 1) return stationary(count, links.size());
             }
-            double[] outgoing = new double[count]; double scale = 1;
-            for (int e = 0; e < flow.length; e++) {
-                var l = links.get(e); double q = flow[e], size = cells.get(l.from).capacity;
-                if (l.to < count) size = Math.min(size, cells.get(l.to).capacity);
-                if (q != 0) scale = Math.min(scale, .5 * size / Math.abs(q));
-                if (q > 0) outgoing[l.from] += q; else if (l.to < count) outgoing[l.to] -= q;
-            }
-            // A parcel crosses at most one cell per tick, even at a six-way junction.
-            for (int n = 0; n < count; n++) if (outgoing[n] > 0)
-                scale = Math.min(scale, .5 * cells.get(n).capacity / (outgoing[n] * minutes / RotationMath.TICK_MINUTES));
-            for (int e = 0; e < flow.length; e++) flow[e] *= Math.max(0, Math.min(1, scale));
             return finish(flow, cells, links, solves);
         } catch (IdealFluidSolver.WorkBudgetException | IdealFluidSolver.ConstraintConvergenceException | IdealFluidSolver.WorkConvergenceException deferred) {
             return stationary(count, links.size());
         }
+    }
+    /** Bound the duration of a parcel transfer, never the physical flow.
+     * All simultaneous exits share the donor's stock. Substeps permit a parcel
+     * to cross multiple cells in a game tick without overdrawing any one cell. */
+    public static double transportMinutes(List<Cell> cells, List<Link> links, double[] flow, double maximum) {
+        if (!(maximum > 0) || !Double.isFinite(maximum) || links.size() != flow.length)
+            throw new IllegalArgumentException("Invalid transport interval");
+        double[] outgoing = new double[cells.size()];
+        for (int e = 0; e < flow.length; e++) {
+            double q = flow[e]; var link = links.get(e);
+            if (!Double.isFinite(q)) throw new IllegalArgumentException("Non-finite transport flow");
+            if (q > 0) outgoing[link.from] += q;
+            else if (link.to < cells.size()) outgoing[link.to] -= q;
+        }
+        double duration = maximum;
+        for (int n = 0; n < outgoing.length; n++) if (outgoing[n] > 0)
+            duration = Math.min(duration, cells.get(n).capacity / outgoing[n] * RotationMath.TICK_MINUTES);
+        return duration;
     }
     /** A full, incompressible blind branch has exactly zero through flow.
      * Remove it before projection, including when a valve closes on old motion;
@@ -115,7 +122,29 @@ public final class QueuedFluidSolver {
             edge[at] = e; next[at] = first[l.from]; first[l.from] = at; degree[l.from]++;
             edge[at + 1] = e; next[at + 1] = first[l.to]; first[l.to] = at + 1; degree[l.to]++;
         }
-        int[] queue = new int[cells]; int head = 0, tail = 0;
+        int[] queue = new int[cells];
+        boolean[] seen = new boolean[cells];
+        // A full component with just one external connection cannot exchange
+        // volume there, even if it contains cycles. Eliminate that exact
+        // constraint before projection; a cancellation residue must not reserve
+        // a whole native mB. Internal circulation remains unconstrained.
+        for (int start = 0; start < cells; start++) if (!seen[start]) {
+            int head = 0, tail = 0, ports = 0, onlyPort = -1;
+            queue[tail++] = start; seen[start] = true;
+            while (head < tail) {
+                if ((head & 127) == 0) budget(deadline);
+                int n = queue[head++];
+                for (int at = first[n]; at >= 0; at = next[at]) if (active[edge[at]]) {
+                    int e = edge[at]; var l = links.get(e); int other = l.from == n ? l.to : l.from;
+                    if (other >= cells) { ports++; onlyPort = e; }
+                    else if (!seen[other]) { seen[other] = true; queue[tail++] = other; }
+                }
+            }
+            if (ports == 1) {
+                var l = links.get(onlyPort); active[onlyPort] = false; degree[l.from]--; degree[l.to]--;
+            }
+        }
+        int head = 0, tail = 0;
         for (int n = 0; n < cells; n++) if (degree[n] == 1) queue[tail++] = n;
         while (head < tail) {
             if ((head & 127) == 0) budget(deadline);
@@ -128,9 +157,7 @@ public final class QueuedFluidSolver {
         }
     }
     private static double coupling(Cell c, double through) {
-        // One signed coupling supplies both fluid force and shaft reaction.
-        // In particular its finite standstill value needs no remembered sign.
-        return c.pumpPolarity * IdealFluidSolver.coupling(c.material(), c.rpm, through);
+        return c.pumpPolarity * IdealFluidSolver.coupling(c.material(), c.rpm, c.pumpPolarity * through);
     }
     private static double pumpSlope(Cell c) {
         return -c.material().pumpScale() / IdealFluidSolver.REFERENCE_RPM / IdealFluidSolver.REFERENCE_FLOW * Math.abs(c.rpm);
@@ -144,7 +171,7 @@ public final class QueuedFluidSolver {
         }
         for (int n = 0; n < cells.size(); n++) {
             var c = cells.get(n); double coefficient = coupling(c, through[n]);
-            torque[n] = -coefficient * through[n];
+            torque[n] = IdealFluidSolver.pumpReaction(c.material(), c.rpm, c.pumpPolarity * through[n]);
             head[n] = IdealFluidSolver.pressurePa(coefficient * c.rpm) / (1000 * IdealFluidSolver.GRAVITY);
         }
         return new Result(flow, torque, head, solves);

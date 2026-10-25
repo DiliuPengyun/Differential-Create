@@ -9,6 +9,19 @@ import net.minecraft.world.phys.Vec3;
 
 /** World state changes happen only on accepted poses or game ticks, never in a solver trial. */
 public final class DockingState {
+    /** Supplies measured preview poses and real storage callbacks to the same state machine. */
+    public interface Preview {
+        boolean live();
+        boolean valid();
+        void open();
+        void close();
+    }
+    private Preview preview;
+    public void preview(Preview actor, double axial) {
+        if (preview != null || context != null) return;
+        preview = actor; managed = true; distance = (float) Math.clamp(axial - 1, 0, 2);
+        ticks = stable = 0; phase = Phase.PREPARING; failure = "none";
+    }
     public enum Phase { IDLE, PREPARING, BRAKING, LOCKING, TRANSFER, RETRACTING }
     public static final int ANIMATION = 4;
     public final PortableStorageInterfaceBlockEntity owner;
@@ -48,14 +61,16 @@ public final class DockingState {
     private boolean loaded() {
         var level = owner.getLevel();
         return level != null && !owner.isRemoved()
-            && level.getChunkSource().hasChunk(owner.getBlockPos().getX() >> 4, owner.getBlockPos().getZ() >> 4)
+            && (com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(level)
+                || level.getChunkSource().hasChunk(owner.getBlockPos().getX() >> 4, owner.getBlockPos().getZ() >> 4))
             && level.getBlockEntity(owner.getBlockPos()) == owner;
     }
     public boolean permission() {
         if (!loaded() || owner.isPowered() || owner.getLevel().hasNeighborSignal(owner.getBlockPos())) return false;
         if (!managed) return bridge().differentialcreate$nativePermission();
-        return phase == Phase.TRANSFER && context != null && live() && contact
-            && (releaseMode == 1 || PortableDocking.time(owner.getLevel()) < deadline) && PortableDocking.validGeometry(this);
+        return phase == Phase.TRANSFER && (context != null || preview != null) && live() && contact
+            && (releaseMode == 1 || PortableDocking.time(owner.getLevel()) < deadline)
+            && (preview != null ? preview.valid() : PortableDocking.validGeometry(this));
     }
     public DockingSession session() { return new DockingSession(this, generation, storageEntity); }
     public boolean valid(DockingSession session) {
@@ -84,11 +99,12 @@ public final class DockingState {
         changed(); return true;
     }
     private boolean live() {
+        if (preview != null) return preview.live();
         var entity = context == null ? null : context.contraption.entity;
         return entity != null && entity.isAlive() && entity.getContraption() == context.contraption && !context.disabled;
     }
     public void observe(Vec3 position, double rpm, double velocity, boolean functional, double rating) {
-        if (context == null) return;
+        if (context == null && preview == null) return;
         point = position; speed = Math.abs(rpm); pointSpeed = Math.abs(velocity);
         if (!live()) { release("missing"); return; }
         if (phase == Phase.PREPARING && ticks >= ANIMATION && functional) {
@@ -115,10 +131,11 @@ public final class DockingState {
     }
     public void tick() {
         var level = owner.getLevel();
-        if (level == null || level.isClientSide || level.tickRateManager().isFrozen() || lastTick == PortableDocking.time(level)) return;
+        if (level == null || level.isClientSide && !com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(level)
+            || level.tickRateManager().isFrozen() || lastTick == PortableDocking.time(level)) return;
         lastTick = PortableDocking.time(level);
         if (!managed) return;
-        if (context != null && (!live() || !loaded())) { release("missing"); return; }
+        if ((context != null || preview != null) && (!live() || !loaded())) { release("missing"); return; }
         if (owner.isPowered() && phase != Phase.IDLE && phase != Phase.RETRACTING) cancel();
         ticks++;
         switch (phase) {
@@ -136,7 +153,7 @@ public final class DockingState {
                     deadline = lastTick + remaining;
                     restoreEntity = null;
                     opening = true;
-                    try { bridge().differentialcreate$openStorage(context.contraption, distance); }
+                    try { if (preview != null) preview.open(); else bridge().differentialcreate$openStorage(context.contraption, distance); }
                     finally { opening = false; }
                     changed();
                 }
@@ -153,12 +170,14 @@ public final class DockingState {
         if (!managed || phase == Phase.IDLE || phase == Phase.RETRACTING) return;
         retract();
         bridge().differentialcreate$closeStorage();
+        if (preview != null) preview.close();
     }
     private void retract() {
         generation++; storageEntity = null; phase = Phase.RETRACTING; ticks = 0;
         changed();
     }
     public void release(String reason) {
+        if (preview != null) { preview.close(); preview = null; }
         if (context != null) {
             if (reason.equals("none")) {
                 var drive = com.diliupengyun.differential_create.kinetics.ActorDrive.of(context);
@@ -186,7 +205,7 @@ public final class DockingState {
         release("missing");
     }
     public void invalidate() { suspend(); }
-    public void nativeConnection() { if (context == null) { managed = false; phase = Phase.IDLE; contact = false; torque = 0; } }
+    public void nativeConnection() { if (context == null && preview == null) { managed = false; phase = Phase.IDLE; contact = false; torque = 0; } }
     public void changed() {
         var level = owner.getLevel();
         if (level == null || level.isClientSide || owner.isRemoved()) return;

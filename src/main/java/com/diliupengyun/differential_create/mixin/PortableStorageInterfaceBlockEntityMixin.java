@@ -24,6 +24,8 @@ public abstract class PortableStorageInterfaceBlockEntityMixin implements Portab
     @Shadow protected abstract void stopTransferring();
     @Shadow protected abstract Integer getTransferTimeout();
     @Unique private DockingState differentialcreate$docking;
+    @Unique private DockingState differentialcreate$animationSource;
+    @Unique private long differentialcreate$animationTick = Long.MIN_VALUE;
     @Override public DockingState differentialcreate$docking() {
         if (differentialcreate$docking == null) differentialcreate$docking = new DockingState((PortableStorageInterfaceBlockEntity) (Object) this);
         return differentialcreate$docking;
@@ -42,34 +44,58 @@ public abstract class PortableStorageInterfaceBlockEntityMixin implements Portab
         return !powered && connectedEntity != null && connectedEntity.isAlive() && transferTimer >= 4 && transferTimer <= getTransferTimeout() + 4;
     }
     @Override public void differentialcreate$animate(float progress, float span) {
-        distance = span; connectionAnimation.setValue(progress);
+        distance = span;
+        var level = ((PortableStorageInterfaceBlockEntity) (Object) this).getLevel();
+        long tick = level == null ? Long.MIN_VALUE : com.diliupengyun.differential_create.kinetics.PhysicsPreview.time(level);
+        // A phase can change more than once in one accepted tick. Preserve the
+        // preceding tick's pose instead of repeatedly advancing the interpolation start.
+        if (level == null || tick != differentialcreate$animationTick) connectionAnimation.setValue(progress);
+        else connectionAnimation.setValueNoUpdate(progress);
+        differentialcreate$animationTick = tick;
         transferTimer = differentialcreate$docking().phase == DockingState.Phase.TRANSFER ? getTransferTimeout() + 4 : 0;
+    }
+    @Override public void differentialcreate$previewAnimation(DockingState source) {
+        if (source != null && !com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(
+            ((PortableStorageInterfaceBlockEntity) (Object) this).getLevel()))
+            throw new IllegalStateException("Shared render animation is only valid in a physical preview");
+        differentialcreate$animationSource = source;
     }
     @Inject(method = "addBehaviours", at = @At("TAIL"))
     private void differentialcreate$settings(List<BlockEntityBehaviour> behaviours, CallbackInfo ci) {
         var owner = (PortableStorageInterfaceBlockEntity) (Object) this;
-        behaviours.add(new DockingSettingBehaviour(owner, true)); behaviours.add(new DockingSettingBehaviour(owner, false));
+        behaviours.add(DockingSettingBehaviour.output(owner)); behaviours.add(DockingSettingBehaviour.release(owner));
     }
     @Inject(method = "initialize", at = @At("TAIL"))
     private void differentialcreate$register(CallbackInfo ci) { PortableDocking.register(differentialcreate$docking()); }
     @Inject(method = "tick", at = @At(value = "INVOKE", target = "Lcom/simibubi/create/foundation/blockEntity/SmartBlockEntity;tick()V", shift = At.Shift.AFTER), cancellable = true)
     private void differentialcreate$tick(CallbackInfo ci) {
+        // PonderDocking ticks the accepted contact once, then publishes both heads.
+        // The moving render template has no native connection timer of its own.
+        if (differentialcreate$animationSource != null) { ci.cancel(); return; }
         var state = differentialcreate$docking(); PortableDocking.register(state);
-        if (!state.managed || state.owner.isVirtual()) return;
+        if (!state.managed || state.owner.isVirtual()
+            && !com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(state.owner.getLevel())) return;
         ci.cancel();
-        if (state.owner.getLevel().isClientSide) state.clientTick(); else state.tick();
+        if (state.owner.getLevel().isClientSide && !com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(state.owner.getLevel())) state.clientTick(); else state.tick();
         differentialcreate$animate(state.extension(), state.distance());
     }
     @Inject(method = "canTransfer", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$permission(CallbackInfoReturnable<Boolean> cir) { cir.setReturnValue(differentialcreate$docking().permission()); }
     @Inject(method = "isConnected", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$connected(CallbackInfoReturnable<Boolean> cir) {
+        if (differentialcreate$animationSource != null) {
+            cir.setReturnValue(differentialcreate$animationSource.phase == DockingState.Phase.TRANSFER);
+            return;
+        }
         var state = differentialcreate$docking();
         if (state.managed) cir.setReturnValue(state.owner.getLevel() != null && state.owner.getLevel().isClientSide ? state.phase == DockingState.Phase.TRANSFER : state.permission());
         else if (powered) cir.setReturnValue(false);
     }
     @Inject(method = "isTransferring", at = @At("HEAD"), cancellable = true)
-    private void differentialcreate$transferring(CallbackInfoReturnable<Boolean> cir) { if (differentialcreate$docking().managed) cir.setReturnValue(differentialcreate$docking().phase == DockingState.Phase.TRANSFER); }
+    private void differentialcreate$transferring(CallbackInfoReturnable<Boolean> cir) {
+        var state = differentialcreate$animationSource != null ? differentialcreate$animationSource : differentialcreate$docking();
+        if (state.managed) cir.setReturnValue(state.phase == DockingState.Phase.TRANSFER);
+    }
     @Inject(method = "startTransferringTo", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$session(Contraption contraption, float distance, CallbackInfo ci) {
         var state = differentialcreate$docking();

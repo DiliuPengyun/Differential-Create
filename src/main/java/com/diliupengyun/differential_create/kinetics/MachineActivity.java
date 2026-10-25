@@ -72,13 +72,14 @@ public final class MachineActivity {
 
 	/** Keep Create's rated stress value separate from this tick's physical torque. */
 	public static float impact(KineticBlockEntity be) {
+		if (be instanceof IPumpDynamics pump) return (float) Math.abs(pump.differentialcreate$torque());
 		if (ContraptionPhysics.manages(be)) return (float) ContraptionPhysics.workTorque(be);
 		return manages(be) && !active(be) ? 0 : Math.max(0, be.calculateStressApplied());
 	}
 
 	/** Actual sustained shaft resistance at this speed; accelerating inertia is separate. */
 	public static double loadTorque(KineticBlockEntity be, double speed) {
-		if (be instanceof IPumpDynamics pump) return Math.max(0, pump.differentialcreate$torque() * Math.signum(speed));
+		if (be instanceof IPumpDynamics pump) return Math.abs(pump.differentialcreate$torque());
 		double impact = be instanceof CrushingWheelBlockEntity ? 0 : impact(be);
 		return (be instanceof EncasedFanBlockEntity ? 0 : impact) + quadraticDrag(be) * speed * speed;
 	}

@@ -37,7 +37,7 @@ public final class ContraptionActorWork implements ShaftWork {
 	public static ContraptionActorWork of(MovementContext context) { return ((IMovementWork) context).differentialcreate$actorWork(); }
 	MovementContext context() { return context; }
 	public static boolean supported(MovementContext context) {
-		return !context.world.isClientSide && ActorDrive.of(context) != null;
+		return (!context.world.isClientSide || PhysicsPreview.enabled(context.world)) && ActorDrive.of(context) != null;
 	}
 	public boolean pending() { return MovingDeployerWork.supported(context) ? hand().pending() : context.data.contains(JOB); }
 	public boolean firing() { return firing; }

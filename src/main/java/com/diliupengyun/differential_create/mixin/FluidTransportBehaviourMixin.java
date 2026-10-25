@@ -61,6 +61,11 @@ public abstract class FluidTransportBehaviourMixin implements IPipeDynamics {
     @Inject(method = "tick", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$physicalTick(CallbackInfo ci) {
         var self = (FluidTransportBehaviour) (Object) this;
+        if (com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(self.getWorld())) {
+            differentialcreate$state.tickVisual();
+            FluidKinetics.register(self);
+            ci.cancel(); return;
+        }
         if (self.getWorld().isClientSide) { differentialcreate$state.tickVisual(); return; }
         if (self.blockEntity.isVirtual()) return;
         FluidKinetics.register(self);

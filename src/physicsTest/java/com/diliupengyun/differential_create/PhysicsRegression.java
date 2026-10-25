@@ -5,7 +5,6 @@ import com.diliupengyun.differential_create.kinetics.ClutchControl;
 import com.diliupengyun.differential_create.kinetics.ClutchCoupling;
 import com.diliupengyun.differential_create.kinetics.ClutchCoupling.Shaft;
 import com.diliupengyun.differential_create.kinetics.WorkAccumulator;
-import com.diliupengyun.differential_create.kinetics.FanProcessingRate;
 
 /** Independent analytical expectations, runnable without Minecraft or a test framework. */
 public final class PhysicsRegression {
@@ -15,6 +14,8 @@ public final class PhysicsRegression {
 		CrushingPairRegression.run();
 		ClutchEngagementRegression.run();
 		SolverPrecisionRegression.run();
+		MasslessNetworkRegression.run();
+		MasslessTopologyRegression.run();
 		SnapshotRegression.run();
 		BoundarySearchRegression.run();
 		SequencerRegression.run();
@@ -32,6 +33,7 @@ public final class PhysicsRegression {
 		MacroFluidRegression.run();
 		FluidPartitionRegression.run();
 		QueuedFluidRegression.run();
+		QueuedFluidRateRegression.run();
 		PumpDirectionRegression.run();
 		LoadFactorRegression.run();
 		LoadGaugeRegression.run();
@@ -42,12 +44,6 @@ public final class PhysicsRegression {
 		ActorContactRegression.run();
 		contraptionGeometry();
 		ContraptionShadowRegression.run();
-		near(0, FanProcessingRate.at(0), 0, "stopped fan grants no processing");
-		near(1, FanProcessingRate.at(64), 0, "fan reference throughput");
-		near(1.6, FanProcessingRate.at(128), 1e-12, "fan throughput has diminishing returns");
-		near(FanProcessingRate.at(16), FanProcessingRate.at(-16), 0, "flow magnitude controls processing");
-		near(0, FanProcessingRate.at(Double.NaN), 0, "invalid fan speed grants no processing");
-		near(4, FanProcessingRate.at(1e12), 1e-8, "high-speed fan approaches finite throughput");
 		near(1024, ClutchControl.torqueLimit(0), 0, "unpowered clutch retains full torque capacity");
 		near(0, ClutchControl.torqueLimit(15), 0, "full redstone completely releases the clutch");
 		near(1024.0 / 15, ClutchControl.torqueLimit(14), 1e-12, "weakest engagement still transfers limited torque");

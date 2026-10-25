@@ -133,7 +133,7 @@ public final class TrainPhysics {
     }
     public static void advance(Train train) {
         var s = state(train); Level level = s.level;
-        if (level == null || level.isClientSide) return;
+        if (level == null || level.isClientSide && !com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(level)) return;
         var steam = TrainSteamConnections.resolve(train);
         s.ticks++; s.mass = 0; double gradeMass = 0;
         train.fuelTicks = 0;
@@ -278,6 +278,9 @@ public final class TrainPhysics {
                 var e = cs.engines.get(motor.pos()); e.shift(0); e.stallTorque = e.power = 0; active.add(e);
             }
         }
+        if (level instanceof com.diliupengyun.differential_create.kinetics.PhysicsPreview preview) {
+            var boundary = preview.differentialcreate$trainBoundary(train); if (boundary != null) active.add(boundary);
+        }
         var motion = TrainMechanics.advance(train.speed * 20, s.mass, TrainAerodynamics.AIR_COEFFICIENT * frontalArea(train),
             s.grade, brake, active, TrainMechanics.TICK_SECONDS);
         train.speed = motion.speed() / 20;
@@ -300,7 +303,7 @@ public final class TrainPhysics {
         for (var c : train.carriages) { var cs = carriage(c); cs.wheelTurns += s.distance / (2 * Math.PI * TrainMechanics.WHEEL_RADIUS); cs.apply(c, s.gear); }
         train.speedBeforeStall = null; train.manualTick = false;
         s.direction = 0; s.brake = false; s.manualCommand = false; s.navigationCommand = false; s.neutralRev = false; s.parkingRequested = false; s.navigationDistance = Double.POSITIVE_INFINITY;
-        TrainStatePayload.send(train);
+        if (!level.isClientSide) TrainStatePayload.send(train);
     }
     private static int inputDirection(TrainMechanics.Engine engine, double driveRatio, double ratio, int command, boolean neutralRev) {
         return neutralRev ? engine.omega == 0 ? (int) Math.signum(driveRatio) : (int) Math.signum(engine.omega)

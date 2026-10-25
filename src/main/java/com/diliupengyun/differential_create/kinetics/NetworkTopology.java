@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.diliupengyun.differential_create.DifferentialCreate;
 import com.diliupengyun.differential_create.mixin.RotationPropagatorInvoker;
 import com.diliupengyun.differential_create.mixin.TorquePropagatorAccessor;
 import com.simibubi.create.content.kinetics.KineticNetwork;
@@ -31,6 +32,13 @@ public final class NetworkTopology {
 	private static final Map<Level, Set<KineticBlockEntity>> pending = new LinkedHashMap<>();
 	private static final Comparator<KineticBlockEntity> ORDER = Comparator
 		.comparing((KineticBlockEntity be) -> !be.isSource()).thenComparing(KineticBlockEntity::getBlockPos);
+	private static final boolean AUDIT = Boolean.getBoolean("differentialcreate.topologyAudit");
+	private static final Map<Level, EnergyAudit> energyAudits = new HashMap<>();
+	/** Session diagnostics. Losses are dissipation, never rotor kinetic energy or useful work. */
+	public record EnergyAudit(double projectionLoss, double fractureLoss, long projections, long fractures) {}
+	public static EnergyAudit energyAudit(Level level) {
+		return energyAudits.getOrDefault(level, new EnergyAudit(0, 0, 0, 0));
+	}
 	private static boolean installing;
 	private static boolean probeClutches;
 
@@ -69,7 +77,7 @@ public final class NetworkTopology {
 		}
 	}
 
-	public static void clear() { pending.clear(); }
+	public static void clear() { pending.clear(); energyAudits.clear(); }
 
 	private static List<BlockPos> locations(KineticBlockEntity be) {
 		List<BlockPos> positions = new ArrayList<>();
@@ -176,10 +184,12 @@ public final class NetworkTopology {
 					edges.add(new Edge(be, next, ratio, separatingClutch(be, next)));
 			}
 		}
-		// Network membership and nominal ratios are metadata. Never project physical rotor speeds.
+		// Network membership and nominal ratios are metadata. Only complete
+		// free rigid assemblies qualify for the initial-condition projection.
 		for (Edge edge : edges) {
 			Group a = groups.get(edge.a), b = groups.get(edge.b);
-			if (a == b) continue;
+			if (a == b)
+				continue;
 			double q = a.ratios.get(edge.a) * edge.ratio / b.ratios.get(edge.b);
 			if (ORDER.compare(a.anchor, b.anchor) > 0) {
 				Group swap = a; a = b; b = swap; q = 1 / q;
@@ -191,6 +201,100 @@ public final class NetworkTopology {
 				a.ratios.put(member.getKey(), (float) (member.getValue() * q));
 				groups.put(member.getKey(), a);
 			}
+		}
+		for (Edge edge : edges) {
+			Group group = groups.get(edge.a);
+			if (group == null) continue;
+			if (edge.clutch != null || edge.a instanceof ClutchBlockEntity || edge.b instanceof ClutchBlockEntity)
+				group.hasClutch = true;
+			if (edge.a instanceof SpeedControllerBlockEntity || edge.b instanceof SpeedControllerBlockEntity)
+				group.hasController = true;
+		}
+
+		if (AUDIT) {
+			DifferentialCreate.LOGGER.info("DC_TOPOLOGY_AUDIT nodes={} edges={} groups={}",
+				nodes.size(), edges.size(), new LinkedHashSet<>(groups.values()).size());
+			for (Group group : new LinkedHashSet<>(groups.values())) {
+				int sources = 0;
+				double nominal = 0;
+				for (KineticBlockEntity member : group.ratios.keySet()) {
+					if (!member.isSource()) continue;
+					sources++;
+					nominal = Math.max(nominal, Math.abs(member.getGeneratedSpeed()));
+				}
+				boolean free = sources == 0 && group.inertia <= 0;
+				boolean loaded = group.ratios.keySet().stream().anyMatch(member ->
+					MachineActivity.impact(member) > 0 || MachineActivity.quadraticDrag(member) > 0);
+				DifferentialCreate.LOGGER.info(
+					"DC_TOPOLOGY_NET anchor={} members={} sources={} inertia={} speed={} nominal={} free={} loaded={} clutch={} controller={}",
+					group.anchor.getBlockPos(), group.ratios.size(), sources, group.inertia, group.speed,
+					nominal, free, loaded, group.hasClutch, group.hasController);
+				for (var member : group.ratios.entrySet()) {
+					KineticBlockEntity be = member.getKey();
+					DifferentialCreate.LOGGER.info(
+						"DC_TOPOLOGY_MEMBER anchor={} pos={} block={} ratio={} native={} local={} source={}",
+						group.anchor.getBlockPos(), be.getBlockPos(), be.getBlockState().getBlock(),
+						member.getValue(), be.getSpeed(), ElasticKinetics.state(be).physicalSpeed, be.isSource());
+				}
+			}
+		}
+		for (Group group : new LinkedHashSet<>(groups.values())) {
+			// Boundary-supported stress is not a free initial-condition problem.
+			if (group.inertia > 0 || group.hasClutch || group.hasController
+				|| group.ratios.keySet().stream().anyMatch(member -> member.isSource()
+					|| member instanceof ISequencerDynamics || ActorFeed.enabled(member)
+					|| MachineActivity.impact(member) > 0 || MachineActivity.quadraticDrag(member) > 0)) continue;
+			List<KineticBlockEntity> members = group.ratios.keySet().stream().sorted(ORDER).toList();
+			var indices = new HashMap<KineticBlockEntity, Integer>();
+			double[] speeds = new double[members.size()];
+			for (int i = 0; i < members.size(); i++) {
+				indices.put(members.get(i), i);
+				speeds[i] = ElasticKinetics.state(members.get(i)).physicalSpeed;
+			}
+			var contacts = new ArrayList<ElasticKinetics.Connection>();
+			var constraints = new ArrayList<MasslessTopology.Contact>();
+			for (Edge edge : edges) {
+				if (!indices.containsKey(edge.a)) continue;
+				var contact = new ElasticKinetics.Connection(edge.a, edge.b, edge.ratio, edge.clutch);
+				contacts.add(contact);
+				constraints.add(new MasslessTopology.Contact(indices.get(edge.a), indices.get(edge.b),
+					edge.ratio, contact.stiffness(), contact.strength(), contact.twist));
+			}
+			var projection = MasslessTopology.project(speeds, constraints);
+			for (int e = 0; e < contacts.size(); e++) {
+				contacts.get(e).twist = projection.twist()[e];
+				contacts.get(e).save();
+			}
+			var audit = energyAudit(level);
+			energyAudits.put(level, new EnergyAudit(audit.projectionLoss + projection.loss(),
+				audit.fractureLoss, audit.projections + 1, audit.fractures));
+			if (AUDIT) DifferentialCreate.LOGGER.info(
+				"DC_TOPOLOGY_PROJECT anchor={} members={} jammed={} energyBefore={} energyAfter={} dissipated={} broken={}",
+				group.anchor.getBlockPos(), members.size(), projection.jammed(), projection.energyBefore(),
+				projection.energyAfter(), projection.loss(), projection.broken());
+			if (projection.broken() >= 0) {
+				var broken = contacts.get(projection.broken()).weakest();
+				double fractureLoss = 0;
+				for (var contact : contacts) {
+					if (contact.a != broken && contact.b != broken) continue;
+					fractureLoss += contact.elasticEnergy();
+					ElasticKinetics.state(contact.a).elasticConnections.remove(contact.b.getBlockPos());
+				}
+				audit = energyAudit(level);
+				energyAudits.put(level, new EnergyAudit(audit.projectionLoss,
+					audit.fractureLoss + fractureLoss, audit.projections, audit.fractures + 1));
+				if (AUDIT) DifferentialCreate.LOGGER.info("DC_TOPOLOGY_FRACTURE pos={} elasticLoss={}",
+					broken.getBlockPos(), fractureLoss);
+				level.destroyBlock(broken.getBlockPos(), true);
+				// No pre-fracture velocity projection: each surviving component
+				// selects its own compatible mode on the next rebuild pass.
+				nodes.forEach(NetworkTopology::mark);
+				return;
+			}
+			group.jammed = projection.jammed();
+			for (int i = 0; i < members.size(); i++)
+				ElasticKinetics.state(members.get(i)).physicalSpeed = projection.speed()[i];
+			group.speed = projection.speed()[indices.get(group.anchor)];
 		}
 		for (KineticBlockEntity be : nodes) {
 			Set<BlockPos> retained = new HashSet<>();
@@ -311,9 +415,9 @@ public final class NetworkTopology {
 		final KineticBlockEntity anchor;
 		final Map<KineticBlockEntity, Float> ratios = new LinkedHashMap<>();
 		double inertia, speed;
-		boolean jammed;
 		BlockPos savedAnchor;
 		Long savedId;
+		boolean jammed, hasClutch, hasController;
 		Group(KineticBlockEntity be, double speed) {
 			anchor = be;
 			savedAnchor = be.getBlockPos();
@@ -322,4 +426,5 @@ public final class NetworkTopology {
 			this.speed = speed;
 		}
 	}
+
 }

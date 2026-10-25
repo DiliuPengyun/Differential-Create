@@ -10,5 +10,7 @@ public interface PortableEndpoint {
     void differentialcreate$attachStorage(Contraption contraption, float distance);
     boolean differentialcreate$nativePermission();
     void differentialcreate$animate(float progress, float distance);
+    /** A preview's two render templates share one measured connection, without sharing storage permission. */
+    void differentialcreate$previewAnimation(DockingState source);
     int differentialcreate$timeout();
 }

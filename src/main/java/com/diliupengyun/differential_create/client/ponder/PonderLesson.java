@@ -8,131 +8,125 @@ import net.minecraft.core.BlockPos;
 /** Storyboard identifiers and localized text delivery. */
 public enum PonderLesson {
     DYNAMICS("dynamics",
-        "How Torque, Inertia, and Flywheels Work",
-        "Limited torque and shaft inertia make speed change gradually.",
-        "Flywheels store energy and can keep machines working after power is cut.",
-        "Gearing up trades torque for speed; the small gear's press processes faster.",
-        "Connections flex; torque exceeding a component's strength breaks it."
+        "Acceleration, Inertia, and Flywheels",
+        "Limited power makes shafts speed up and slow down gradually.",
+        "Disconnect the input shaft: energy stored in the Flywheel keeps the press working.",
+        "The small cog turns faster and drives the upper press.",
+        "Add two Copper Ingots to each press together; the faster press finishes first."
     ),
     CLUTCH("clutch",
-        "Clutches, Slip, and the Brass Clutch",
-        "Full engagement limits: standard 1024, Brass 32768 su/RPM.",
-        "Redstone 0 fully engages, 15 disengages; intermediate signals reduce torque capacity.",
-        "Disengaging the clutch lets the output coast on its inertia.",
-        "With empty hands, hold right-click on Brass panels; redstone reduces engagement."
+        "Disconnecting Clutches and Using the Brass Clutch",
+        "The engaged Clutch passes rotation from the input to the Drill.",
+        "Set redstone to 15: the Clutch opens while the input keeps turning.",
+        "Slowing the input leaves the disconnected output spinning independently.",
+        "Empty-hand hold right-click on the Brass panel to adjust engagement."
     ),
     RATIO("ratio",
-        "Adjusting Gear Ratios with the Ratio Controller",
+        "Adjusting Speed and Direction with the Ratio Controller",
         "Set the lower shaft/top cog speed ratio, from -16 to +16.",
-        "Negative ratios reverse; zero disconnects. The dial uses nonlinear spacing.",
-        "Top cog input at +2 ratio doubles shaft speed and halves torque.",
-        "Ctrl + right-click opens numeric input, rounded to sixteenths."
+        "Set -1: the lower shaft reverses relative to the top cog.",
+        "Set 0: the input keeps turning, with the output disconnected.",
+        "Set +2: the lower shaft spins twice as fast.",
+        "Ctrl + right-click sets precise ratios, here +1.5."
     ),
     LOAD_GAUGE("load_gauge",
         "Reading Power Demand with the Load Gauge",
         "Load compares sustained power demand with available drive power, excluding stored inertia.",
         "Midscale means 100%% load and signal 8; infinite overload gives 15.",
-        "Without active power, coasting gives no load reading and signal zero.",
-        "Goggles show details; a stationary network uses the starting torque budget."
+        "Without power, spinning on inertia gives no load reading or redstone signal.",
+        "Use Goggles to read the current power demand and supply."
     ),
     SPEED_GAUGE("speed_gauge",
         "Measuring Shaft Speed and Adjusting Dial Range",
         "The Speedometer measures actual speed at its own shaft.",
-        "Hold right-click on the dial with a Wrench to change its range.",
-        "Range changes the dial and comparator; Goggles still show actual RPM."
+        "Hold right-click on the dial with a Wrench to change its range."
     ),
     PUMP_DIRECTION("pump_direction",
-        "Pump Direction, Shaft Rotation, and Fluid Inertia",
-        "Counterclockwise from East/Up/South pressurizes along the pump arrow.",
-        "Reverse rotation reverses pressure; liquid inertia delays the flow reversal.",
-        "A Wrench flips the arrow; reversing both arrow and rotation cancels out.",
-        "Gravity can backdrive pumps; zero flow consumes no sustained pumping power."
+        "Pump Flow and Reversing Direction",
+        "Watch the pump arrow and the changing levels in both tanks.",
+        "Use a Wrench to change the pump direction: water slows, then reverses.",
+        "Cut the drive; water and the pump keep moving briefly."
     ),
     PUMP_NETWORK("pump_network",
-        "Pipe Pressure Networks and Air Venting",
-        "Loaded connected pipes share pressure calculations, without a fixed 16-block range.",
-        "New pipes need air outlets; closed Valves block both air and liquid.",
-        "Smart Pipes filter liquids while allowing air through."
+        "Filling Pipes and Displacing Air",
+        "An empty pipe contains air. Watch this glass section.",
+        "Fill the supply tank and start the pump: water pushes air ahead.",
+        "Watch the receiving tank rise as water flows into it."
     ),
     BEARING("bearing",
-        "Assembling and Coasting Mechanical Bearings",
-        "Glue the structure; empty-hand right-click assembles it. Repeat to disassemble.",
-        "Structures start from rest; mass adds inertia and exposed surfaces add drag.",
-        "Cutting power keeps the structure assembled and coasting."
+        "Assembling Bearings and Spinning After Power Is Cut",
+        "Empty-hand right-click assembles the beam; input power starts it turning.",
+        "Lower the input speed; the beam gradually slows down.",
+        "Cutting power leaves the beam assembled and spinning on inertia."
     ),
     STRUCTURE_LOAD("structure_load",
-        "Moving Structures and Contraption Tool Loads",
-        "Moving structures accelerate under finite force against their inertia and air drag.",
-        "Mounted tools consume drive energy when cutting, harvesting, ploughing, or rolling.",
-        "Moving Deployers consume energy per action and wait when energy is insufficient."
+        "Moving Structures and Powering Their Tools",
+        "Input power moves the carriage along the gantry shaft.",
+        "The Harvester spends power when it contacts mature crops.",
+        "Reverse the input to bring the Harvester back."
     ),
     CONTINUOUS_WORK("continuous_work",
-        "Machine Progress and Coasting Through Work",
-        "Processing advances with shaft travel; idle machines release their processing load.",
-        "Slow rotation still advances work; stopping preserves the current operation's progress.",
-        "After power is cut, sufficient flywheel energy can finish an active operation."
-    ),
-    BACKTANK("backtank",
-        "Charging Copper and Netherite Backtanks",
-        "Backtanks charge in either direction: one air unit per tick at 128 RPM.",
-        "Fractional charging progress survives breaking, pickup, and wearing the backtank.",
-        "Full or waterlogged backtanks stop charging and release load, while retaining inertia."
+        "Slow Processing and Working After Power Is Cut",
+        "Watch the press complete a copper sheet as its shaft turns.",
+        "A slower input makes the next pressing stroke slower.",
+        "Cut power: the Flywheel finishes this last copper sheet."
     ),
     EJECTOR_WORK("ejector_work",
-        "Winding and Retargeting Weighted Ejectors",
-        "Ejectors wind with shaft travel; farther targets require more work.",
-        "Fully wound ejectors fire without power; each launch consumes the full charge.",
-        "Farther targets need extra winding; closer targets discard excess. Airborne trajectories persist."
+        "Charging, Firing, and Retargeting Ejectors",
+        "Turn the input shaft to charge the Ejector.",
+        "Once charged, cut power and add an ingot: it still launches.",
+        "Choose a nearer target; the next ingot lands on the middle Depot."
     ),
     CRUSHER_WORK("crusher_work",
-        "Crushing Wheel Relative Motion and Batch Work",
-        "Crushing uses relative wheel motion and applies reaction torque to both wheels.",
-        "Unequal same-direction speeds also crush when feeding inward; equal speeds cannot.",
-        "A 64-item batch requires six times the work and finishes together."
+        "Crushing Wheel Speeds and Feeding Items",
+        "Same-way rotation can crush items when the wheels turn at different speeds.",
+        "Wheel speeds and directions decide which side accepts items.",
+        "On screen, left -16 and right -32 feed downward.",
+        "Throw items in from the feed side; here, from above."
     ),
     STEAM_POWER("steam_power",
-        "Boiler Steam Supply and Engine Governor",
-        "Heat, boiler size, and actual water supply constrain available steam.",
-        "Low speed is torque-limited; high speed is power-limited. Engines share steam.",
-        "Near 512 RPM the governor throttles steam; cutting steam allows coasting."
+        "Boiler Steam and Engine Speed",
+        "Heat and water start both engines on this boiler.",
+        "Both engines draw steam from this same boiler.",
+        "Remove the heat sources to stop steam supply. Unloaded engines keep spinning on inertia."
     ),
     TRAIN_POWER("train_power",
-        "Powering Trains with Steam Engines, Hoses, and Condensers",
+        "Installing Steam Power on Trains",
         "Before assembly, install power by using a Steam Engine on a bogey.",
-        "Use a Steam Hose between boiler and powered bogey, within 48 blocks.",
-        "Fit a Condenser Pipe to recover 90%% of exhaust water.",
-        "Separate tanks supply water; chests/barrels supply fuel. Vaults are excluded."
+        "Connect the boiler and powered bogey with a Steam Hose, within 48 blocks.",
+        "Fit a Condenser Pipe on the bogey to recover 90%% of steam water.",
+        "Separate tanks supply water; chests/barrels supply fuel. Vaults cannot supply fuel."
     ),
     TRAIN_DRIVING("train_driving",
-        "Driving Steam Trains, Shifting Gears, and Station Parking",
-        "Drive: W throttles; S brakes. Install a Gear Lever for X/Z shifting.",
-        "Neutral disconnects wheels; W still revs the engine and consumes water.",
-        "Hold Space for station approach/parking; W releases. Brake early to avoid overruns.",
-        "Scheduled conductors drive automatically; a Gear Lever enables automatic shifting."
+        "Driving, Shifting Gears, and Stopping Trains",
+        "W accelerates; S brakes. Install a Gear Lever for X/Z shifting.",
+        "Neutral disconnects the wheels; pressing W still runs the engine.",
+        "Brake near the station; stop before finishing your drive.",
+        "When stopped, right-click the Controls again to finish driving."
     ),
     PORTABLE_DOCKING("portable_docking",
-        "Portable Interface Braking, Docking, and Wrench Settings",
-        "Face interfaces 1–2 blocks apart; transfer requires stopping. Excess speed overshoots.",
-        "Successful transfers refresh the idle timer; retracting finishes before movement resumes.",
-        "Use a Wrench: select release mode and mechanical occupancy feedback."
+        "Wrench Settings for Portable Interfaces",
+        "Select Wait for Redstone with a Wrench. Empty interfaces stay connected until powered.",
+        "While Docked keeps the comparator at 15 until the heads fully retract.",
+        "Docking Stage outputs 0 when idle, 8 while docking or retracting, and 15 when connected."
     ),
     MINECART_DYNAMICS("minecart_dynamics",
-        "Minecart Contraption Mass, Rail Forces, and Couplings",
-        "Mounting a structure adds inertia and air drag to its minecart.",
-        "Rail propulsion and braking are finite; heavier carts accelerate and stop slower.",
-        "Couplings transmit force between carts; mounted tools also consume their kinetic energy."
+        "Inertia and Reversing Minecart Structures",
+        "The loaded minecart gradually accelerates when the rails drive it.",
+        "The second cart and attached cargo travel together with the first.",
+        "Reverse the rails: the carts slow down before changing direction."
     ),
     SEQUENCER("sequencer",
-        "Precise Travel Control with Sequenced Gearshifts",
-        "Sequenced Gearshifts measure actual output travel for angle and distance commands.",
-        "It brakes ahead based on inertia and load, then holds the target.",
-        "Same-direction steps flow; reversals stop first. Completed sequences need another redstone pulse."
+        "Sequenced Gearshift Angles and Holding Position",
+        "This program turns forward twice, then back half a turn.",
+        "It slows near the target angle, then holds position.",
+        "Once it finishes, another redstone pulse starts the program again."
     ),
     FAN_WORK("fan_work",
-        "Encased Fan Speed, Processing Rate, and Drag",
-        "Water washes; fire smokes; lava blasts; soul fire haunts.",
-        "Processing matches baseline at 64 RPM; faster rotation approaches fourfold throughput.",
-        "Spinning fans continuously experience air drag; resisting torque grows with RPM squared."
+        "Fan Processing and Air Drag",
+        "Air passing through lava smelts the ore into an ingot.",
+        "Raise the speed and add another ore: faster blades, the same processing time.",
+        "Cut power: the fan slows and its airflow weakens."
     );
 
     public final String id;
@@ -145,20 +139,41 @@ public enum PonderLesson {
 
     public void title(CreateSceneBuilder scene) { scene.title(id, title); }
     public int steps() { return text.length; }
+    /** Keep captions beside elevated assemblies rather than across their heads. */
+    private int captionOffset(int step) {
+        return this == STEAM_POWER ? 135 : this == DYNAMICS && step == 2 ? 105 : 0;
+    }
     /** Keep train captions above the chassis and out of its travel path. */
     public void caption(CreateSceneBuilder scene, int step, PonderPalette color) {
         scene.overlay().showText(90).colored(color).text(text[step]).independent(0)
             .placeNearTarget().attachKeyFrame();
         scene.idle(100);
     }
-    public void show(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pos, int step) {
-        scene.overlay().showText(90).text(text[step]).pointAt(util.vector().topOf(pos))
+    /** Fixed-position caption while the caller performs the illustrated operation. */
+    public void captionFor(CreateSceneBuilder scene, int step, PonderPalette color, int ticks) {
+        scene.overlay().showText(ticks).colored(color).text(text[step]).independent(0)
             .placeNearTarget().attachKeyFrame();
+    }
+    /**
+     * Keep the window at the default fixed slot instead of letting it cover the
+     * machine. The target block is outlined for the same duration, replacing the
+     * old leader line. Steam captions sit beside the lower stage to clear the assembly;
+     * other lessons retain the default position.
+     */
+    public void show(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pos, int step) {
+        scene.overlay().showText(90).text(text[step]).independent(captionOffset(step)).attachKeyFrame();
+        scene.overlay().showOutline(PonderPalette.WHITE, new Object(), util.select().position(pos), 90);
         scene.idle(100);
     }
     public void show(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pos, int step, PonderPalette color) {
-        scene.overlay().showText(90).colored(color).text(text[step]).pointAt(util.vector().topOf(pos))
-            .placeNearTarget().attachKeyFrame();
+        scene.overlay().showText(90).colored(color).text(text[step]).independent(captionOffset(step)).attachKeyFrame();
+        scene.overlay().showOutline(color, new Object(), util.select().position(pos), 90);
         scene.idle(100);
+    }
+    /** Same caption and outline, but the caller scripts the accompanying action and idle. */
+    public void showFor(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pos, int step,
+                        PonderPalette color, int ticks) {
+        scene.overlay().showText(ticks).colored(color).text(text[step]).independent(captionOffset(step)).attachKeyFrame();
+        scene.overlay().showOutline(color, new Object(), util.select().position(pos), ticks);
     }
 }

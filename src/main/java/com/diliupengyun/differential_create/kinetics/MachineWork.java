@@ -12,20 +12,21 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 /** Bridges Create's item/recipe callbacks to the network's physical clock. */
 public final class MachineWork {
 	public static final double EPSILON = 1e-8;
-	private static List<Runnable> events;
+	private static final ThreadLocal<List<Runnable>> events = new ThreadLocal<>();
 	private MachineWork() {}
 	/** Advance all counters before callbacks can change another machine's phase. */
 	public static void batch(Runnable advance) {
-		if (events != null) throw new IllegalStateException("Nested machine advance");
-		events = new ArrayList<>();
+		if (events.get() != null) throw new IllegalStateException("Nested machine advance");
+		events.set(new ArrayList<>());
 		List<Runnable> pending;
-		try { advance.run(); pending = events; }
-		finally { events = null; }
+		try { advance.run(); pending = events.get(); }
+		finally { events.remove(); }
 		pending.forEach(Runnable::run);
 	}
 	public static void event(Runnable callback) {
-		if (events == null) callback.run();
-		else events.add(callback);
+		var pending = events.get();
+		if (pending == null) callback.run();
+		else pending.add(callback);
 	}
 	public record Binding(ShaftWork work, KineticBlockEntity shaft, CrushingKinetics.Pair pair) {
 		public Binding(ShaftWork work, KineticBlockEntity shaft) { this(work,shaft,null); }

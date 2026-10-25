@@ -57,7 +57,9 @@ public abstract class ArmBlockEntityMixin implements ShaftWork {
 			&& Double.isFinite(differentialcreate$remainingTravel())) cir.setReturnValue(false);
 	}
 	@ModifyExpressionValue(method = "tickMovementProgress", at = @At(value = "INVOKE", target = "Ljava/lang/Math;min(FF)F"))
-	private float differentialcreate$uncapped(float original) { return Math.abs(((ArmBlockEntity) (Object) this).getSpeed()); }
+    private float differentialcreate$uncapped(float original) {
+        return (float) com.diliupengyun.differential_create.kinetics.PhysicsPreview.travel((ArmBlockEntity) (Object) this);
+    }
 	@Inject(method = "write", at = @At("RETURN"))
 	private void differentialcreate$write(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
 		tag.putDouble("DCArmProgress", differentialcreate$progress());

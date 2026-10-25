@@ -109,10 +109,11 @@ public final class SequencerKinetics {
             inertia += r * r * InertiaRegistry.getInertia(member);
             momentum += r * InertiaRegistry.getInertia(member) * NetworkDynamics.preciseSpeed(member);
             if (InertiaRegistry.getInertia(member) > 0) settling = Math.max(settling, Math.abs(NetworkDynamics.preciseSpeed(member) / r));
-            double resistance = ContraptionPhysics.manages(member) ? ContraptionPhysics.workTorque(member) : MachineActivity.impact(member);
+            double resistance = member instanceof IPumpDynamics pump ? Math.abs(pump.differentialcreate$torque())
+                : ContraptionPhysics.manages(member) ? ContraptionPhysics.workTorque(member) : MachineActivity.impact(member);
             if (member instanceof EncasedFanBlockEntity) resistance = 0;
             load += Math.abs(r) * (resistance + MachineActivity.quadraticDrag(member) * Math.pow(NetworkDynamics.preciseSpeed(member), 2));
-            drive += r * (externalTorques.getOrDefault(member, 0d)
+            drive += r * ((member instanceof IPumpDynamics ? 0 : externalTorques.getOrDefault(member, 0d))
                 + (member.isSource() ? SourcePhysics.curve(member).torque(NetworkDynamics.preciseSpeed(member)) : 0));
         }
         return m.plan(servo.differentialcreate$program(), new SequencerMotion.Plant(inertia, load, drive, NetworkDynamics.preciseSpeed(be), momentum / inertia, settling), SequencerMotion.CONTROL_INTERVAL);

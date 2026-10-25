@@ -17,7 +17,7 @@ import net.minecraft.world.phys.Vec3;
  * translation. Native actor ticks observe paid feed, never restore a pre-stall speed. */
 public final class TrainActorMotion {
     private static final double JOULES_PER_WORK = TrainMechanics.TORQUE_SCALE * 2 * Math.PI;
-    private static Frame active;
+    private static final ThreadLocal<Frame> active = new ThreadLocal<>();
     private TrainActorMotion() {}
     private static boolean supported(MovementContext context) {
         var b = MovementBehaviour.REGISTRY.get(context.state);
@@ -29,10 +29,11 @@ public final class TrainActorMotion {
         return entity;
     }
     public static ActorDrive drive(MovementContext context) {
-        if (context.world.isClientSide || !supported(context) || context.contraption.entity == null) return null;
+        if (context.world.isClientSide && !PhysicsPreview.enabled(context.world) || !supported(context) || context.contraption.entity == null) return null;
         var entity = context.contraption.entity; var root = root(entity);
         if (!(root instanceof CarriageContraptionEntity carriage) || carriage.getCarriage() == null || carriage.getCarriage().train == null) return null;
-        return new Drive(entity, carriage, active != null && active.train == carriage.getCarriage().train ? active : null);
+        var frame = active.get();
+        return new Drive(entity, carriage, frame != null && frame.train == carriage.getCarriage().train ? frame : null);
     }
     private record Drive(AbstractContraptionEntity entity, CarriageContraptionEntity root, Frame frame) implements ActorDrive {
         @Override public Direction.Axis axis() { return Direction.Axis.Z; }
@@ -64,7 +65,7 @@ public final class TrainActorMotion {
                 var a = carriage.getLeadingPoint(); var b = carriage.getTrailingPoint();
                 if (train.graph != null && a.edge != null && b.edge != null && !a.edge.isInterDimensional() && !b.edge.isInterDimensional())
                     direction = a.getPosition(train.graph).subtract(b.getPosition(train.graph)).normalize();
-                else direction = entity.applyRotation(new Vec3(0, 0, 1), 1);
+                else direction = PhysicsPreview.enabled(entity.level()) ? new Vec3(1, 0, 0) : entity.applyRotation(new Vec3(0, 0, 1), 1);
                 // Direction-sensitive tools retain their intended contact path
                 // at rest; maxTravel still forbids unpaid progress.
                 Vec3 translation = direction.scale(state.travelDirection / 512d);
@@ -87,8 +88,8 @@ public final class TrainActorMotion {
     public static double feed(Train train, double requestedDistance, List<TrainMechanics.Engine> engines) {
         var frame = new Frame(train, requestedDistance);
         if (frame.work.isEmpty() && frame.ports.isEmpty() && frame.hands.isEmpty()) return requestedDistance;
-        if (active != null) throw new IllegalStateException("Nested train tool feed");
-        active = frame;
+        if (active.get() != null) throw new IllegalStateException("Nested train tool feed");
+        active.set(frame);
         double before = train.speed * 20;
         double equivalentMass = TrainPhysics.state(train).mass;
         for (var e : engines) if (e.ratio != 0 && e.shiftTime == 0) equivalentMass += e.inertia / Math.pow(TrainMechanics.WHEEL_RADIUS * e.ratio, 2);
@@ -136,6 +137,6 @@ public final class TrainActorMotion {
             for (var e : engines) if (e.ratio != 0 && e.shiftTime == 0) e.omega += delta / (TrainMechanics.WHEEL_RADIUS * e.ratio);
             for (var ctx : frame.hands) ContraptionActorWork.of(ctx).hand().cartTick();
             return Math.copySign(frame.travel / 512, requestedDistance);
-        } finally { active = null; }
+        } finally { active.remove(); }
     }
 }

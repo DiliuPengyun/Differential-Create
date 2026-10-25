@@ -86,8 +86,9 @@ public abstract class EjectorBlockEntityMixin implements ShaftWork, IEjectorDyna
         target = "Lcom/simibubi/create/content/kinetics/base/KineticBlockEntity;tick()V", shift = At.Shift.AFTER), cancellable = true)
     private void differentialcreate$tick(CallbackInfo ci) {
         var self = (EjectorBlockEntity) (Object) this;
-        if (self.isVirtual()) return;
-        boolean server = !self.getLevel().isClientSide;
+        if (self.isVirtual() && !PhysicsPreview.enabled(self.getLevel())) return;
+        boolean preview = PhysicsPreview.enabled(self.getLevel());
+        boolean server = !self.getLevel().isClientSide || preview;
         State previous = state;
         if (scanCooldown > 0) scanCooldown--;
         if (launch) { launch = false; self.activateDeferred(); }
@@ -109,8 +110,9 @@ public abstract class EjectorBlockEntityMixin implements ShaftWork, IEjectorDyna
             if (!differentialcreate$winding()) lidProgress.tickChaser();
             else {
                 // Client prediction affects the lid only; authoritative work comes from accepted shaft travel.
-                if (!server) differentialcreate$charge.advance(Math.abs(self.getSpeed()), differentialcreate$required());
+                if (!server || preview) differentialcreate$charge.advance(PhysicsPreview.travel(self), differentialcreate$required());
                 differentialcreate$publishCharge();
+                if (preview && differentialcreate$charge.remaining(differentialcreate$required()) <= MachineWork.EPSILON) state = State.CHARGED;
                 double rate = Math.abs(self.getSpeed()) / differentialcreate$required();
                 if (server && rate > 0) {
                     int period = (int) Math.min(Integer.MAX_VALUE, 1 + 1 / (rate * 5));
@@ -157,13 +159,13 @@ public abstract class EjectorBlockEntityMixin implements ShaftWork, IEjectorDyna
     private void differentialcreate$requireCharge(CallbackInfo ci) {
         var self = (EjectorBlockEntity) (Object) this;
         // Native clients also accept LAUNCHING so a player's predicted bounce survives a server update.
-        if (!self.isVirtual() && !self.getLevel().isClientSide && (state != State.CHARGED
+        if ((!self.isVirtual() && !self.getLevel().isClientSide || PhysicsPreview.enabled(self.getLevel())) && (state != State.CHARGED
             || differentialcreate$charge.remaining(differentialcreate$required()) > MachineWork.EPSILON)) ci.cancel();
     }
     @Inject(method = "activateDeferred", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$payForLaunch(CallbackInfo ci) {
         var self = (EjectorBlockEntity) (Object) this;
-        if (self.isVirtual() || self.getLevel().isClientSide) return;
+        if ((self.isVirtual() || self.getLevel().isClientSide) && !PhysicsPreview.enabled(self.getLevel())) return;
         if (state != State.CHARGED) return; // Native cannotLaunch handles all other states.
         if (differentialcreate$charge.remaining(differentialcreate$required()) > MachineWork.EPSILON) {
             state = State.RETRACTING;
@@ -181,15 +183,15 @@ public abstract class EjectorBlockEntityMixin implements ShaftWork, IEjectorDyna
 
     @Inject(method = "addToLaunchedItems", at = @At("RETURN"))
     private void differentialcreate$captureFlight(ItemStack stack, CallbackInfoReturnable<Boolean> cir) {
-        if (((EjectorBlockEntity) (Object) this).isVirtual() || launchedItems.isEmpty()) return;
+        if ((((EjectorBlockEntity) (Object) this).isVirtual() && !PhysicsPreview.enabled(((EjectorBlockEntity) (Object) this).getLevel())) || launchedItems.isEmpty()) return;
         differentialcreate$flights.put(launchedItems.getLast(), differentialcreate$launching == null
             ? differentialcreate$snapshot() : differentialcreate$launching);
     }
     @Inject(method = "dropFlyingItems", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$dropFlights(CallbackInfo ci) {
         var self = (EjectorBlockEntity) (Object) this;
-        if (self.isVirtual()) return;
-        if (self.getLevel() != null && !self.getLevel().isClientSide)
+        if (self.isVirtual() && !PhysicsPreview.enabled(self.getLevel())) return;
+        if (self.getLevel() != null && (!self.getLevel().isClientSide || PhysicsPreview.enabled(self.getLevel())))
             for (var item : launchedItems) {
                 var flight = differentialcreate$flights.get(item);
                 (flight == null ? differentialcreate$snapshot() : flight).drop(self, item);
@@ -202,7 +204,7 @@ public abstract class EjectorBlockEntityMixin implements ShaftWork, IEjectorDyna
     @Inject(method = "setTarget", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$retarget(int horizontal, int vertical, CallbackInfo ci) {
         var self = (EjectorBlockEntity) (Object) this;
-        if (self.isVirtual()) return;
+        if (self.isVirtual() && !PhysicsPreview.enabled(self.getLevel())) return;
         launcher.set(Math.max(1, horizontal), vertical);
         differentialcreate$charge.retarget(differentialcreate$required());
         earlyTarget = null;
@@ -240,7 +242,7 @@ public abstract class EjectorBlockEntityMixin implements ShaftWork, IEjectorDyna
     @Inject(method = "read", at = @At("RETURN"))
     private void differentialcreate$read(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
         var self = (EjectorBlockEntity) (Object) this;
-        if (self.isVirtual()) return;
+        if (self.isVirtual() && !PhysicsPreview.enabled(self.getLevel())) return;
         if (!packet) launch = false;
         differentialcreate$launching = null;
         differentialcreate$charge.restore(tag.getDouble(EjectorCharge.KEY), differentialcreate$required());

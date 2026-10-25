@@ -223,12 +223,12 @@ public final class MacroFluidSolver {
             var link = links.get(e); flow[e] *= scale;
             outward[link.from] += flow[e]; outward[link.to] -= flow[e];
             var from = cells.get(link.from);
-            torque[link.from] -= link.fromPump * .5 * wetImpeller(from)
-                * coupling(material, from.rpm, link.fromPump * flow[e]) * flow[e];
+            torque[link.from] += .5 * wetImpeller(from)
+                * IdealFluidSolver.pumpReaction(material, from.rpm, link.fromPump * flow[e]);
             if (link.to < count) {
                 var to = cells.get(link.to);
-                torque[link.to] += link.toPump * .5 * wetImpeller(to)
-                    * coupling(material, to.rpm, -link.toPump * flow[e]) * flow[e];
+                torque[link.to] += .5 * wetImpeller(to)
+                    * IdealFluidSolver.pumpReaction(material, to.rpm, -link.toPump * flow[e]);
             }
         }
         for (int n = 0; n < count; n++) if (cells.get(n).rpm != 0 || cells.get(n).pumpFlow != 0) {
@@ -533,12 +533,8 @@ public final class MacroFluidSolver {
         return cell.volume > 0 && (material.isGas() || full(cell)
             || cell.top - cell.bottom < .02 || cell.surface() >= lip - 1e-10);
     }
-    /** Monotone signed pump curve: an opposed incoming stream does not turn
-     * a reversing driven impeller into a zero-head free-flow equilibrium. */
     private static double coupling(IdealFluidSolver.Material material, double rpm, double flow) {
-        double through = rpm == 0 ? Math.abs(flow) : Math.signum(rpm) * flow;
-        return material.pumpScale() / IdealFluidSolver.REFERENCE_RPM
-            * (Math.abs(rpm) / IdealFluidSolver.REFERENCE_RPM - through / IdealFluidSolver.REFERENCE_FLOW);
+        return IdealFluidSolver.coupling(material, rpm, flow);
     }
     private static double pumpSlope(IdealFluidSolver.Material material, double rpm) {
         return -material.pumpScale() / IdealFluidSolver.REFERENCE_RPM / IdealFluidSolver.REFERENCE_FLOW * Math.abs(rpm);

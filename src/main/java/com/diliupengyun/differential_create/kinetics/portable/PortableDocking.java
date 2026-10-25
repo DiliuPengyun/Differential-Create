@@ -18,6 +18,9 @@ import net.minecraft.world.phys.Vec3;
 
 /** Content-independent docking: compatibility, pose sweeps, reservation and finite passive reaction. */
 public final class PortableDocking {
+    /** Faces may overlap laterally, but must face each other before they can lock. */
+    public static final double CONTACT_WIDTH = .5;
+    public static final double CONTACT_ALIGNMENT = Math.cos(Math.toRadians(2));
     public static final double LINEAR_FORCE = 1024 / MinecartMotion.BLOCKS_PER_TURN;
     public static final double TWIST_TORQUE = 1024;
     private static final Map<Block, Adapter> adapters = new IdentityHashMap<>();
@@ -62,6 +65,7 @@ public final class PortableDocking {
     public static void clear() { stations.clear(); bindings.clear(); clocks.clear(); }
     /** One active game tick, independent of BE order, solver substeps and time spent globally frozen. */
     public static long time(Level level) {
+        if (level instanceof PhysicsPreview preview) return preview.differentialcreate$time();
         if (level.getServer() == null) return level.getGameTime();
         var clock = clocks.computeIfAbsent(level, ignored -> new Clock());
         long now = level.getServer().getTickCount();
@@ -131,10 +135,13 @@ public final class PortableDocking {
                     double origin = dim == 0 ? centre.x : dim == 1 ? centre.y : centre.z;
                     double sign = facing.getAxisDirection().getStep();
                     double[] planes = dim == axis ? new double[]{origin - sign * 1.5, origin - sign * 3}
-                        : new double[]{origin - .5, origin + .5, origin - 1.5, origin + 1.5};
+                        : new double[]{origin - CONTACT_WIDTH, origin + CONTACT_WIDTH, origin - 1.5, origin + 1.5};
                     for (double plane : planes) next = Math.min(next, path.crossing(travel, direction, dim, plane));
                 }
-                if (normal != null) next = Math.min(next, normal.crossing(travel, direction, axis, .875 * facing.getAxisDirection().getStep()));
+                if (normal != null) {
+                    next = Math.min(next, normal.crossing(travel, direction, axis, .875 * facing.getAxisDirection().getStep()));
+                    next = Math.min(next, normal.crossing(travel, direction, axis, CONTACT_ALIGNMENT * facing.getAxisDirection().getStep()));
+                }
             }
             return Math.min(next, drive.allowance(direction));
         }
@@ -179,11 +186,15 @@ public final class PortableDocking {
             var broad = selected.phase == DockingState.Phase.PREPARING
                 ? geometry(context, point, facing, selected, 1.501, .874, .001)
                 : geometry(context, point, facing, selected, 1.5);
-            if (!broad.valid) { selected.release("alignment"); return; }
+            if (!broad.valid) {
+                selected.release(selected.phase == DockingState.Phase.PREPARING ? "none" : "alignment");
+                return;
+            }
             if (drive.root().isStalled() || drive.root().getContraption().stalled) { selected.release("paused"); return; }
             var path = path();
             double velocity = path == null ? 0 : ContraptionMotion.vector(path.derivative(drive.travel())).length() * Math.abs(drive.speed());
-            selected.observe(point, drive.speed(), velocity, geometry(context, point, facing, selected, .5).valid, torqueAfterContact(selected));
+            selected.observe(point, drive.speed(), velocity,
+                geometry(context, point, facing, selected, CONTACT_WIDTH, CONTACT_ALIGNMENT, 0).valid, torqueAfterContact(selected));
             if (selected.owner.isPowered()) selected.cancel();
         }
         private double torqueAfterContact(DockingState state) {
@@ -198,7 +209,7 @@ public final class PortableDocking {
             return LINEAR_FORCE * v.length() * 1200 + (drive.rotation() && !drive.stabilized() ? TWIST_TORQUE * Math.abs(drive.angularRate()) / .3 : 0);
         }
     }
-    private record Geometry(boolean valid, double axial) {}
+    public record Geometry(boolean valid, double axial) {}
     private static Geometry geometry(MovementContext context, Vec3 position, Vec3 facing, DockingState station, double width) {
         return geometry(context, position, facing, station, width, .875, 0);
     }
@@ -207,9 +218,14 @@ public final class PortableDocking {
         var state = station.owner.getBlockState();
         if (!adapter(context).compatible(context.state, state) || adapter(context).facing(state) == null) return new Geometry(false, 0);
         Direction target = adapter(context).facing(state).getOpposite();
+        return geometry(position, facing, Vec3.atCenterOf(station.owner.getBlockPos()), target, width, alignment, margin);
+    }
+    /** Shared capture/contact geometry for real contraptions and displayed preview sections. */
+    public static Geometry geometry(Vec3 position, Vec3 facing, Vec3 station, Direction target,
+            double width, double alignment, double margin) {
         Vec3 normal = Vec3.atLowerCornerOf(target.getNormal());
         if (facing.dot(normal) < alignment - 1e-8) return new Geometry(false, 0);
-        Vec3 delta = Vec3.atCenterOf(station.owner.getBlockPos()).subtract(position);
+        Vec3 delta = station.subtract(position);
         double axial = delta.dot(normal);
         if (axial < 1.5 - margin - 1e-7 || axial > 3 + margin + 1e-7) return new Geometry(false, axial);
         Vec3 lateral = delta.subtract(normal.scale(axial));
@@ -221,7 +237,7 @@ public final class PortableDocking {
         var drive = ActorDrive.of(context);
         if (drive == null) return false;
         var binding = new Binding(context, drive, List.of(state));
-        return geometry(context, binding.position(), binding.facing(), state, .5).valid;
+        return geometry(context, binding.position(), binding.facing(), state, CONTACT_WIDTH, CONTACT_ALIGNMENT, 0).valid;
     }
     public static List<Binding> prepare(List<KineticNetwork> networks) {
         var result = new ArrayList<Binding>(); var seen = Collections.newSetFromMap(new IdentityHashMap<MovementContext, Boolean>());

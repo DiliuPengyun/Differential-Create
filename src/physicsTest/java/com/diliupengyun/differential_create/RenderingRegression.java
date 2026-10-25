@@ -34,6 +34,7 @@ public final class RenderingRegression {
 		freeClutchOutput();
 		clutchAnimationCache();
 		hoseRenderObservations();
+		hosePulleyStartup();
 		rotorSamples();
 		bearingPoses();
 		bearingSampleBuffer();
@@ -673,6 +674,26 @@ public final class RenderingRegression {
 				}
 			}
 		}
+	}
+
+	private static void hosePulleyStartup() {
+		float previous = com.diliupengyun.differential_create.client.HosePulleyAnimation.offset(0);
+		near(3 / 16d, previous, 0, "retracted hose head keeps its casing clearance");
+		for (int i = 1; i <= 8192; i++) {
+			float extension = i / 8192f;
+			float displayed = com.diliupengyun.differential_create.client.HosePulleyAnimation.offset(extension);
+			check(displayed > previous, "every paid startup increment must visibly lower the hose");
+			check(displayed >= extension && displayed <= 1, "startup clearance cannot overshoot the first full block");
+			double slope = (displayed - previous) * 8192;
+			check(slope >= .717 && slope <= 1.001, "startup has no dead interval, reverse motion or sudden speed jump");
+			if (i == 1 || i == 8192) near(1, slope, .001, "clearance joins normal travel with continuous speed");
+			previous = displayed;
+		}
+		for (float extension : new float[]{1, 1.001f, 2, 32, 256, 4096})
+			near(extension, com.diliupengyun.differential_create.client.HosePulleyAnimation.offset(extension), 0,
+				"extended hose retains native fluid and collision alignment");
+		near(3 / 16d, com.diliupengyun.differential_create.client.HosePulleyAnimation.offset(-.01f), 0,
+			"retraction cannot pull the visible head into the casing");
 	}
 
 	private static float setup(InstanceRotation instance, RotationFrame frame, float defaultOffset) {

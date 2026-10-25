@@ -27,6 +27,7 @@ public final class SolverPrecisionRegression {
         replacedShaftFracture();
         shortMasslessTrials();
         masslessFracture();
+        freeMasslessMotion();
         prestressedFreeFragment();
         prestressedFreeShaftWork();
         masslessSubsteps();
@@ -235,12 +236,63 @@ public final class SolverPrecisionRegression {
     private static void masslessFracture() {
         var bodies = List.of(new Body(0, 0, 0, 0, 0), new Body(0, 0, 0, 0, 0), new Body(0, 0, 0, 0, 0));
         var links = List.of(new Link(0, 1, 1, 1e7, 0, 8192, INF), new Link(1, 2, 1, 1e7, 0, 8192, INF));
-        Graph graph = new Graph(bodies, links, new double[]{8.444249299855451e9, 6.333186974104151e9, 4.222124648352853e9},
-            new double[]{8.192000001635171e-4, 8.192000001635159e-4}, 0);
-        Result result = graph.advance(DT);
-        check(result.broken() >= 0, "prestressed massless fragment still obeys structural strength");
-        near(energy(graph, graph.speed, graph.twist), energy(graph, result.speed(), result.twist()), 1e-9,
-            "massless fracture speeds cannot spoil the undamped energy balance");
+        for (int sign : new int[]{1, -1}) for (int substeps : new int[]{63, 64, 128}) {
+            Graph graph = new Graph(bodies, links,
+                new double[]{sign * 8.444249299855451e9, sign * 6.333186974104151e9, sign * 4.222124648352853e9},
+                new double[]{sign * 8.192000001635171e-4, sign * 8.192000001635159e-4}, 0);
+            double h = DT / substeps;
+            var capture = TorsionSolver.prepare(bodies, links, graph.speed, graph.twist);
+            // Angle limits force the chronological path instead of its ordinary-integration shortcut.
+            for (Result result : List.of(capture.advance(DT, h), capture.advanceToEvent(DT, h,
+                List.of(new TorsionSolver.EventLimit(0, INF, 10, 10))))) {
+                check(result.broken() >= 0, "prestressed massless fragment still obeys structural strength");
+                check(result.duration() > 0 && result.duration() <= 1e-12,
+                    "massless overload fractures at the time-resolution boundary");
+                check(1e7 * Math.abs(result.twist()[result.broken()]) >= 8192,
+                    "reported massless fracture actually reaches structural strength");
+                near(energy(graph, graph.speed, graph.twist), energy(graph, result.speed(), result.twist()), 1e-9,
+                    "massless fracture speeds cannot spoil the undamped energy balance");
+            }
+        }
+    }
+
+    private static void freeMasslessMotion() {
+        var bodies = List.of(new Body(0, 0, 0, 0, 0), new Body(0, 0, 0, 0, 0));
+        for (double q : new double[]{1, -2, .5}) {
+            var links = List.of(new Link(0, 1, q, 1e7, 0, 8192, INF));
+            for (double common : new double[]{0, 16, -16, 1e12, -1e12}) {
+                double[] speed = {common, q * common};
+                var capture = TorsionSolver.prepare(bodies, links, speed, new double[1]);
+                Result coast = capture.advance(DT, H);
+                for (int i = 0; i < speed.length; i++) {
+                    near(speed[i], coast.speed()[i], 0, "compatible free massless shafts retain their selected speed");
+                    near(DT * speed[i], coast.angle()[i], 0, "free massless motion retains its analytic travel");
+                }
+                check(coast.broken() < 0, "unstressed free shafts do not fracture");
+                if (common != 0) {
+                    double budget = Math.abs(speed[1]) * DT / 4;
+                    Result event = capture.advanceToEvent(DT, H, List.of(new TorsionSolver.EventLimit(1, budget, INF, INF)));
+                    near(DT / 4, event.duration(), 1e-12, "free massless travel reaches the correct event time");
+                    near(budget, event.travel()[1], Math.max(1e-12, 16 * Math.ulp(budget)), "free massless event pays its travel budget");
+                    near(speed[1], event.speed()[1], 0, "event search preserves the free massless speed");
+                }
+            }
+            // A sub-strength preload still requires a torque-balanced midpoint.
+            // Zero midpoint spring torque implies x_end = -x_start and B^T angle = -2*x_start.
+            for (double preload : new double[]{1e-4, -1e-4}) {
+                var capture = TorsionSolver.prepare(bodies, links, new double[2], new double[]{preload});
+                for (Result relaxed : List.of(capture.advance(H, H), capture.advanceToEvent(H, H,
+                    List.of(new TorsionSolver.EventLimit(0, INF, 1, 1))))) {
+                    check(relaxed.broken() < 0, "sub-strength massless preload does not fracture");
+                    near(-preload, relaxed.twist()[0], 1e-15, "massless preload is solved rather than silently frozen");
+                    near(-2 * preload, q * relaxed.angle()[0] - relaxed.angle()[1], 1e-15,
+                        "massless displacement follows the stored elastic preload");
+                }
+            }
+            Result incompatible = TorsionSolver.advance(bodies, links, new double[]{16, q * 32}, new double[1], H, H);
+            near(q * incompatible.speed()[0], incompatible.speed()[1], 1e-10,
+                "unloaded zero-inertia endpoints obey the shaft ratio despite inconsistent initial speeds");
+        }
     }
 
     private static void prestressedFreeFragment() {

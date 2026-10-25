@@ -70,25 +70,16 @@ public final class NetworkLoad {
                 : FluidMaterials.of(FluidKinetics.state(pipe).fluid).pumpScale() / IdealFluidSolver.REFERENCE_RPM
                     * (rpm + flow / IdealFluidSolver.REFERENCE_FLOW)
                     * Math.max(flow, rpm * IdealFluidSolver.REFERENCE_FLOW);
-            double reaction = resolvedTorque(-pump.differentialcreate$torque(), scale);
-            boolean driving = reaction * speed > 0 || speed == 0 && reaction != 0;
-            return new LoadFactor.Member(ratio, speed, driving ? reaction : 0,
-                Math.max(0, -reaction * Math.signum(speed)), driving);
+            double reaction = LoadFactor.resolvedTorque(-pump.differentialcreate$torque(), scale);
+            return new LoadFactor.Member(ratio, speed, 0, Math.abs(reaction), false);
         }
         var curve = be.isSource() ? SourcePhysics.curve(be) : new SourcePhysics.Curve(0, 0);
         // Power limits and governor admission can produce genuine tiny drive.
         // Use that actual term, rather than the unthrottled stall torque.
         double driving = DriveTorque.torque(curve.stallTorque(), curve.powerLimit(), speed, curve.governorSpeed(), curve.governorRange());
-        double drive = resolvedTorque(curve.torque(speed), Math.abs(driving) + Math.abs(curve.damping() * speed));
+        double drive = LoadFactor.resolvedTorque(curve.torque(speed), Math.abs(driving) + Math.abs(curve.damping() * speed));
         return new LoadFactor.Member(ratio, speed, drive, MachineActivity.loadTorque(be, speed),
             curve.stallTorque() != 0);
     }
 
-    /** Readout only: cancellation and pressure projection leave small rounding
-     * residues. Never divide those into a fabricated load or braking state.
-     * Scale with floating-point precision, not a fixed torque/flow cutoff.
-     * Physical forces, speeds, inventory and energy integration stay untouched. */
-    private static double resolvedTorque(double value, double scale) {
-        return Double.isFinite(scale) && Math.abs(value) <= 64 * Math.ulp(scale) ? 0 : value;
-    }
 }

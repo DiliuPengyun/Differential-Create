@@ -16,20 +16,22 @@
 
 手持扳手瞄准固定端时，绿色框表示移动接口本体中心可以接触的区域，黄色框表示伸出准备区域。双方仍须朝向相对；准备区不施加制动力。接口状态通过接头伸缩动画和比较器反馈观察，不额外添加护目镜信息。放大结构、提高转速或增加红石传播延迟后，应降低进站速度或改用定位控制。
 
+实际接触要求两端朝向误差不超过 2°；伸出准备仍使用较宽的检测范围。尚未搭接就经过站点属于未接触经过，不计为接合失败；已经搭接后失去对准仍会立即释放。低速旋转与程序定位、物品与流体版本共用这一判定。
+
 ## 设置与信号
 
-两个设置均在固定端侧面的扳手设置框中，支持存档和剪贴板复制。
+两个设置均在固定端侧面的扳手设置框中，使用 Create 原生图标选项面板，支持存档和剪贴板复制。新放置的接口、没有设置数据的旧存档，默认采用“连接时”输出和“自动放行”；更换界面不会覆盖已经保存的其他选项。
 
 | 比较器输出 | 空闲／准备 | 制动／接合 | 可传输 | 正常收回 |
 | --- | ---: | ---: | ---: | ---: |
-| 连接许可（默认） | 0 | 0 | 15 | 0 |
-| 机械占用 | 0 | 15 | 15 | 15 |
-| 停靠阶段 | 0／8 | 8 | 15 | 8 |
+| 连接时（默认） | 0 | 0 | 15 | 0 |
+| 占用期间 | 0 | 15 | 15 | 15 |
+| 对接阶段 | 0／8 | 8 | 15 | 8 |
 
-机械占用从实际搭接持续到完全释放，用于离合器反馈。阶段输出用于顺序控制；其中准备阶段的 8 不适合直接触发结构支路的离合器。
+“占用期间”从实际搭接持续到完全释放，用于离合器反馈。“对接阶段”用于顺序控制；其中准备阶段的 8 不适合直接触发结构支路的离合器。
 
-- **自动空闲放行（默认）**：从开放库存起等待 Create 的 `logistics.psiTimeout`，默认 60 游戏 tick。实际成功搬运非空物品或非零流体才刷新计时；查询、模拟和失败调用不刷新。超时表示没有搬运，不能据此确认库存已经卸空。
-- **红石放行**：持续保持，直到外部控制器给固定端红石高电平。适合慢速灌装、延迟启动泵或有明确完成条件的物流。两种设置中，高电平均立即关闭访问，开始收回，并禁止新捕获。
+- **自动放行（默认）**：从开放库存起等待 Create 的 `logistics.psiTimeout`，默认 60 游戏 tick。实际成功搬运非空物品或非零流体才刷新计时；查询、模拟和失败调用不刷新。超时表示没有搬运，不能据此确认库存已经卸空。
+- **等待红石**：持续保持，直到外部控制器给固定端红石高电平。适合慢速灌装、延迟启动泵或有明确完成条件的物流。两种设置中，高电平均立即关闭访问，开始收回，并禁止新捕获。
 
 拆端、关闭移动端 actor、实体消失、对准失效或保持滑移都会立即关闭会话并撤掉失效的机械接触。正常释放保留真实停车后的运动状态；出站由当前实际动力重新加速。
 
@@ -72,7 +74,7 @@ PortableDocking.register(MY_INTERFACE.get(), new PortableDocking.Adapter() {
 
 需要共享流体库存预算的包装可实现 `DockingSession.Bound`，返回自己的会话及真实库存身份。身份只用于预算去重，不授予访问权限。`DockingHandlers.Items` 和 `DockingHandlers.Fluids` 是现成参考。
 
-当前实现覆盖普通矿车、机械轴承和直线结构的公共驱动路径；列车通过 `TrainActorMotion` 接入同一套有限反力、停稳确认与库存会话，路径导航和站点调度继续使用 Create。直轨列车的接口场景见 [TrainOperationTests](../src/main/java/com/diliupengyun/differential_create/tests/TrainOperationTests.java)，包含物品／流体传输、禁用、拆端、重接、重载及失效能力检查。第三方额外资源的库存协议仍需相应适配与实测。稳定子结构、双底车、多接头、特殊控制器、高速弯轨停靠和完整客户端多人交互仍需扩大验收范围。
+当前实现覆盖普通矿车、机械轴承和直线结构的公共驱动路径；列车通过 `TrainActorMotion` 接入同一套有限反力、停稳确认与库存会话，路径导航和站点调度继续使用 Create。直轨列车的接口场景见 [TrainOperationTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/TrainOperationTests.java)，包含物品／流体传输、禁用、拆端、重接、重载及失效能力检查。第三方额外资源的库存协议仍需相应适配与实测。稳定子结构、双底车、多接头、特殊控制器、高速弯轨停靠和完整客户端多人交互仍需扩大验收范围。
 
 ## 验证入口
 
@@ -100,7 +102,7 @@ PortableDocking.register(MY_INTERFACE.get(), new PortableDocking.Adapter() {
 | 完整空气／流体套件 | 首轮 427 项中 426 项通过；`structure_shared_world_room_water` 未在 400 tick 观察窗内达到接收量要求。随后水／岩浆两项独立复验均通过，守恒误差为零；首轮时限失败原因仍需确认 |
 | 客户端设置、预览与伸缩显示 | 编译通过；完整实机交互与多人观察待验收 |
 
-新接口回归代码为 [PortableDockingTests](../src/main/java/com/diliupengyun/differential_create/tests/PortableDockingTests.java)、[PortableMachineTests](../src/main/java/com/diliupengyun/differential_create/tests/PortableMachineTests.java)、[PortableTransportTests](../src/main/java/com/diliupengyun/differential_create/tests/PortableTransportTests.java)、[PortableDepotTests](../src/main/java/com/diliupengyun/differential_create/tests/PortableDepotTests.java)、[PortableReloadTests](../src/main/java/com/diliupengyun/differential_create/tests/PortableReloadTests.java) 和 [PortableFluidNetworkTests](../src/main/java/com/diliupengyun/differential_create/tests/PortableFluidNetworkTests.java)。
+新接口回归代码为 [PortableDockingTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/PortableDockingTests.java)、[PortableMachineTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/PortableMachineTests.java)、[PortableTransportTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/PortableTransportTests.java)、[PortableDepotTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/PortableDepotTests.java)、[PortableReloadTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/PortableReloadTests.java) 和 [PortableFluidNetworkTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/PortableFluidNetworkTests.java)。
 
 2026-10-11 补验收：接口专项扩展为 **36 项，全部通过**。新增 `dock_pipe_reconnect_fill` 和 `dock_pipe_reconnect_drain`，让泵先对关闭的接口运行 60 tick，再连接、真实输送、红石关闭和重新接合。两项在修复前均因输送量为零而失败；修复库存能力缓存重建后，均完成两次真实输送，旧 handler 始终失效，总流体守恒误差小于 `1e-6 mB`。
 

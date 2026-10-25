@@ -218,7 +218,15 @@ public final class PipeHydraulics {
             queue = next; remember();
         }
         public FluidQueue.Part<FluidStack> first() { prepare(); return queue.peek(true); }
-        public java.util.List<FluidQueue.Part<FluidStack>> take(double wanted) { prepare(); var result = queue.take(wanted, true); remember(); return result; }
+        public java.util.List<FluidQueue.Part<FluidStack>> take(double wanted) {
+            if (!(wanted >= 0) || !Double.isFinite(wanted)) throw new IllegalArgumentException("Invalid buffer withdrawal");
+            prepare();
+            // Native reservation and its fractional debit use the same
+            // ownership precision. Pass only actual stock to the strict queue.
+            if (wanted > amount && FluidBudget.receiptSpace(wanted, amount) > 0)
+                throw new IllegalStateException("Native withdrawal exceeded owned buffer stock");
+            var result = queue.take(Math.min(wanted, amount), true); remember(); return result;
+        }
         public boolean matches(FluidStack other) {
             prepare(); return amount == 0 || !fluid.isEmpty() && FluidStack.isSameFluidSameComponents(fluid, other);
         }

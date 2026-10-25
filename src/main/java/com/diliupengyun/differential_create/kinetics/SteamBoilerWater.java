@@ -42,10 +42,11 @@ public final class SteamBoilerWater {
 
     public static void begin(FluidTankBlockEntity controller) {
         var level = controller.getLevel();
-        if (level == null || level.isClientSide || controller.isVirtual() || controller.isRemoved() || !controller.isController()) return;
+        if (level == null || !PhysicsPreview.enabled(level) && (level.isClientSide || controller.isVirtual())
+            || controller.isRemoved() || !controller.isController()) return;
         var boiler = controller.boiler; var state = state(boiler);
         bind(controller);
-        long tick = level.getGameTime();
+        long tick = PhysicsPreview.time(level);
         if (state.tick == tick) return;
         state.tick = tick;
         BoilerAdmission.set(boiler, 1);
@@ -63,7 +64,7 @@ public final class SteamBoilerWater {
         if (!FluidHelper.isWater(resource.getFluid()) || resource.isEmpty() || !boiler.isActive()) return 0;
         var state = state(boiler); var controller = state.controller.get();
         if (controller == null || controller.isRemoved() || controller.getLevel() == null
-            || controller.getLevel().isClientSide || !controller.isController() || controller.boiler != boiler
+            || controller.getLevel().isClientSide && !PhysicsPreview.enabled(controller.getLevel()) || !controller.isController() || controller.boiler != boiler
             || !controller.getLevel().isLoaded(controller.getBlockPos())
             || !(SourcePhysics.thermalSteamLevel(boiler, controller.getTotalTankSize()) > 0)) return 0;
         begin(controller);

@@ -6,15 +6,15 @@
 
 | 入口 | 场景数 | 检查范围 |
 | --- | ---: | --- |
-| [MinecartIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartIntegrationTests.java) | 115 | 原版速度/位移、惯量、双车支撑、基本切削、停转、落沙、碰撞、原生暂停与当前格式读档 |
-| [MinecartOperationTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartOperationTests.java) | 188 | 作业途中操作、控制按钮、拾取重放、收割、耕地、铺路及材料退款 |
-| [MinecartLifecycleTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartLifecycleTests.java) | 36 | 自然世界 tick、连续目标、离轨再上轨、补煤、玩家联结和拆开 |
-| [MinecartRailTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartRailTests.java) | 60 | 全部十种轨道形态、坡道上的短钻头、弯道三种旋转模式、裸车地面/空中运动 |
-| [MinecartInteractionTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartInteractionTests.java) | 36 | 上下车、激活/探测铁轨、漏斗收集、TNT 引信、实际机械手和存储接口驻留 |
-| [MinecartTurningTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartTurningTests.java) | 280 | 五种工具的转向作业、圆弧中间目标、停转及真实剩余冲程、双车偏航/俯仰/复合姿态、稳定子结构与姿态数据包 |
+| [MinecartIntegrationTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/MinecartIntegrationTests.java) | 115 | 原版速度/位移、惯量、双车支撑、基本切削、停转、落沙、碰撞、原生暂停与当前格式读档 |
+| [MinecartOperationTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/MinecartOperationTests.java) | 188 | 作业途中操作、控制按钮、拾取重放、收割、耕地、铺路及材料退款 |
+| [MinecartLifecycleTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/MinecartLifecycleTests.java) | 36 | 自然世界 tick、连续目标、离轨再上轨、补煤、玩家联结和拆开 |
+| [MinecartRailTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/MinecartRailTests.java) | 60 | 全部十种轨道形态、坡道上的短钻头、弯道三种旋转模式、裸车地面/空中运动 |
+| [MinecartInteractionTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/MinecartInteractionTests.java) | 36 | 上下车、激活/探测铁轨、漏斗收集、TNT 引信、实际机械手和存储接口驻留 |
+| [MinecartTurningTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/MinecartTurningTests.java) | 280 | 五种工具的转向作业、圆弧中间目标、停转及真实剩余冲程、双车偏航/俯仰/复合姿态、稳定子结构与姿态数据包 |
 | **上述六组小计** | **715** | X/Z 轴上的操作覆盖东、西、南、北四个方向；不含后续独立机械手供能专项 |
 
-[MinecartHandPowerTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartHandPowerTests.java) 另有 28 个四方向场景，验证单台与 16 台机械手的冷启动、真实轨道取能、连续及高速补种、滑行能量转移与无储能不免费作业。轴驱动机械手及混合作业另见 [MovingDeployerTests](../src/main/java/com/diliupengyun/differential_create/tests/MovingDeployerTests.java)。这些场景不包含在上述 715 项小计中，当前完整套件数量以本次测试输出为准。
+[MinecartHandPowerTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/MinecartHandPowerTests.java) 另有 28 个四方向场景，验证单台与 16 台机械手的冷启动、真实轨道取能、连续及高速补种、滑行能量转移与无储能不免费作业。轴驱动机械手及混合作业另见 [MovingDeployerTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/MovingDeployerTests.java)。这些场景不包含在上述 715 项小计中，当前完整套件数量以本次测试输出为准。
 
 [MinecartRegression](../src/physicsTest/java/com/diliupengyun/differential_create/MinecartRegression.java) 的既有记录另有 5668 项数值检查。2026-10-10 接口首版曾通过 1332 项运动 GameTest 和 247 项常规机械与流体 GameTest，其中运动套件含上述 715 个矿车场景和当时的 34 项物品／流体接口专项；这不是当前套件的总数或本次复验结果。接口后续验证及完整流体套件的失败记录见[接口验证记录](PORTABLE_STORAGE.md#验证入口)。
 

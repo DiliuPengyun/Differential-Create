@@ -32,7 +32,7 @@ public abstract class MechanicalMixerBlockEntityMixin extends BasinOperatingBloc
 		ci.cancel();
 		MechanicalMixerBlockEntity self = (MechanicalMixerBlockEntity) (Object) this;
 		if (!self.running || level == null || MachineWork.deferred(self)) return;
-		double rate = Math.abs(getSpeed()) / 64.0;
+        double rate = com.diliupengyun.differential_create.kinetics.PhysicsPreview.travel(self) / 64.0;
 		if (rate == 0) return;
 		if (!level.isClientSide) setChanged();
 		if (self.runningTicks >= 40) {
@@ -46,7 +46,7 @@ public abstract class MechanicalMixerBlockEntityMixin extends BasinOperatingBloc
 			self.runningTicks = Math.min(self.runningTicks < 20 ? 20 : 40, next);
 			return;
 		}
-		if (level.isClientSide) { self.renderParticles(); return; }
+        if (level.isClientSide && !com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(level)) { self.renderParticles(); return; }
 		if (currentRecipe == null && differentialcreate$recipe != null)
 			currentRecipe = level.getRecipeManager().byKey(differentialcreate$recipe).map(holder -> holder.value()).orElse(null);
 		if (!matchBasinRecipe(currentRecipe)) {

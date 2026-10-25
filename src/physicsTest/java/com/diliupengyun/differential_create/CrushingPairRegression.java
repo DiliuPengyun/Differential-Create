@@ -56,7 +56,42 @@ public final class CrushingPairRegression {
         near(first.workTravel()[0],again.workTravel()[0],0,"discarded probe isolation");
         near(1,first.angle()[2],1e-14,"independent component clock");
         elasticCoupling();
+        undampedCommonMode();
         System.out.println("Crushing pair regression: "+checks+" checks passed");
+    }
+    /** Crushing brakes relative rotation, not the orthogonal elastic vibration of both wheels. */
+    private static void undampedCommonMode() {
+        double inertia = .1, stiffness = 1e7, torque = 8, tickTime = 1d / 1200;
+        double inf = Double.POSITIVE_INFINITY;
+        var bodies = List.of(body(inertia, 0), body(inertia, 0));
+        var links = List.of(new TorsionSolver.Link(0, 1, -1, stiffness, 0, inf, inf),
+            TorsionSolver.Link.work(0, 1, torque));
+        for (int substeps : new int[]{32, 64, 128}) for (double common : new double[]{0, 4}) {
+            // The two independent modes have known energies: J*d^2 and J*c^2.
+            // No external drive, damping, body drag or preloaded spring is present.
+            double relative = 16, initial = inertia * (relative * relative + common * common);
+            double residual = inertia * common * common, work = 0;
+            double[] speed = {common + relative, common - relative}, twist = new double[2];
+            double minimum = inf, maximum = 0;
+            for (int tick = 1; tick <= 1200; tick++) {
+                var result = TorsionSolver.advance(bodies, links, speed, twist, tickTime, tickTime / substeps);
+                speed = result.speed(); twist = result.twist();
+                work += torque * result.workTravel()[1];
+                double kinetic = .5 * inertia * (speed[0] * speed[0] + speed[1] * speed[1]);
+                double elastic = .5 * stiffness * twist[0] * twist[0];
+                near(initial, kinetic + elastic + work, 2e-6, "unpowered energy ledger");
+                if (tick > 300) {
+                    near(residual, kinetic + elastic, 2e-6, "undamped common-mode energy");
+                    near(0, speed[0] - speed[1], 1e-7, "crushing coordinate has stopped");
+                    near(0, result.workTravel()[1], 1e-10, "residual vibration cannot process items");
+                    minimum = Math.min(minimum, kinetic); maximum = Math.max(maximum, kinetic);
+                }
+            }
+            near(inertia * relative * relative, work, 2e-6, "only relative-mode energy was consumed");
+            if (common == 0) near(0, maximum, 1e-8, "symmetric isolated pair comes fully to rest");
+            else if (minimum > .01 || maximum < residual * .99)
+                throw new AssertionError("Residual energy did not exchange between spring and kinetic energy");
+        }
     }
     private static void elasticCoupling() {
         double inf=Double.POSITIVE_INFINITY, k=100000;

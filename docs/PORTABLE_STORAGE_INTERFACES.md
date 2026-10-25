@@ -38,13 +38,13 @@
 
 ## 当时的流体管网交互和旧能力缺陷
 
-当时微分动力已把静态流体接口作为原生 `IFluidHandler` 边界访问，实际交付使用整数 mB，小数保存在外部管网缓冲中；接口使用泛用机器的近似水头。这项水头边界仍保留，但完整泵、接口、移动储罐的双向传输和重接后来已有专项，见[当前接口验证记录](PORTABLE_STORAGE.md#验证入口)，不能继续视为完全未测试。
+当时微分动力已把静态流体接口作为原生 `IFluidHandler` 边界访问，实际交付使用整数 mB，小数保存在外部管网缓冲中；接口使用泛用机器的近似水头。目前已统一为同参考压力的库存边界，不再使用机器近似水头；完整泵、接口、移动储罐的双向传输和重接后来已有专项，见[当前接口验证记录](PORTABLE_STORAGE.md#验证入口)，不能继续视为完全未测试。
 
 由交付代码与原生计时条件可推得：接口作为受液端时，尚未累计到 1 mB 的小数缓冲不会执行 `fill`，也不会续期；极低流量可能在首次有效注入前就解除驻留。供液方向会先以整数抽取并保留内部余量，不能直接套用同一个时间估算。此处的实际停车效果需要低流量接管测试确认。
 
 **已复现的上游边界：外部长期保存旧流体 handler 时，红石断开后仍可能注入。** Create 的流体 `fill` 只判断计时区间 `isConnected()`，而两个 `drain` 和物品插取都经过 `canTransfer()`，后者同时检查连接实体。专项测试在断开后重新取得 capability，注入被拒绝；但对断开前保存的旧对象调用 `fill`，仍接受 1 mB，旧车载库存从 4000 增至 4001 mB。同一个旧对象的抽取被拒绝，旧物品 handler 的插入也被拒绝。[对应流体实现](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/content/contraptions/actors/psi/PortableFluidInterfaceBlockEntity.java)
 
-这个历史缺陷要求调用者保留旧对象，且计时器仍处于连接范围。当前微分动力已通过 [DockingSession](../src/main/java/com/diliupengyun/differential_create/kinetics/portable/DockingSession.java) 和 [DockingHandlers](../src/main/java/com/diliupengyun/differential_create/kinetics/portable/DockingHandlers.java) 为物品及流体访问绑定会话，断开和换车后旧对象失效；对应拒绝判据位于 [PortableDockingTests](../src/main/java/com/diliupengyun/differential_create/tests/PortableDockingTests.java)。研究工具刻意保留上游缺陷复现，不应改作当前版本的通过标准。
+这个历史缺陷要求调用者保留旧对象，且计时器仍处于连接范围。当前微分动力已通过 [DockingSession](../src/main/java/com/diliupengyun/differential_create/kinetics/portable/DockingSession.java) 和 [DockingHandlers](../src/main/java/com/diliupengyun/differential_create/kinetics/portable/DockingHandlers.java) 为物品及流体访问绑定会话，断开和换车后旧对象失效；对应拒绝判据位于 [PortableDockingTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/PortableDockingTests.java)。研究工具刻意保留上游缺陷复现，不应改作当前版本的通过标准。
 
 ## 专项验证和维护
 

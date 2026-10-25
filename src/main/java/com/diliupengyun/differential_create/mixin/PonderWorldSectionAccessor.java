@@ -8,4 +8,5 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 @Mixin(WorldSectionElementImpl.class)
 public interface PonderWorldSectionAccessor {
     @Accessor("section") Selection differentialcreate$selection();
+    @Accessor("centerOfRotation") net.minecraft.world.phys.Vec3 differentialcreate$centre();
 }

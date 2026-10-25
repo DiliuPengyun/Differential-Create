@@ -4,9 +4,6 @@ import java.util.Set;
 
 import com.diliupengyun.differential_create.content.ModContent;
 import com.diliupengyun.differential_create.kinetics.ContraptionGeometry;
-import com.diliupengyun.differential_create.kinetics.BoilerAdmission;
-import com.diliupengyun.differential_create.kinetics.LoadFactor;
-import com.diliupengyun.differential_create.kinetics.LoadGaugeScale;
 import com.diliupengyun.differential_create.kinetics.SpeedGaugeRangeBehaviour;
 import com.diliupengyun.differential_create.trains.GearLeverBlock;
 import com.diliupengyun.differential_create.trains.SteamBogey;
@@ -15,14 +12,10 @@ import com.simibubi.create.AllItems;
 import com.simibubi.create.content.contraptions.actors.psi.PortableStorageInterfaceBlockEntity;
 import com.simibubi.create.content.contraptions.mounted.CartAssembleRailType;
 import com.simibubi.create.content.contraptions.mounted.CartAssemblerBlock;
-import com.simibubi.create.content.fluids.pipes.valve.FluidValveBlock;
 import com.simibubi.create.content.fluids.pump.PumpBlock;
 import com.simibubi.create.content.fluids.tank.FluidTankBlockEntity;
 import com.simibubi.create.content.kinetics.gauge.GaugeBlock;
 import com.simibubi.create.content.kinetics.gauge.SpeedGaugeBlockEntity;
-import com.simibubi.create.content.kinetics.gauge.StressGaugeBlockEntity;
-import com.simibubi.create.content.kinetics.press.MechanicalPressBlockEntity;
-import com.simibubi.create.content.kinetics.press.PressingBehaviour;
 import com.simibubi.create.content.kinetics.steamEngine.PoweredShaftBlock;
 import com.simibubi.create.content.kinetics.steamEngine.PoweredShaftBlockEntity;
 import com.simibubi.create.content.kinetics.steamEngine.SteamEngineBlock;
@@ -33,6 +26,7 @@ import com.simibubi.create.foundation.ponder.CreateSceneBuilder;
 import net.createmod.catnip.math.Pointing;
 import net.createmod.ponder.api.PonderPalette;
 import net.createmod.ponder.api.element.ElementLink;
+import net.createmod.ponder.api.element.EntityElement;
 import net.createmod.ponder.api.element.MinecartElement;
 import net.createmod.ponder.api.element.WorldSectionElement;
 import net.createmod.ponder.api.scene.SceneBuilder;
@@ -41,7 +35,7 @@ import net.createmod.ponder.api.scene.Selection;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Direction.Axis;
-import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.vehicle.Minecart;
 import net.minecraft.world.entity.vehicle.MinecartChest;
 import net.minecraft.world.item.ItemStack;
@@ -69,6 +63,12 @@ public final class DifferentialPonderScenes {
         lesson.title(scene);
         scene.addInstruction(s -> PonderKinetics.of(s.getWorld()).useExplicitSources());
         scene.configureBasePlate(0, 0, 5);
+        // Tall machines need headroom at 16:9; low benches can use the closer view.
+        scene.scaleSceneView(switch (lesson.id) {
+            case "dynamics", "crusher_work", "steam_power" -> 0.9f;
+            case "portable_docking" -> 1.1f;
+            default -> 1.3f;
+        });
         scene.world().setBlocks(util.select().fromTo(-1, 1, -1, 7, 6, 7), Blocks.AIR.defaultBlockState(), false);
         scene.showBasePlate();
         scene.idle(5);
@@ -76,12 +76,17 @@ public final class DifferentialPonderScenes {
     }
 
     private static void block(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pos, BlockState state) {
+        block(scene, util, pos, state, Direction.DOWN);
+    }
+
+    private static void block(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pos, BlockState state,
+        Direction reveal) {
         // A revealing section must own the block exclusively, including while it fades in.
         // An existing owner can still be fading in, before it merges into the base section.
         scene.addInstruction(s -> s.forEachVisible(WorldSectionElement.class,
             section -> section.erase(util.select().position(pos))));
         scene.world().setBlock(pos, state, false);
-        scene.world().showSection(util.select().position(pos), Direction.DOWN);
+        scene.world().showSection(util.select().position(pos), reveal);
     }
 
     private static void replaceBlock(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pos, BlockState state) {
@@ -117,22 +122,63 @@ public final class DifferentialPonderScenes {
         return state;
     }
 
-    private static void drive(CreateSceneBuilder scene, SceneBuildingUtil util, BlockState control, BlockState output) {
-        drive(scene, util, control, output, 1);
+    /** Commands refer to the stage shaft; gearing translates them to the off-stage source. */
+    private record Drive(BlockPos source, float shaftPerSource) {
+        void setSpeed(CreateSceneBuilder scene, SceneBuildingUtil util, float shaftRpm) {
+            scene.world().setKineticSpeed(util.select().position(source), shaftRpm / shaftPerSource);
+        }
     }
 
-    private static void drive(CreateSceneBuilder scene, SceneBuildingUtil util, BlockState control, BlockState output, int height) {
-        for (int x = 1; x <= 3; x += 2) block(scene, util, new BlockPos(x, height, 2),
-            axis(AllBlocks.SHAFT.getDefaultState(), Axis.X));
-        block(scene, util, INPUT.above(height - 1), motor(Direction.EAST));
+    private static Drive drive(CreateSceneBuilder scene, SceneBuildingUtil util, BlockState control, BlockState output) {
+        return drive(scene, util, control, output, 1);
+    }
+
+    private static Drive drive(CreateSceneBuilder scene, SceneBuildingUtil util, BlockState control, BlockState output, int height) {
+        return drive(scene, util, control, output, height, Direction.EAST);
+    }
+
+    private static Drive drive(CreateSceneBuilder scene, SceneBuildingUtil util, BlockState control, BlockState output,
+        int height, Direction sourceSide) {
+        boolean fromEast = sourceSide == Direction.EAST;
+        BlockPos inlet = (fromEast ? OUTPUT : INPUT).above(height - 1);
+        BlockPos machine = (fromEast ? INPUT : OUTPUT).above(height - 1);
+        Drive input = driveInput(scene, util, inlet, sourceSide);
+        scene.idle(10);
+        block(scene, util, inlet.relative(sourceSide.getOpposite()), axis(AllBlocks.SHAFT.getDefaultState(), Axis.X));
+        scene.idle(5);
         block(scene, util, CONTROL.above(height - 1), axis(control, Axis.X));
-        block(scene, util, OUTPUT.above(height - 1), axis(output, Axis.X));
+        scene.idle(5);
+        block(scene, util, machine.relative(sourceSide), axis(AllBlocks.SHAFT.getDefaultState(), Axis.X));
+        scene.idle(5);
+        block(scene, util, machine, axis(output, Axis.X));
         scene.world().setKineticSpeed(util.select().everywhere(), 0);
         scene.idle(15);
+        return input;
     }
 
-    private static BlockState motor(Direction facing) {
-        return AllBlocks.CREATIVE_MOTOR.getDefaultState().setValue(BlockStateProperties.FACING, facing);
+    /** Native inlet: a low large cog beside the base plate meshes with the upper small cog. */
+    private static Drive driveInput(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pos, Direction outward) {
+        return driveInput(scene, util, pos, outward, outward.getAxis() == Axis.X ? Direction.NORTH : Direction.WEST);
+    }
+
+    private static Drive driveInput(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pos, Direction outward,
+        Direction lowerOffset) {
+        BlockPos topCog = pos.relative(outward);
+        BlockPos input = new BlockPos(topCog.getX(), 0, topCog.getZ()).relative(lowerOffset);
+        // Storyboard replacement instructions ignore blocks outside the template.
+        // Extend only the editable bounds; the visible base plate stays unchanged.
+        scene.addInstruction(s -> s.getWorld().setBounds(
+            net.createmod.catnip.math.BBHelper.encapsulate(
+                net.createmod.catnip.math.BBHelper.encapsulate(s.getWorld().getBounds(), input), topCog)));
+        // Create's clutch and gauge templates place the source at y=0, offset
+        // diagonally from a small cog at y=1. Taller shafts use a real cog ladder.
+        block(scene, util, input, axis(AllBlocks.LARGE_COGWHEEL.getDefaultState(), outward.getAxis()), Direction.UP);
+        for (int y = 1; y <= pos.getY(); y++)
+            block(scene, util, new BlockPos(topCog.getX(), y, topCog.getZ()),
+                axis(AllBlocks.COGWHEEL.getDefaultState(), outward.getAxis()));
+        block(scene, util, pos, axis(AllBlocks.SHAFT.getDefaultState(), outward.getAxis()));
+        scene.addInstruction(s -> PonderKinetics.of(s.getWorld()).boundary(s.getWorld(), input, 0));
+        return new Drive(input, pos.getY() % 2 == 0 ? 2 : -2);
     }
 
     /** Scripted placement skips neighbour updates; let Create select the connected rack models. */
@@ -153,86 +199,130 @@ public final class DifferentialPonderScenes {
     }
 
     /** Change only the drive command; inertia, load and contact torque determine the ramp. */
-    private static void target(CreateSceneBuilder scene, Selection selection, float to) {
-        scene.world().setKineticSpeed(selection, to);
+    private static void target(CreateSceneBuilder scene, SceneBuildingUtil util, Drive input, float to) {
+        input.setSpeed(scene, util, to);
         scene.idle(40);
     }
 
     public static void dynamics(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.DYNAMICS);
-        BlockPos input = INPUT.above(2), control = CONTROL.above(2), output = OUTPUT.above(2);
-        drive(scene, util, AllBlocks.FLYWHEEL.getDefaultState(), AllBlocks.MECHANICAL_PRESS.getDefaultState(), 3);
-        block(scene, util, OUTPUT, AllBlocks.DEPOT.getDefaultState());
+        BlockPos control = CONTROL.above(2);
+        Drive input = drive(scene, util, AllBlocks.FLYWHEEL.getDefaultState(), AllBlocks.MECHANICAL_PRESS.getDefaultState(), 3);
+        block(scene, util, INPUT, AllBlocks.DEPOT.getDefaultState());
         scene.idle(15);
 
         ItemStack ingots = new ItemStack(Items.COPPER_INGOT, 4);
-        ItemStack sheet = new ItemStack(AllItems.COPPER_SHEET.get());
 
-        // The press consumes one ingot per stroke; finished sheets rest on the depot rim.
-        PonderPressing.run(scene, 130, output, OUTPUT, ingots, sheet, 4, 3, 5);
-        scene.overlay().showControls(util.vector().blockSurface(OUTPUT, Direction.NORTH), Pointing.RIGHT, 30)
+        // Feed the native depot callbacks. A second scripted processor would
+        // handle the same contact again or restart a stroke already in progress.
+        loadPressBatch(scene, ingots, INPUT);
+        scene.overlay().showControls(util.vector().blockSurface(INPUT, Direction.NORTH), Pointing.RIGHT, 30)
             .withItem(ingots);
-        target(scene, util.select().position(input), 64);
+        PonderLesson.DYNAMICS.showFor(scene, util, control, 0, PonderPalette.WHITE, 130);
+        input.setSpeed(scene, util, 64);
         scene.effects().rotationSpeedIndicator(control);
-        PonderLesson.DYNAMICS.show(scene, util, control, 0);
+        scene.idle(140);
 
-        // With the motor cut, the stored flywheel energy still completes the next batch.
-        scene.world().setKineticSpeed(util.select().position(input), 0);
-        PonderPressing.run(scene, 130, output, OUTPUT, ingots, sheet, 4, 3, 5);
+        // Leave the original workpieces in place. Physically removing the input
+        // shaft makes the change from driven work to stored energy visible.
+        BlockPos inputShaft = control.east();
+        scene.overlay().showControls(util.vector().topOf(inputShaft), Pointing.DOWN, 20)
+            .withItem(AllItems.WRENCH.asStack()).rightClick().whileSneaking();
+        scene.world().hideSection(util.select().position(inputShaft), Direction.UP);
+        scene.idle(15);
+        scene.world().setBlock(inputShaft, Blocks.AIR.defaultBlockState(), false);
+        PonderLesson.DYNAMICS.showFor(scene, util, control, 1, PonderPalette.WHITE, 130);
+        scene.overlay().showOutline(PonderPalette.RED, new Object(), util.select().position(inputShaft), 130);
+        scene.idle(140);
+        awaitPressBatch(scene, INPUT);
+        scene.overlay().showControls(util.vector().blockSurface(INPUT, Direction.NORTH), Pointing.RIGHT, 25)
+            .rightClick();
         scene.idle(10);
-        PonderLesson.DYNAMICS.show(scene, util, output, 1);
-        scene.idle(20);
+        scene.world().modifyBlockEntity(INPUT, com.simibubi.create.content.logistics.depot.DepotBlockEntity.class,
+            depot -> depot.getBehaviour(com.simibubi.create.content.logistics.depot.DepotBehaviour.TYPE).clearContent());
+        scene.idle(15);
 
         BlockPos upperCog = new BlockPos(2, 4, 3);
-        BlockPos gearedShaft = new BlockPos(3, 4, 3);
-        BlockPos gearedPress = new BlockPos(4, 4, 3);
-        BlockPos gearedDepot = new BlockPos(4, 2, 3);
-        BlockPos gearedSupport = new BlockPos(4, 1, 3);
+        BlockPos gearedShaft = new BlockPos(1, 4, 3);
+        BlockPos gearedPress = new BlockPos(0, 4, 3);
+        BlockPos gearedDepot = new BlockPos(0, 2, 3);
+        BlockPos gearedSupport = new BlockPos(0, 1, 3);
         replaceBlock(scene, util, control, axis(AllBlocks.LARGE_COGWHEEL.getDefaultState(), Axis.X));
         block(scene, util, upperCog, axis(AllBlocks.COGWHEEL.getDefaultState(), Axis.X));
         block(scene, util, gearedShaft, axis(AllBlocks.SHAFT.getDefaultState(), Axis.X));
         block(scene, util, gearedSupport, Blocks.SMOOTH_STONE.defaultBlockState());
         block(scene, util, gearedPress, axis(AllBlocks.MECHANICAL_PRESS.getDefaultState(), Axis.X));
         block(scene, util, gearedDepot, AllBlocks.DEPOT.getDefaultState());
-        scene.rotateCameraY(90);
-        target(scene, util.select().position(input), 32);
-        // Same batch on the same start tick: the 2x press empties its depot while the 1x press is halfway.
-        PonderPressing.run(scene, 120, output, OUTPUT, ingots, sheet, 0, 1, 2);
-        PonderPressing.run(scene, 120, gearedPress, gearedDepot, ingots, sheet, 0, 1, 7);
+        block(scene, util, inputShaft, axis(AllBlocks.SHAFT.getDefaultState(), Axis.X));
+        target(scene, util, input, 32);
         scene.effects().rotationSpeedIndicator(upperCog);
         PonderLesson.DYNAMICS.show(scene, util, upperCog, 2, PonderPalette.GREEN);
 
-        scene.overlay().showOutline(PonderPalette.RED, new Object(), util.select().fromTo(1, 3, 2, 2, 3, 2), 80);
-        PonderLesson.DYNAMICS.show(scene, util, new BlockPos(1, 3, 2), 3, PonderPalette.RED);
+        // Explain the meshing gears from the side first, then turn toward the
+        // depots for the comparison so both workpieces and heads remain visible.
+        scene.rotateCameraY(-45);
+        scene.idle(25);
+        PonderLesson.DYNAMICS.showFor(scene, util, gearedDepot, 3, PonderPalette.GREEN, 150);
+        scene.overlay().showOutline(PonderPalette.WHITE, new Object(), util.select().position(INPUT), 150);
+        loadPressBatch(scene, ingots.copyWithCount(2), INPUT, gearedDepot);
+        scene.idle(150);
+        awaitPressBatch(scene, INPUT, gearedDepot);
+        scene.idle(15);
         scene.markAsFinished();
+    }
+
+    /** Initial workpieces and collecting the previous finished batch are operator actions. */
+    private static void loadPressBatch(CreateSceneBuilder scene, ItemStack input, BlockPos... depots) {
+        scene.addInstruction(s -> {
+            for (var pos : depots)
+                if (s.getWorld().getBlockEntity(pos) instanceof com.simibubi.create.content.logistics.depot.DepotBlockEntity tray) {
+                    var depot = tray.getBehaviour(com.simibubi.create.content.logistics.depot.DepotBehaviour.TYPE);
+                    depot.clearContent();
+                    var item = new com.simibubi.create.content.kinetics.belt.transport.TransportedItemStack(input.copy());
+                    item.beltPosition = item.prevBeltPosition = .5f;
+                    item.angle = 200;
+                    depot.setHeldItem(item);
+                }
+        });
+    }
+
+    private static void awaitPressBatch(CreateSceneBuilder scene, BlockPos... depots) {
+        scene.addInstruction(new PonderAwait(s -> {
+            for (var pos : depots)
+                if (!(s.getWorld().getBlockEntity(pos) instanceof com.simibubi.create.content.logistics.depot.DepotBlockEntity tray)
+                    || !AllItems.COPPER_SHEET.isIn(tray.getHeldItem())
+                    || !(s.getWorld().getBlockEntity(pos.above(2)) instanceof com.simibubi.create.content.kinetics.press.MechanicalPressBlockEntity press)
+                    || press.getPressingBehaviour().running) return false;
+            return true;
+        }, 700));
     }
 
     public static void clutch(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.CLUTCH);
-        drive(scene, util, AllBlocks.CLUTCH.getDefaultState(), AllBlocks.FLYWHEEL.getDefaultState());
+        Drive input = drive(scene, util, AllBlocks.CLUTCH.getDefaultState(),
+            AllBlocks.MECHANICAL_DRILL.getDefaultState().setValue(BlockStateProperties.FACING, Direction.WEST));
         block(scene, util, CONTROL.north(), AllBlocks.ANALOG_LEVER.getDefaultState());
         lever(scene, util, 0);
-        target(scene, util.select().position(INPUT), 64);
+        target(scene, util, input, 64);
         scene.effects().indicateSuccess(CONTROL);
         PonderLesson.CLUTCH.show(scene, util, CONTROL, 0);
 
         scene.overlay().showControls(util.vector().topOf(CONTROL.north()), Pointing.DOWN, 35).rightClick();
-        lever(scene, util, 10);
-        scene.effects().indicateRedstone(CONTROL.north());
-        scene.idle(25);
-        PonderLesson.CLUTCH.show(scene, util, CONTROL.north(), 1, PonderPalette.MEDIUM);
-
+        PonderLesson.CLUTCH.showFor(scene, util, CONTROL.north(), 1, PonderPalette.MEDIUM, 120);
         lever(scene, util, 15);
         scene.effects().indicateRedstone(CONTROL.north());
         scene.world().modifyBlock(CONTROL, s -> s.setValue(BlockStateProperties.POWERED, true), false);
-        target(scene, util.select().position(INPUT), 0);
-        PonderLesson.CLUTCH.show(scene, util, OUTPUT, 2, PonderPalette.RED);
+        scene.idle(130);
+        input.setSpeed(scene, util, 16);
+        PonderLesson.CLUTCH.show(scene, util, INPUT, 2, PonderPalette.RED);
 
         replaceBlock(scene, util, CONTROL, axis(ModContent.BRASS_CLUTCH.getDefaultState(), Axis.X));
         lever(scene, util, 0);
-        target(scene, util.select().position(INPUT), 64);
+        scene.idle(40);
         scene.overlay().showFilterSlotInput(util.vector().blockSurface(CONTROL, Direction.SOUTH), Direction.SOUTH, 60);
         scene.overlay().showControls(util.vector().blockSurface(CONTROL, Direction.SOUTH), Pointing.UP, 40).rightClick();
+        scene.world().modifyBlockEntity(CONTROL, com.diliupengyun.differential_create.content.BrassClutchBlockEntity.class,
+            brass -> brass.getBehaviour(com.simibubi.create.foundation.blockEntity.behaviour.scrollValue.ScrollValueBehaviour.TYPE).setValue(50));
         PonderLesson.CLUTCH.show(scene, util, CONTROL, 3, PonderPalette.BLUE);
         scene.markAsFinished();
     }
@@ -247,39 +337,41 @@ public final class DifferentialPonderScenes {
     public static void ratio(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.RATIO);
         BlockPos topCog = CONTROL.above();
-        BlockPos topMotor = topCog.south();
         block(scene, util, new BlockPos(1, 1, 2), axis(AllBlocks.SHAFT.getDefaultState(), Axis.X));
         block(scene, util, CONTROL, axis(AllBlocks.ROTATION_SPEED_CONTROLLER.getDefaultState(), Axis.X));
         block(scene, util, new BlockPos(3, 1, 2), axis(AllBlocks.SHAFT.getDefaultState(), Axis.X));
-        block(scene, util, OUTPUT, axis(AllBlocks.FLYWHEEL.getDefaultState(), Axis.X));
+        block(scene, util, OUTPUT, axis(AllBlocks.COGWHEEL.getDefaultState(), Axis.X));
         block(scene, util, topCog, axis(AllBlocks.LARGE_COGWHEEL.getDefaultState(), Axis.Z));
-        block(scene, util, topMotor, motor(Direction.NORTH));
+        block(scene, util, topCog.south(), axis(AllBlocks.SHAFT.getDefaultState(), Axis.Z));
+        Drive topInput = driveInput(scene, util, topCog.south(2), Direction.SOUTH);
         scene.world().setKineticSpeed(util.select().everywhere(), 0);
         scene.idle(10);
 
         ratioSetting(scene, 16);
-        target(scene, util.select().position(topMotor), 32);
+        target(scene, util, topInput, 32);
         scene.effects().rotationSpeedIndicator(CONTROL);
         PonderLesson.RATIO.show(scene, util, CONTROL, 0);
 
         scene.overlay().showFilterSlotInput(util.vector().blockSurface(CONTROL, Direction.NORTH), Direction.NORTH, 60);
         scene.overlay().showControls(util.vector().blockSurface(CONTROL, Direction.NORTH), Pointing.UP, 35).scroll();
+        PonderLesson.RATIO.showFor(scene, util, CONTROL, 1, PonderPalette.MEDIUM, 100);
         ratioSetting(scene, -16);
-        scene.idle(25);
+        scene.idle(110);
+        PonderLesson.RATIO.showFor(scene, util, CONTROL, 2, PonderPalette.RED, 100);
         ratioSetting(scene, 0);
-        scene.idle(20);
-        PonderLesson.RATIO.show(scene, util, CONTROL, 1, PonderPalette.MEDIUM);
+        scene.idle(110);
 
+        PonderLesson.RATIO.showFor(scene, util, topCog, 3, PonderPalette.GREEN, 120);
         ratioSetting(scene, 32);
-        scene.idle(30);
         scene.effects().rotationSpeedIndicator(OUTPUT);
-        PonderLesson.RATIO.show(scene, util, topCog, 2, PonderPalette.GREEN);
+        scene.idle(130);
 
         scene.overlay().showControls(util.vector().blockSurface(CONTROL, Direction.NORTH), Pointing.UP, 40)
             .rightClick().whileCTRL();
         ratioSetting(scene, 24);
         scene.idle(20);
-        PonderLesson.RATIO.show(scene, util, CONTROL, 3, PonderPalette.BLUE);
+        PonderLesson.RATIO.showFor(scene, util, CONTROL, 4, PonderPalette.BLUE, 120);
+        scene.idle(130);
         scene.markAsFinished();
     }
 
@@ -291,86 +383,82 @@ public final class DifferentialPonderScenes {
 
     public static void loadGauge(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.LOAD_GAUGE);
-        drive(scene, util, AllBlocks.FLYWHEEL.getDefaultState(),
+        Drive input = drive(scene, util,
             AllBlocks.STRESSOMETER.getDefaultState()
                 .setValue(GaugeBlock.AXIS_ALONG_FIRST_COORDINATE, true)
-                .setValue(GaugeBlock.FACING, Direction.UP));
-        block(scene, util, OUTPUT.north(), Blocks.COMPARATOR.defaultBlockState()
+                .setValue(GaugeBlock.FACING, Direction.UP),
+            AllBlocks.ENCASED_FAN.getDefaultState().setValue(BlockStateProperties.FACING, Direction.WEST));
+        block(scene, util, CONTROL.north(), Blocks.COMPARATOR.defaultBlockState()
             .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.SOUTH));
-        load(scene, Double.NaN);
-        target(scene, util.select().position(INPUT), 64);
-        load(scene, 0.35);
-        PonderLesson.LOAD_GAUGE.show(scene, util, OUTPUT, 0);
+        target(scene, util, input, 128);
+        PonderLesson.LOAD_GAUGE.show(scene, util, CONTROL, 0);
 
-        load(scene, 1.0);
-        scene.effects().indicateSuccess(OUTPUT);
-        scene.effects().indicateRedstone(OUTPUT.north());
-        PonderLesson.LOAD_GAUGE.show(scene, util, OUTPUT, 1, PonderPalette.MEDIUM);
-        load(scene, Double.POSITIVE_INFINITY);
-        scene.idle(30);
+        scene.effects().indicateSuccess(CONTROL);
+        scene.effects().indicateRedstone(CONTROL.north());
+        PonderLesson.LOAD_GAUGE.show(scene, util, CONTROL, 1, PonderPalette.MEDIUM);
 
-        target(scene, util.select().position(INPUT), 0);
-        load(scene, Double.NaN);
-        PonderLesson.LOAD_GAUGE.show(scene, util, OUTPUT.north(), 2, PonderPalette.RED);
+        target(scene, util, input, 0);
+        PonderLesson.LOAD_GAUGE.show(scene, util, CONTROL.north(), 2, PonderPalette.RED);
 
-        scene.overlay().showControls(util.vector().topOf(OUTPUT), Pointing.DOWN, 40)
+        scene.overlay().showControls(util.vector().topOf(CONTROL), Pointing.DOWN, 40)
             .withItem(AllItems.GOGGLES.asStack());
-        PonderLesson.LOAD_GAUGE.show(scene, util, OUTPUT, 3, PonderPalette.BLUE);
+        PonderLesson.LOAD_GAUGE.show(scene, util, CONTROL, 3, PonderPalette.BLUE);
         scene.markAsFinished();
-    }
-
-    private static void load(CreateSceneBuilder scene, double fraction) {
-        var reading = Double.isNaN(fraction) ? LoadFactor.Reading.NO_POWER
-            : new LoadFactor.Reading(LoadFactor.Status.AVAILABLE, fraction);
-        scene.world().modifyBlockEntity(OUTPUT, StressGaugeBlockEntity.class, gauge -> {
-            gauge.dialTarget = LoadGaugeScale.position(reading);
-            gauge.color = LoadGaugeScale.color(reading);
-        });
-        int signal = LoadGaugeScale.signal(reading);
-        scene.world().modifyBlock(OUTPUT.north(), s -> s.setValue(BlockStateProperties.POWERED, signal > 0), false);
-        scene.world().modifyBlockEntity(OUTPUT.north(), net.minecraft.world.level.block.entity.ComparatorBlockEntity.class,
-            comparator -> comparator.setOutputSignal(signal));
     }
 
     public static void speedGauge(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.SPEED_GAUGE);
-        drive(scene, util, AllBlocks.FLYWHEEL.getDefaultState(),
+        Drive input = drive(scene, util, AllBlocks.SHAFT.getDefaultState(),
             AllBlocks.SPEEDOMETER.getDefaultState()
                 .setValue(GaugeBlock.AXIS_ALONG_FIRST_COORDINATE, true)
                 .setValue(GaugeBlock.FACING, Direction.UP));
-        block(scene, util, OUTPUT.north(), Blocks.COMPARATOR.defaultBlockState()
+        block(scene, util, INPUT.north(), Blocks.COMPARATOR.defaultBlockState()
             .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.SOUTH));
-        target(scene, util.select().position(INPUT), 128);
-        scene.effects().indicateSuccess(OUTPUT);
-        PonderLesson.SPEED_GAUGE.show(scene, util, OUTPUT, 0);
+        target(scene, util, input, 128);
+        scene.effects().indicateSuccess(INPUT);
+        PonderLesson.SPEED_GAUGE.show(scene, util, INPUT, 0);
 
-        scene.overlay().showControls(util.vector().blockSurface(OUTPUT, Direction.NORTH), Pointing.RIGHT, 40)
+        scene.overlay().showControls(util.vector().blockSurface(INPUT, Direction.NORTH), Pointing.RIGHT, 40)
             .rightClick().withItem(AllItems.WRENCH.asStack());
-        scene.world().modifyBlockEntity(OUTPUT, SpeedGaugeBlockEntity.class, gauge -> {
+        PonderLesson.SPEED_GAUGE.showFor(scene, util, INPUT, 1, PonderPalette.BLUE, 120);
+        scene.world().modifyBlockEntity(INPUT, SpeedGaugeBlockEntity.class, gauge -> {
             if (gauge.getBehaviour(SpeedGaugeRangeBehaviour.TYPE) instanceof SpeedGaugeRangeBehaviour range)
                 range.setValue(0);
         });
-        scene.idle(20);
-        PonderLesson.SPEED_GAUGE.show(scene, util, OUTPUT, 1, PonderPalette.BLUE);
+        scene.idle(130);
 
-        scene.effects().indicateRedstone(OUTPUT.north());
-        scene.overlay().showControls(util.vector().topOf(OUTPUT), Pointing.DOWN, 40)
-            .withItem(AllItems.GOGGLES.asStack());
-        PonderLesson.SPEED_GAUGE.show(scene, util, OUTPUT.north(), 2, PonderPalette.GREEN);
         scene.markAsFinished();
     }
 
-    private static void pipes(CreateSceneBuilder scene, SceneBuildingUtil util) {
-        block(scene, util, INPUT, AllBlocks.FLUID_TANK.getDefaultState());
-        block(scene, util, OUTPUT, AllBlocks.FLUID_TANK.getDefaultState());
-        block(scene, util, new BlockPos(1, 1, 2), axis(AllBlocks.GLASS_FLUID_PIPE.getDefaultState(), Axis.X));
+    private static Drive pipes(CreateSceneBuilder scene, SceneBuildingUtil util, float initialSpeed,
+                               int sourceWater, int receiverWater, int tankHeight) {
+        pipeTank(scene, util, INPUT, tankHeight, sourceWater);
+        pipeTank(scene, util, OUTPUT, tankHeight, receiverWater);
+        block(scene, util, CONTROL.west(), axis(AllBlocks.GLASS_FLUID_PIPE.getDefaultState(), Axis.X));
         block(scene, util, CONTROL, AllBlocks.MECHANICAL_PUMP.getDefaultState().setValue(PumpBlock.FACING, Direction.EAST));
         block(scene, util, new BlockPos(3, 1, 2), axis(AllBlocks.GLASS_FLUID_PIPE.getDefaultState(), Axis.X));
-        fill(scene, INPUT, 6000); fill(scene, OUTPUT, 1000);
         block(scene, util, CONTROL.south(), axis(AllBlocks.COGWHEEL.getDefaultState(), Axis.X));
-        block(scene, util, CONTROL.south().west(), motor(Direction.EAST));
-        scene.world().setKineticSpeed(util.select().position(CONTROL.south().west()), -64);
+        block(scene, util, CONTROL.south().east(), axis(AllBlocks.SHAFT.getDefaultState(), Axis.X));
+        Drive input = driveInput(scene, util, CONTROL.south().east(2), Direction.EAST);
+        input.setSpeed(scene, util, initialSpeed);
         scene.idle(15);
+        return input;
+    }
+
+    private static void pipeTank(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos origin,
+                                 int height, int initialWater) {
+        for (int y = 0; y < height; y++) {
+            BlockPos pos = origin.above(y);
+            block(scene, util, pos, AllBlocks.FLUID_TANK.getDefaultState()
+                .setValue(com.simibubi.create.content.fluids.tank.FluidTankBlock.BOTTOM, y == 0)
+                .setValue(com.simibubi.create.content.fluids.tank.FluidTankBlock.TOP, y == height - 1));
+            if (y > 0) scene.world().modifyBlockEntity(pos, FluidTankBlockEntity.class, tank -> tank.setController(origin));
+        }
+        scene.world().modifyBlockEntity(origin, FluidTankBlockEntity.class, tank -> {
+            tank.setWidth(1); tank.setHeight(height); tank.applyFluidTankSize(height);
+            tank.setWindows(true);
+        });
+        fill(scene, origin, initialWater);
     }
 
     private static void fill(CreateSceneBuilder scene, BlockPos pos, int amount) {
@@ -378,66 +466,58 @@ public final class DifferentialPonderScenes {
             tank -> tank.getTankInventory().setFluid(new FluidStack(Fluids.WATER, amount)));
     }
 
-    private static void flow(CreateSceneBuilder scene, SceneBuildingUtil util, boolean forward) {
-        for (int i = 0; i < 4; i++) {
-            int x = forward ? i : 4 - i;
-            scene.overlay().showBigLine(PonderPalette.BLUE, util.vector().centerOf(x, 1, 2),
-                util.vector().centerOf(x + (forward ? 1 : -1), 1, 2), 16);
-            scene.idle(8);
-        }
-        fill(scene, INPUT, forward ? 4500 : 6000);
-        fill(scene, OUTPUT, forward ? 2500 : 1000);
-    }
-
     public static void pumpDirection(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.PUMP_DIRECTION);
-        pipes(scene, util);
-        flow(scene, util, true);
-        PonderLesson.PUMP_DIRECTION.show(scene, util, CONTROL, 0);
-
-        target(scene, util.select().position(CONTROL.south().west()), 64);
-        flow(scene, util, false);
-        PonderLesson.PUMP_DIRECTION.show(scene, util, CONTROL, 1, PonderPalette.MEDIUM);
+        // Keep both footprints and the plumbing. A taller native window makes
+        // the real waterline visible above the half-height pipe connection.
+        // Leave enough accessible water for coasting now that the redundant
+        // shaft-reversal phase no longer fills the receiving tank a second time.
+        Drive input = pipes(scene, util, 0, 10000, 6000, 2);
+        PonderLesson.PUMP_DIRECTION.showFor(scene, util, CONTROL, 0, PonderPalette.WHITE, 140);
+        scene.idle(10);
+        input.setSpeed(scene, util, -64);
+        scene.idle(140);
 
         scene.overlay().showControls(util.vector().topOf(CONTROL), Pointing.DOWN, 35)
             .rightClick().withItem(AllItems.WRENCH.asStack());
+        PonderLesson.PUMP_DIRECTION.showFor(scene, util, CONTROL, 1, PonderPalette.GREEN, 120);
         scene.world().modifyBlock(CONTROL, s -> s.setValue(PumpBlock.FACING, Direction.WEST), true);
-        flow(scene, util, true);
-        PonderLesson.PUMP_DIRECTION.show(scene, util, CONTROL, 2, PonderPalette.GREEN);
+        scene.idle(130);
 
-        target(scene, util.select().position(CONTROL.south().west()), 0);
-        PonderLesson.PUMP_DIRECTION.show(scene, util, INPUT, 3);
+        PonderLesson.PUMP_DIRECTION.showFor(scene, util, CONTROL, 2, PonderPalette.WHITE, 100);
+        input.setSpeed(scene, util, 0);
+        scene.idle(110);
         scene.markAsFinished();
     }
 
     public static void pumpNetwork(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.PUMP_NETWORK);
-        pipes(scene, util);
-        flow(scene, util, true);
-        PonderLesson.PUMP_NETWORK.show(scene, util, CONTROL, 0);
+        BlockPos window = CONTROL.east();
+        // No valve is needed to keep the introductory pipe dry: its source is
+        // initially empty. Filling that source is the only scripted fluid edit.
+        Drive input = pipes(scene, util, 0, 0, 0, 1);
+        scene.overlay().showOutline(PonderPalette.WHITE, new Object(), util.select().position(window), 100);
+        PonderLesson.PUMP_NETWORK.showFor(scene, util, window, 0, PonderPalette.WHITE, 100);
+        scene.idle(110);
 
-        BlockPos pipeEast = new BlockPos(3, 1, 2);
-        replaceBlock(scene, util, pipeEast, AllBlocks.FLUID_VALVE.getDefaultState()
-            .setValue(FluidValveBlock.FACING, Direction.UP)
-            .setValue(FluidValveBlock.AXIS_ALONG_FIRST_COORDINATE, false)
-            .setValue(FluidValveBlock.ENABLED, false));
-        scene.effects().indicateRedstone(pipeEast);
-        scene.idle(20);
-        PonderLesson.PUMP_NETWORK.show(scene, util, pipeEast, 1, PonderPalette.RED);
+        PonderLesson.PUMP_NETWORK.showFor(scene, util, window, 1, PonderPalette.BLUE, 140);
+        scene.overlay().showControls(util.vector().topOf(INPUT), Pointing.DOWN, 35)
+            .rightClick().withItem(new ItemStack(Items.WATER_BUCKET));
+        fill(scene, INPUT, 6000);
+        input.setSpeed(scene, util, -8);
+        scene.idle(150);
 
-        replaceBlock(scene, util, pipeEast, AllBlocks.SMART_FLUID_PIPE.getDefaultState()
-            .setValue(BlockStateProperties.ATTACH_FACE, AttachFace.FLOOR)
-            .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST));
-        flow(scene, util, true);
-        PonderLesson.PUMP_NETWORK.show(scene, util, pipeEast, 2, PonderPalette.GREEN);
+        PonderLesson.PUMP_NETWORK.showFor(scene, util, OUTPUT, 2, PonderPalette.GREEN, 100);
+        scene.idle(110);
         scene.markAsFinished();
     }
 
     public static void bearing(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.BEARING);
-        BlockPos motorPos = new BlockPos(2, 1, 2);
+        Drive inputPos = driveInput(scene, util, OUTPUT, Direction.EAST);
         BlockPos bearingPos = new BlockPos(2, 2, 2);
-        block(scene, util, motorPos, motor(Direction.UP));
+        block(scene, util, OUTPUT.west(), axis(AllBlocks.SHAFT.getDefaultState(), Axis.X));
+        block(scene, util, bearingPos.below(), axis(AllBlocks.GEARBOX.getDefaultState(), Axis.Z));
         block(scene, util, bearingPos, AllBlocks.MECHANICAL_BEARING.getDefaultState()
             .setValue(BlockStateProperties.FACING, Direction.UP));
 
@@ -454,20 +534,24 @@ public final class DifferentialPonderScenes {
         coupleSection(scene, util, bearingPos, arm,
             Set.of(new ContraptionGeometry.Cell(-1, 0, 0), new ContraptionGeometry.Cell(0, 0, 0),
                 new ContraptionGeometry.Cell(1, 0, 0)), 420);
-        target(scene, util.select().position(motorPos), 64);
-        PonderLesson.BEARING.show(scene, util, bearingPos, 0);
+        PonderLesson.BEARING.showFor(scene, util, bearingPos, 0, PonderPalette.WHITE, 120);
+        inputPos.setSpeed(scene, util, 64);
+        scene.idle(130);
 
-        PonderLesson.BEARING.show(scene, util, bearingPos.above(), 1, PonderPalette.GREEN);
+        PonderLesson.BEARING.showFor(scene, util, bearingPos.above(), 1, PonderPalette.GREEN, 110);
+        inputPos.setSpeed(scene, util, 32);
+        scene.idle(120);
 
-        target(scene, util.select().position(motorPos), 0);
-        PonderLesson.BEARING.show(scene, util, bearingPos, 2, PonderPalette.BLUE);
+        PonderLesson.BEARING.showFor(scene, util, bearingPos, 2, PonderPalette.BLUE, 100);
+        inputPos.setSpeed(scene, util, 0);
+        scene.idle(110);
         scene.markAsFinished();
     }
 
     public static void structureLoad(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.STRUCTURE_LOAD);
         BlockPos shaftAnchor = new BlockPos(1, 1, 2);
-        block(scene, util, INPUT, motor(Direction.EAST));
+        Drive input = driveInput(scene, util, INPUT, Direction.WEST);
         for (int x = 1; x <= 4; x++)
             block(scene, util, new BlockPos(x, 1, 2), axis(AllBlocks.GANTRY_SHAFT.getDefaultState(), Axis.X));
         connectGantryShafts(scene, util.select().fromTo(1, 1, 2, 4, 1, 2));
@@ -489,89 +573,67 @@ public final class DifferentialPonderScenes {
         block(scene, util, crop2, Blocks.WHEAT.defaultBlockState().setValue(CropBlock.AGE, 7));
         scene.idle(15);
 
-        translateSection(scene, util, shaftAnchor, rig,
-            Set.of(new ContraptionGeometry.Cell(0, 1, 0), new ContraptionGeometry.Cell(0, 1, -1)),
-            Direction.EAST, 320);
-        harvestAlongSection(scene, rig, shaftAnchor, toolPos, Direction.EAST, 320);
-        scene.world().setKineticSpeed(util.select().position(INPUT), 6);
+        translateSection(scene, shaftAnchor, rig, Direction.EAST);
+        input.setSpeed(scene, util, 6);
         PonderLesson.STRUCTURE_LOAD.show(scene, util, carriagePos, 0);
 
         PonderLesson.STRUCTURE_LOAD.show(scene, util, crop1, 1, PonderPalette.GREEN);
 
-        scene.world().setKineticSpeed(util.select().position(INPUT), -6);
-        PonderLesson.STRUCTURE_LOAD.show(scene, util, crop2, 2, PonderPalette.BLUE);
-        scene.world().setKineticSpeed(util.select().position(INPUT), 0);
+        input.setSpeed(scene, util, -6);
+        PonderLesson.STRUCTURE_LOAD.show(scene, util, shaftAnchor, 2, PonderPalette.BLUE);
+        input.setSpeed(scene, util, 0);
         scene.markAsFinished();
     }
 
     public static void continuousWork(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.CONTINUOUS_WORK);
-        BlockPos input = INPUT.above(2), control = CONTROL.above(2), output = OUTPUT.above(2);
-        drive(scene, util, AllBlocks.FLYWHEEL.getDefaultState(), AllBlocks.MECHANICAL_PRESS.getDefaultState(), 3);
-        block(scene, util, OUTPUT, AllBlocks.DEPOT.getDefaultState());
-        scene.world().createItemOnBeltLike(OUTPUT, Direction.UP, new ItemStack(Items.COPPER_INGOT));
-        scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
-            press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
-        target(scene, util.select().position(input), 64);
-        PonderLesson.CONTINUOUS_WORK.show(scene, util, output, 0);
+        BlockPos control = CONTROL.above(2), output = INPUT.above(2);
+        Drive input = drive(scene, util, AllBlocks.FLYWHEEL.getDefaultState(), AllBlocks.MECHANICAL_PRESS.getDefaultState(), 3);
+        block(scene, util, INPUT, AllBlocks.DEPOT.getDefaultState());
+        ItemStack ingot = new ItemStack(Items.COPPER_INGOT);
+        ItemStack sheet = new ItemStack(AllItems.COPPER_SHEET.get());
 
-        scene.world().modifyBlockEntity(output, MechanicalPressBlockEntity.class,
-            press -> press.getPressingBehaviour().start(PressingBehaviour.Mode.BELT));
-        target(scene, util.select().position(input), 16);
-        target(scene, util.select().position(input), 0);
-        PonderLesson.CONTINUOUS_WORK.show(scene, util, output, 1, PonderPalette.MEDIUM);
+        // The press consumes the ingot on the contact tick and leaves the sheet on the
+        // depot; the item change must follow the shaft travel, not a scripted flip.
+        PonderPressing.run(scene, 80, output, INPUT, ingot, sheet, 4, 3, 5);
+        scene.overlay().showControls(util.vector().blockSurface(INPUT, Direction.NORTH), Pointing.RIGHT, 30)
+            .withItem(ingot);
+        PonderLesson.CONTINUOUS_WORK.showFor(scene, util, output, 0, PonderPalette.WHITE, 120);
+        input.setSpeed(scene, util, 64);
+        scene.effects().rotationSpeedIndicator(control);
+        scene.idle(130);
 
-        scene.overlay().showControls(util.vector().topOf(OUTPUT), Pointing.DOWN, 40)
-            .withItem(AllItems.COPPER_SHEET.asStack());
-        scene.effects().indicateSuccess(OUTPUT);
-        scene.world().removeItemsFromBelt(OUTPUT);
-        scene.world().createItemOnBeltLike(OUTPUT, Direction.UP, AllItems.COPPER_SHEET.asStack());
-        PonderLesson.CONTINUOUS_WORK.show(scene, util, control, 2, PonderPalette.GREEN);
-        scene.markAsFinished();
-    }
+        // Place a new ingot for each case, while its explanatory caption is visible.
+        PonderPressing.run(scene, 260, output, INPUT, ingot, sheet, 4, 3, 5);
+        PonderLesson.CONTINUOUS_WORK.showFor(scene, util, output, 1, PonderPalette.MEDIUM, 120);
+        input.setSpeed(scene, util, 32);
+        scene.idle(130);
 
-    public static void backtank(SceneBuilder builder, SceneBuildingUtil util) {
-        var scene = start(builder, util, PonderLesson.BACKTANK);
-        BlockPos copperTank = new BlockPos(1, 1, 2), copperMotor = new BlockPos(1, 2, 2);
-        BlockPos netheriteTank = new BlockPos(3, 1, 2), netheriteMotor = new BlockPos(3, 2, 2);
-        block(scene, util, copperTank, AllBlocks.COPPER_BACKTANK.getDefaultState());
-        block(scene, util, copperMotor, motor(Direction.DOWN));
-        block(scene, util, netheriteTank, AllBlocks.NETHERITE_BACKTANK.getDefaultState());
-        block(scene, util, netheriteMotor, motor(Direction.DOWN));
-
-        Selection motors = util.select().position(copperMotor).add(util.select().position(netheriteMotor));
-        target(scene, motors, 128);
-        PonderLesson.BACKTANK.show(scene, util, copperTank, 0);
-
-        target(scene, motors, 32);
-        scene.overlay().showControls(util.vector().topOf(copperTank), Pointing.DOWN, 40)
-            .withItem(AllItems.COPPER_BACKTANK.asStack());
-        PonderLesson.BACKTANK.show(scene, util, netheriteTank, 1, PonderPalette.BLUE);
-
-        scene.effects().indicateSuccess(copperTank);
-        scene.effects().indicateSuccess(netheriteTank);
-        scene.world().modifyBlockEntity(copperTank, com.simibubi.create.content.equipment.armor.BacktankBlockEntity.class,
-            tank -> tank.setAirLevel(com.simibubi.create.content.equipment.armor.BacktankUtil.maxAir(0)));
-        scene.world().modifyBlock(netheriteTank, s -> s.setValue(BlockStateProperties.WATERLOGGED, true), false);
-        PonderLesson.BACKTANK.show(scene, util, copperTank, 2, PonderPalette.GREEN);
+        PonderLesson.CONTINUOUS_WORK.showFor(scene, util, control, 2, PonderPalette.GREEN, 150);
+        scene.overlay().showControls(util.vector().topOf(INPUT), Pointing.DOWN, 40).withItem(ingot);
+        PonderPressing.run(scene, 260, output, INPUT, ingot, sheet, 4, 3, 5);
+        input.setSpeed(scene, util, 0);
+        scene.idle(160);
         scene.markAsFinished();
     }
 
     public static void ejector(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.EJECTOR_WORK);
-        BlockPos motorPos = new BlockPos(4, 1, 3);
+        BlockPos inputPos = new BlockPos(4, 1, 4);
         block(scene, util, INPUT, AllBlocks.DEPOT.getDefaultState());
         block(scene, util, CONTROL, AllBlocks.DEPOT.getDefaultState());
         block(scene, util, OUTPUT, AllBlocks.WEIGHTED_EJECTOR.getDefaultState()
             .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.WEST));
-        block(scene, util, motorPos, motor(Direction.NORTH));
+        block(scene, util, inputPos.north(), axis(AllBlocks.SHAFT.getDefaultState(), Axis.Z));
+        Drive input = driveInput(scene, util, inputPos, Direction.SOUTH);
         scene.world().modifyBlockEntity(OUTPUT, com.simibubi.create.content.logistics.depot.EjectorBlockEntity.class,
             ejector -> ejector.setTarget(4, 0));
 
-        target(scene, util.select().position(motorPos), 64);
-        PonderLesson.EJECTOR_WORK.show(scene, util, OUTPUT, 0);
+        PonderLesson.EJECTOR_WORK.showFor(scene, util, OUTPUT, 0, PonderPalette.WHITE, 120);
+        input.setSpeed(scene, util, 64);
+        scene.idle(130);
 
-        target(scene, util.select().position(motorPos), 0);
+        target(scene, util, input, 0);
         ItemStack stack = new ItemStack(Items.COPPER_INGOT);
         scene.overlay().showControls(util.vector().topOf(OUTPUT), Pointing.DOWN, 35).withItem(stack);
         scene.effects().indicateSuccess(OUTPUT);
@@ -581,8 +643,10 @@ public final class DifferentialPonderScenes {
         scene.overlay().showOutline(PonderPalette.OUTPUT, new Object(), util.select().position(CONTROL), 60);
         scene.world().modifyBlockEntity(OUTPUT, com.simibubi.create.content.logistics.depot.EjectorBlockEntity.class,
             ejector -> ejector.setTarget(2, 0));
-        target(scene, util.select().position(motorPos), 64);
-        PonderLesson.EJECTOR_WORK.show(scene, util, CONTROL, 2, PonderPalette.BLUE);
+        target(scene, util, input, 64);
+        PonderLesson.EJECTOR_WORK.showFor(scene, util, CONTROL, 2, PonderPalette.BLUE, 120);
+        scene.world().createItemOnBeltLike(OUTPUT, Direction.EAST, stack);
+        scene.idle(130);
         scene.markAsFinished();
     }
 
@@ -590,13 +654,13 @@ public final class DifferentialPonderScenes {
         var scene = start(builder, util, PonderLesson.FAN_WORK);
         scene.configureBasePlate(0, 0, 6);
         scene.scaleSceneView(1.1f);
-        BlockPos motorPos = new BlockPos(2, 2, 5);
+        BlockPos inputPos = new BlockPos(2, 2, 5);
         BlockPos fanPos = new BlockPos(2, 2, 4);
         BlockPos lavaPos = new BlockPos(2, 2, 2);
         BlockPos depotPos = new BlockPos(2, 1, 1);
-        block(scene, util, motorPos.below(), Blocks.ANDESITE.defaultBlockState());
+        block(scene, util, inputPos.below(), Blocks.ANDESITE.defaultBlockState());
         block(scene, util, fanPos.below(), Blocks.ANDESITE.defaultBlockState());
-        block(scene, util, motorPos, motor(Direction.NORTH));
+        Drive input = driveInput(scene, util, inputPos, Direction.SOUTH);
         block(scene, util, fanPos, AllBlocks.ENCASED_FAN.getDefaultState()
             .setValue(BlockStateProperties.FACING, Direction.NORTH));
         block(scene, util, lavaPos, Blocks.LAVA.defaultBlockState());
@@ -608,27 +672,48 @@ public final class DifferentialPonderScenes {
         scene.addInstruction(s -> PonderKinetics.of(s.getWorld()).enableFanProcessing(fanPos));
         scene.idle(20);
 
-        target(scene, util.select().position(motorPos), -64);
+        target(scene, util, input, -64);
         scene.world().createItemOnBeltLike(depotPos, Direction.SOUTH, new ItemStack(Items.GOLD_ORE));
         scene.effects().rotationDirectionIndicator(fanPos);
-        PonderLesson.FAN_WORK.caption(scene, 0, PonderPalette.WHITE);
+        PonderLesson.FAN_WORK.showFor(scene, util, depotPos, 0, PonderPalette.WHITE, 220);
+        scene.idle(230);
 
-        target(scene, util.select().position(motorPos), -128);
-        scene.overlay().showOutline(PonderPalette.GREEN, new Object(), util.select().position(depotPos), 90);
-        PonderLesson.FAN_WORK.caption(scene, 1, PonderPalette.GREEN);
+        PonderLesson.FAN_WORK.showFor(scene, util, fanPos, 1, PonderPalette.GREEN, 220);
+        input.setSpeed(scene, util, -128);
+        scene.world().removeItemsFromBelt(depotPos);
+        scene.overlay().showControls(util.vector().topOf(depotPos), Pointing.DOWN, 35)
+            .withItem(new ItemStack(Items.GOLD_ORE));
+        scene.world().createItemOnBeltLike(depotPos, Direction.SOUTH, new ItemStack(Items.GOLD_ORE));
+        scene.overlay().showOutline(PonderPalette.GREEN, new Object(), util.select().position(depotPos), 210);
+        scene.idle(230);
 
-        target(scene, util.select().position(motorPos), 0);
-        scene.effects().rotationSpeedIndicator(fanPos);
-        PonderLesson.FAN_WORK.caption(scene, 2, PonderPalette.MEDIUM);
+        PonderLesson.FAN_WORK.showFor(scene, util, fanPos, 2, PonderPalette.MEDIUM, 120);
+        input.setSpeed(scene, util, 0);
+        scene.idle(130);
         scene.markAsFinished();
     }
 
     public static void sequencer(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.SEQUENCER);
-        drive(scene, util, AllBlocks.SEQUENCED_GEARSHIFT.getDefaultState(), AllBlocks.FLYWHEEL.getDefaultState());
-        block(scene, util, CONTROL.north(), Blocks.LEVER.defaultBlockState());
-        scene.overlay().showControls(util.vector().topOf(CONTROL), Pointing.DOWN, 35).rightClick();
-        scene.world().modifyBlockEntity(CONTROL,
+        scene.configureBasePlate(0, 0, 6);
+        scene.scaleSceneView(1.05f);
+        BlockPos control = CONTROL.above(), output = OUTPUT.above();
+        Drive input = drive(scene, util, AllBlocks.SEQUENCED_GEARSHIFT.getDefaultState(),
+            AllBlocks.MECHANICAL_BEARING.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST), 2, Direction.WEST);
+        // An asymmetric arm makes both the commanded angle and the held position visible.
+        Selection armSelection = util.select().fromTo(output.east(), output.east().above());
+        scene.world().setBlocks(armSelection, Blocks.OAK_PLANKS.defaultBlockState(), false);
+        scene.world().setBlock(output.east().above(), Blocks.WHITE_WOOL.defaultBlockState(), false);
+        ElementLink<WorldSectionElement> arm = scene.world().showIndependentSection(armSelection, Direction.DOWN);
+        scene.world().configureCenterOfRotation(arm, util.vector().centerOf(output));
+        scene.effects().superGlue(output.east(), Direction.UP, true);
+        coupleSection(scene, util, output, arm,
+            Set.of(new ContraptionGeometry.Cell(1, 0, 0), new ContraptionGeometry.Cell(1, 1, 0)), Axis.X, 660);
+        block(scene, util, control.north(), Blocks.LEVER.defaultBlockState()
+            .setValue(BlockStateProperties.ATTACH_FACE, AttachFace.WALL)
+            .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH));
+        scene.overlay().showControls(util.vector().topOf(control), Pointing.DOWN, 35).rightClick();
+        scene.world().modifyBlockEntity(control,
             com.simibubi.create.content.kinetics.transmission.sequencer.SequencedGearshiftBlockEntity.class, sequencer -> {
                 var program = sequencer.getInstructions();
                 program.clear();
@@ -642,23 +727,35 @@ public final class DifferentialPonderScenes {
                 program.add(new com.simibubi.create.content.kinetics.transmission.sequencer.Instruction(
                     com.simibubi.create.content.kinetics.transmission.sequencer.SequencerInstructions.END));
             });
-        target(scene, util.select().position(INPUT), 64);
+        target(scene, util, input, 16);
 
-        scene.world().toggleRedstonePower(util.select().position(CONTROL.north()));
-        scene.effects().indicateRedstone(CONTROL.north());
-        scene.addInstruction(s -> PonderKinetics.of(s.getWorld()).sequence(s.getWorld(), CONTROL));
-        PonderLesson.SEQUENCER.show(scene, util, CONTROL, 0);
+        scene.world().toggleRedstonePower(util.select().position(control.north()));
+        scene.effects().indicateRedstone(control.north());
+        scene.addInstruction(s -> PonderKinetics.of(s.getWorld()).sequence(s.getWorld(), control));
+        PonderLesson.SEQUENCER.show(scene, util, control, 0);
 
-        scene.idle(60);
-        scene.effects().indicateSuccess(OUTPUT);
-        PonderLesson.SEQUENCER.show(scene, util, OUTPUT, 1, PonderPalette.GREEN);
+        scene.idle(20);
+        scene.effects().indicateSuccess(output);
+        PonderLesson.SEQUENCER.showFor(scene, util, output, 1, PonderPalette.GREEN, 200);
+        scene.idle(210);
+        scene.addInstruction(new PonderAwait(s -> s.getWorld().getBlockEntity(control)
+            instanceof com.diliupengyun.differential_create.kinetics.ISequencerDynamics sequencer
+            && sequencer.differentialcreate$motion().index < 0
+            && sequencer.differentialcreate$motion().settled(), 400));
+        scene.idle(15);
 
-        scene.world().toggleRedstonePower(util.select().position(CONTROL.north()));
+        scene.world().toggleRedstonePower(util.select().position(control.north()));
         scene.idle(5);
-        scene.world().toggleRedstonePower(util.select().position(CONTROL.north()));
-        scene.effects().indicateRedstone(CONTROL.north());
-        scene.addInstruction(s -> PonderKinetics.of(s.getWorld()).sequence(s.getWorld(), CONTROL));
-        PonderLesson.SEQUENCER.show(scene, util, CONTROL.north(), 2, PonderPalette.BLUE);
+        scene.world().toggleRedstonePower(util.select().position(control.north()));
+        scene.effects().indicateRedstone(control.north());
+        scene.addInstruction(s -> PonderKinetics.of(s.getWorld()).sequence(s.getWorld(), control));
+        PonderLesson.SEQUENCER.show(scene, util, control.north(), 2, PonderPalette.BLUE);
+        scene.idle(120);
+        scene.addInstruction(new PonderAwait(s -> s.getWorld().getBlockEntity(control)
+            instanceof com.diliupengyun.differential_create.kinetics.ISequencerDynamics sequencer
+            && sequencer.differentialcreate$motion().index < 0
+            && sequencer.differentialcreate$motion().settled(), 400));
+        scene.idle(25);
         scene.markAsFinished();
     }
 
@@ -681,33 +778,33 @@ public final class DifferentialPonderScenes {
             });
             scene.addInstruction(s -> PonderKinetics.of(s.getWorld()).useSteamBoiler(s.getWorld(), shaft));
         }
-        block(scene, util, new BlockPos(0, 3, 4), axis(AllBlocks.FLYWHEEL.getDefaultState(), Axis.Z));
+        block(scene, util, new BlockPos(0, 3, 4), axis(AllBlocks.LARGE_COGWHEEL.getDefaultState(), Axis.Z));
         BlockPos water = new BlockPos(4, 2, 0), pump = new BlockPos(4, 2, 1);
         block(scene, util, water, AllBlocks.FLUID_TANK.getDefaultState());
         fill(scene, water, 6000);
         block(scene, util, pump, AllBlocks.MECHANICAL_PUMP.getDefaultState().setValue(PumpBlock.FACING, Direction.SOUTH));
         block(scene, util, pump.west(), axis(AllBlocks.COGWHEEL.getDefaultState(), Axis.Z));
-        block(scene, util, pump.west().north(), motor(Direction.SOUTH));
-        scene.world().setKineticSpeed(util.select().position(pump.west().north()), -64);
-        scene.idle(40);
+        Drive pumpInput = driveInput(scene, util, pump.west().north(), Direction.NORTH);
+        PonderLesson.STEAM_POWER.showFor(scene, util, new BlockPos(3, 3, 2), 0, PonderPalette.WHITE, 130);
+        scene.world().setBlocks(util.select().fromTo(3, 1, 2, 4, 1, 3),
+            AllBlocks.BLAZE_BURNER.getDefaultState().setValue(
+                com.simibubi.create.content.processing.burner.BlazeBurnerBlock.HEAT_LEVEL,
+                com.simibubi.create.content.processing.burner.BlazeBurnerBlock.HeatLevel.KINDLED), false);
+        pumpInput.setSpeed(scene, util, -64);
         scene.effects().rotationSpeedIndicator(shaftPos);
-        PonderLesson.STEAM_POWER.show(scene, util, new BlockPos(3, 3, 2), 0);
+        scene.idle(140);
 
         PonderLesson.STEAM_POWER.show(scene, util, enginePos, 1, PonderPalette.MEDIUM);
         scene.idle(65);
 
+        // Removing the heat source is a real player operation. Letting a fueled
+        // burner expire would leave a smouldering blaze and passive steam power.
+        scene.world().hideSection(util.select().fromTo(3, 1, 2, 4, 1, 3), Direction.DOWN);
+        scene.idle(20);
         scene.world().setBlocks(util.select().fromTo(3, 1, 2, 4, 1, 3),
-            AllBlocks.BLAZE_BURNER.getDefaultState().setValue(
-                com.simibubi.create.content.processing.burner.BlazeBurnerBlock.HEAT_LEVEL,
-                com.simibubi.create.content.processing.burner.BlazeBurnerBlock.HeatLevel.SMOULDERING), false);
-        scene.world().modifyBlockEntity(new BlockPos(3, 2, 2), FluidTankBlockEntity.class,
-            tank -> {
-                tank.boiler.activeHeat = 0; tank.boiler.passiveHeat = false;
-                BoilerAdmission.supply(tank.boiler, 0, 0);
-                tank.boiler.read(tank.boiler.write(), tank.getTotalTankSize());
-            });
-        scene.idle(25);
-        PonderLesson.STEAM_POWER.show(scene, util, shaftPos, 2, PonderPalette.BLUE);
+            Blocks.AIR.defaultBlockState(), false);
+        PonderLesson.STEAM_POWER.showFor(scene, util, shaftPos, 2, PonderPalette.BLUE, 120);
+        scene.idle(130);
         scene.markAsFinished();
     }
 
@@ -719,8 +816,8 @@ public final class DifferentialPonderScenes {
         for (int x = 0; x < width; x++) for (int z = 0; z < width; z++)
             block(scene, util, origin.offset(x, -1, z), AllBlocks.BLAZE_BURNER.getDefaultState()
                 .setValue(com.simibubi.create.content.processing.burner.BlazeBurnerBlock.HEAT_LEVEL,
-                    com.simibubi.create.content.processing.burner.BlazeBurnerBlock.HeatLevel.KINDLED));
-        boilerTank(scene, util, origin, width, height, engines, width * width);
+                    com.simibubi.create.content.processing.burner.BlazeBurnerBlock.HeatLevel.NONE));
+        boilerTank(scene, util, origin, width, height, engines, 0);
     }
 
     private static void boilerTank(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos origin,
@@ -741,7 +838,6 @@ public final class DifferentialPonderScenes {
                     tank.getTankInventory().setFluid(new FluidStack(Fluids.WATER, width * width * height * 4000));
                     tank.boiler.activeHeat = heat;
                     tank.boiler.attachedEngines = engines;
-                    BoilerAdmission.supply(tank.boiler, 10, 10);
                     tank.boiler.read(tank.boiler.write(), tank.getTotalTankSize());
                 }
             });
@@ -758,7 +854,8 @@ public final class DifferentialPonderScenes {
                     .setValue(CartAssemblerBlock.RAIL_TYPE, CartAssembleRailType.CONTROLLER_RAIL)
                 : AllBlocks.CONTROLLER_RAIL.getDefaultState()
                     .setValue(BlockStateProperties.RAIL_SHAPE_STRAIGHT, RailShape.EAST_WEST)
-                    .setValue(BlockStateProperties.POWER, 15);
+                    .setValue(com.simibubi.create.content.redstone.rail.ControllerRailBlock.BACKWARDS, false)
+                    .setValue(BlockStateProperties.POWER, 1);
             block(scene, util, new BlockPos(x, 1, 2), rail);
         }
         ElementLink<MinecartElement> cart = scene.special()
@@ -770,42 +867,68 @@ public final class DifferentialPonderScenes {
         ElementLink<WorldSectionElement> contraption = scene.world().showIndependentSection(loadSel, Direction.DOWN);
         scene.idle(15);
 
+        PonderLesson.MINECART_DYNAMICS.showFor(scene, util, CONTROL, 0, PonderPalette.WHITE, 110);
         moveCarts(scene, cart, trailing, contraption, -1, 40);
-        scene.idle(40);
-        PonderLesson.MINECART_DYNAMICS.show(scene, util, CONTROL, 0);
+        scene.idle(120);
 
+        PonderLesson.MINECART_DYNAMICS.showFor(scene, util, new BlockPos(1, 1, 2), 1, PonderPalette.MEDIUM, 100);
         moveCarts(scene, cart, trailing, contraption, -2, 60);
-        scene.idle(60);
-        PonderLesson.MINECART_DYNAMICS.show(scene, util, new BlockPos(1, 1, 2), 1, PonderPalette.MEDIUM);
+        scene.idle(110);
 
-        PonderLesson.MINECART_DYNAMICS.show(scene, util, INPUT, 2, PonderPalette.GREEN);
+        PonderLesson.MINECART_DYNAMICS.showFor(scene, util, INPUT, 2, PonderPalette.GREEN, 120);
+        for (int x : new int[]{0, 1, 3, 4}) {
+            BlockPos rail = new BlockPos(x, 1, 2);
+            scene.world().modifyBlock(rail, state -> state.setValue(
+                com.simibubi.create.content.redstone.rail.ControllerRailBlock.BACKWARDS, true), false);
+        }
+        moveCarts(scene, cart, trailing, contraption, 2, 100);
+        scene.idle(130);
         scene.markAsFinished();
     }
 
     public static void crusher(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.CRUSHER_WORK);
         BlockPos leftWheel = new BlockPos(1, 2, 2), rightWheel = new BlockPos(3, 2, 2);
-        BlockPos leftMotor = new BlockPos(1, 2, 3), rightMotor = new BlockPos(3, 2, 3);
+        BlockPos leftInput = new BlockPos(1, 2, 4), rightInput = new BlockPos(3, 2, 4);
         BlockPos gap = new BlockPos(2, 2, 2);
+        // This lesson only covers the mod's delta; the vanilla entry teaches the basics.
         block(scene, util, leftWheel, axis(AllBlocks.CRUSHING_WHEEL.getDefaultState(), Axis.Z));
         block(scene, util, rightWheel, axis(AllBlocks.CRUSHING_WHEEL.getDefaultState(), Axis.Z));
-        block(scene, util, leftMotor, motor(Direction.NORTH));
-        block(scene, util, rightMotor, motor(Direction.NORTH));
-
-        scene.world().setKineticSpeed(util.select().position(leftMotor), -32);
-        target(scene, util.select().position(rightMotor), 32);
+        block(scene, util, leftInput.north(), axis(AllBlocks.SHAFT.getDefaultState(), Axis.Z));
+        block(scene, util, rightInput.north(), axis(AllBlocks.SHAFT.getDefaultState(), Axis.Z));
+        // Put the two low source cogs on opposite sides of their cog ladders.
+        // An inward offset would also mesh with the other input and couple the drives.
+        Drive leftDrive = driveInput(scene, util, leftInput, Direction.SOUTH, Direction.WEST);
+        Drive rightDrive = driveInput(scene, util, rightInput, Direction.SOUTH, Direction.EAST);
+        // The invisible controller also needs virtual ticks to accept and process the falling item.
+        block(scene, util, gap, AllBlocks.CRUSHING_WHEEL_CONTROLLER.getDefaultState()
+            .setValue(com.simibubi.create.content.kinetics.crusher.CrushingWheelControllerBlock.FACING, Direction.DOWN)
+            .setValue(com.simibubi.create.content.kinetics.crusher.CrushingWheelControllerBlock.VALID, true));
+        scene.addInstruction(s -> PonderKinetics.of(s.getWorld()).enableCrusherProcessing(gap));
+        leftDrive.setSpeed(scene, util, -32);
+        rightDrive.setSpeed(scene, util, -16);
+        scene.idle(20);
         scene.effects().rotationDirectionIndicator(leftWheel);
         scene.effects().rotationDirectionIndicator(rightWheel);
-        PonderLesson.CRUSHER_WORK.show(scene, util, gap, 0);
+        PonderLesson.CRUSHER_WORK.showFor(scene, util, rightWheel, 0, PonderPalette.MEDIUM, 130);
+        scene.world().createItemEntity(
+            util.vector().centerOf(2, 3, 2).add(0, 1.5, 0), util.vector().of(0, -0.4, 0),
+            new ItemStack(Items.GOLD_ORE));
+        scene.idle(130);
 
-        target(scene, util.select().position(rightMotor), -16);
-        PonderLesson.CRUSHER_WORK.show(scene, util, rightWheel, 1, PonderPalette.MEDIUM);
+        // The speed difference sets which way the gap feeds.
+        PonderLesson.CRUSHER_WORK.showFor(scene, util, gap, 1, PonderPalette.MEDIUM, 70);
+        scene.idle(70);
+        // The default view puts +X on screen-left; the example caption uses screen sides.
+        PonderLesson.CRUSHER_WORK.showFor(scene, util, gap, 2, PonderPalette.MEDIUM, 80);
+        scene.idle(80);
 
-        target(scene, util.select().position(rightMotor), 32);
-        scene.overlay().showControls(util.vector().topOf(gap), Pointing.DOWN, 35)
-            .withItem(new ItemStack(Items.GOLD_ORE, 64));
-        scene.effects().indicateSuccess(gap);
-        PonderLesson.CRUSHER_WORK.show(scene, util, gap, 2, PonderPalette.GREEN);
+        // The feed side is where items have to enter; here it is the top.
+        scene.world().createItemEntity(
+            util.vector().centerOf(2, 3, 2).add(0, 1.5, 0), util.vector().of(0, -0.4, 0),
+            new ItemStack(Items.GOLD_ORE));
+        PonderLesson.CRUSHER_WORK.showFor(scene, util, gap, 3, PonderPalette.MEDIUM, 100);
+        scene.idle(100);
         scene.markAsFinished();
     }
 
@@ -818,14 +941,21 @@ public final class DifferentialPonderScenes {
         BlockPos carriagePos = new BlockPos(3, 2, 2);
         BlockPos movingInterface = new BlockPos(3, 3, 2);
         BlockPos storagePos = new BlockPos(4, 3, 2);
+        BlockPos lever = stationPos.above(), comparator = stationPos.north(), wire = comparator.north();
 
         block(scene, util, INPUT, AllBlocks.ANDESITE_CASING.getDefaultState());
         block(scene, util, stationPos.below(), AllBlocks.ANDESITE_CASING.getDefaultState());
         block(scene, util, stationPos, interfaceState.setValue(BlockStateProperties.FACING, Direction.EAST));
+        block(scene, util, lever, Blocks.LEVER.defaultBlockState().setValue(BlockStateProperties.ATTACH_FACE, AttachFace.FLOOR));
+        for (var pos : new BlockPos[]{comparator, wire})
+            block(scene, util, pos.below(), AllBlocks.ANDESITE_CASING.getDefaultState());
+        block(scene, util, comparator, Blocks.COMPARATOR.defaultBlockState().setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.SOUTH));
+        block(scene, util, wire, Blocks.REDSTONE_WIRE.defaultBlockState());
         for (int x = 1; x <= 3; x++)
-            block(scene, util, new BlockPos(x, 1, 2), axis(AllBlocks.GANTRY_SHAFT.getDefaultState(), Axis.X));
+            block(scene, util, new BlockPos(x, 1, 2), AllBlocks.GANTRY_SHAFT.getDefaultState()
+                .setValue(com.simibubi.create.content.kinetics.gantry.GantryShaftBlock.FACING, Direction.EAST));
         connectGantryShafts(scene, util.select().fromTo(1, 1, 2, 3, 1, 2));
-        block(scene, util, OUTPUT, motor(Direction.WEST));
+        Drive input = driveInput(scene, util, OUTPUT, Direction.EAST);
 
         scene.world().setBlock(storagePos,
             fluid ? AllBlocks.FLUID_TANK.getDefaultState() : Blocks.BARREL.defaultBlockState(), false);
@@ -837,38 +967,49 @@ public final class DifferentialPonderScenes {
             .showIndependentSection(util.select().fromTo(carriagePos, storagePos), Direction.DOWN);
         scene.idle(10);
 
-        var cells = Set.of(new ContraptionGeometry.Cell(0, 1, 0), new ContraptionGeometry.Cell(0, 2, 0),
-            new ContraptionGeometry.Cell(1, 2, 0));
-        translateSection(scene, util, shaftAnchor, contraption, cells, Direction.WEST, 410);
-        scene.world().setKineticSpeed(util.select().position(OUTPUT), 16);
-        scene.idle(32);
-        attachmentLoad(scene, shaftAnchor, cells, Direction.WEST, 1024);
-        scene.world().setKineticSpeed(util.select().position(OUTPUT), 0);
+        // Start at the already taught docking position. This lesson is about the
+        // optional settings, not a second explanation of how to install a pair.
+        dockingSetting(scene, util, stationPos, true, 1);
+        translateSection(scene, shaftAnchor, contraption, Direction.WEST);
+        scene.addInstruction(s -> PonderSimulation.of(s.getWorld()).dock(s.getWorld(), s.resolve(contraption),
+            stationPos, movingInterface, shaftAnchor));
+        PonderLesson.PORTABLE_DOCKING.showFor(scene, util, stationPos, 0, PonderPalette.WHITE, 150);
         scene.idle(15);
+        input.setSpeed(scene, util, 4);
+        scene.idle(100); // Longer than the native idle timeout; there is no cargo to renew it.
+        dockingRedstone(scene, util, lever);
+        scene.idle(40);
 
-        Selection both = util.select().position(stationPos).add(util.select().position(movingInterface));
-        float[] gap = {1};
-        scene.addInstruction(s -> gap[0] = (float) (movingInterface.getX()
-            + s.resolve(contraption).getAnimatedOffset().x - stationPos.getX() - 1));
-        scene.world().modifyBlockEntityNBT(both, PortableStorageInterfaceBlockEntity.class, nbt -> {
-            nbt.putFloat("Distance", gap[0]);
-            nbt.putFloat("Timer", 12);
-        });
-        scene.effects().indicateSuccess(stationPos);
-        PonderLesson.PORTABLE_DOCKING.show(scene, util, stationPos, 0);
+        dockingSetting(scene, util, stationPos, false, 1);
+        PonderLesson.PORTABLE_DOCKING.showFor(scene, util, comparator, 1, PonderPalette.GREEN, 120);
+        dockingRedstone(scene, util, lever);
+        scene.idle(85);
+        dockingRedstone(scene, util, lever);
+        scene.idle(40);
 
-        scene.world().modifyBlockEntityNBT(both, PortableStorageInterfaceBlockEntity.class, nbt -> nbt.putFloat("Timer", 2));
-        scene.idle(15);
-        attachmentLoad(scene, shaftAnchor, cells, Direction.WEST, 0);
-        scene.world().setKineticSpeed(util.select().position(OUTPUT), -5);
-        PonderLesson.PORTABLE_DOCKING.show(scene, util, new BlockPos(2, 2, 2), 1, PonderPalette.GREEN);
-
-        attachmentLoad(scene, shaftAnchor, cells, Direction.WEST, 256);
-        scene.world().setKineticSpeed(util.select().position(OUTPUT), 0);
-        scene.overlay().showControls(util.vector().blockSurface(stationPos, Direction.NORTH), Pointing.RIGHT, 40)
-            .rightClick().withItem(AllItems.WRENCH.asStack());
-        PonderLesson.PORTABLE_DOCKING.show(scene, util, stationPos, 2, PonderPalette.BLUE);
+        dockingSetting(scene, util, stationPos, false, 2);
+        PonderLesson.PORTABLE_DOCKING.showFor(scene, util, comparator, 2, PonderPalette.BLUE, 180);
+        scene.idle(30); // 0: no connection.
+        dockingRedstone(scene, util, lever);
+        scene.idle(80); // Real extension/braking passes through 8, then connected gives 15.
+        dockingRedstone(scene, util, lever);
+        scene.idle(35);
+        dockingRedstone(scene, util, lever);
+        scene.idle(40);
         scene.markAsFinished();
+    }
+
+    private static void dockingSetting(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos pos, boolean release, int option) {
+        scene.overlay().showControls(util.vector().blockSurface(pos, Direction.NORTH), Pointing.LEFT, 25)
+            .rightClick().withItem(AllItems.WRENCH.asStack());
+        scene.addInstruction(s -> ((PortableStorageInterfaceBlockEntity) s.getWorld().getBlockEntity(pos)).getBehaviour(release
+            ? com.diliupengyun.differential_create.kinetics.portable.DockingSettingBehaviour.RELEASE
+            : com.diliupengyun.differential_create.kinetics.portable.DockingSettingBehaviour.OUTPUT).setValue(option));
+    }
+
+    private static void dockingRedstone(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos lever) {
+        scene.world().toggleRedstonePower(util.select().position(lever));
+        scene.effects().indicateRedstone(lever);
     }
 
     private static CreateSceneBuilder trainStart(SceneBuilder builder, SceneBuildingUtil util, PonderLesson lesson) {
@@ -941,15 +1082,16 @@ public final class DifferentialPonderScenes {
         BlockPos boilerPos = TRAIN_BOILER;
         trainBoiler(scene, util);
 
+        PonderLesson.TRAIN_POWER.captionFor(scene, 0, PonderPalette.WHITE, 130);
         scene.overlay().showControls(util.vector().topOf(bogeyPos), Pointing.DOWN, 40)
             .rightClick().withItem(AllBlocks.STEAM_ENGINE.asStack());
         upgrade(scene);
         scene.effects().indicateSuccess(bogeyPos);
-        scene.idle(40);
-        scene.overlay().showOutline(PonderPalette.WHITE, new Object(), util.select().position(bogeyPos), 90);
-        PonderLesson.TRAIN_POWER.caption(scene, 0, PonderPalette.WHITE);
+        scene.overlay().showOutline(PonderPalette.WHITE, new Object(), util.select().position(bogeyPos), 130);
+        scene.idle(140);
 
         ItemStack hose = ModContent.STEAM_HOSE.asStack();
+        PonderLesson.TRAIN_POWER.captionFor(scene, 1, PonderPalette.GREEN, 130);
         scene.overlay().showControls(util.vector().blockSurface(boilerPos, Direction.WEST), Pointing.RIGHT, 30)
             .rightClick().withItem(hose);
         scene.idle(15);
@@ -958,16 +1100,15 @@ public final class DifferentialPonderScenes {
         scene.overlay().showLine(PonderPalette.GREEN, util.vector().centerOf(boilerPos),
             util.vector().centerOf(bogeyPos), 60);
         connectTrainBoiler(scene, bogeyPos, boilerPos);
-        scene.idle(30);
-        scene.overlay().showOutline(PonderPalette.GREEN, new Object(), util.select().fromTo(6, 4, 3, 8, 5, 5), 90);
-        PonderLesson.TRAIN_POWER.caption(scene, 1, PonderPalette.GREEN);
+        scene.overlay().showOutline(PonderPalette.GREEN, new Object(), util.select().fromTo(6, 4, 3, 8, 5, 5), 130);
+        scene.idle(130);
 
+        PonderLesson.TRAIN_POWER.captionFor(scene, 2, PonderPalette.BLUE, 130);
         scene.overlay().showControls(util.vector().topOf(bogeyPos), Pointing.DOWN, 40)
             .rightClick().withItem(ModContent.CONDENSER_PIPE.asStack());
         scene.world().modifyBlockEntity(bogeyPos, AbstractBogeyBlockEntity.class, SteamBogey::installCondenser);
-        scene.idle(40);
-        scene.overlay().showOutline(PonderPalette.BLUE, new Object(), util.select().position(bogeyPos), 90);
-        PonderLesson.TRAIN_POWER.caption(scene, 2, PonderPalette.BLUE);
+        scene.overlay().showOutline(PonderPalette.BLUE, new Object(), util.select().position(bogeyPos), 130);
+        scene.idle(140);
 
         scene.overlay().showOutline(PonderPalette.MEDIUM, new Object(), util.select().fromTo(5, 3, 3, 8, 5, 5), 90);
         PonderLesson.TRAIN_POWER.caption(scene, 3, PonderPalette.MEDIUM);
@@ -990,159 +1131,68 @@ public final class DifferentialPonderScenes {
         scene.world().modifyBlock(leverPos, s -> s.setValue(GearLeverBlock.GEAR, 2), false);
         scene.idle(40);
         scene.overlay().showOutline(PonderPalette.WHITE, new Object(), util.select().position(controlsPos), 90);
-        PonderLesson.TRAIN_DRIVING.caption(scene, 0, PonderPalette.WHITE);
+        PonderLesson.TRAIN_DRIVING.showFor(scene, util, controlsPos, 0, PonderPalette.WHITE, 120);
+        trainCommand(scene, train, .08, false, 70);
+        scene.idle(70);
+        trainCommand(scene, train, 0, true, 60);
+        scene.idle(60);
 
-        moveTrain(scene, train, 0, .02, 40);
-        scene.idle(40);
         scene.world().modifyBlock(leverPos, s -> s.setValue(GearLeverBlock.GEAR, 0), false);
-        moveTrain(scene, train, .02, .01, 100);
+        trainCommand(scene, train, .04, false, 100);
         PonderLesson.TRAIN_DRIVING.caption(scene, 1, PonderPalette.MEDIUM);
 
         scene.world().modifyBlock(leverPos, s -> s.setValue(GearLeverBlock.GEAR, 6), false);
-        moveTrain(scene, train, .01, 0, 20);
+        trainCommand(scene, train, 0, true, 20);
         scene.idle(20);
-        moveTrain(scene, train, 0, -.05, 40);
+        trainCommand(scene, train, .015, false, 40);
         scene.idle(40);
-        moveTrain(scene, train, -.05, 0, 40);
+        trainCommand(scene, train, 0, true, 40);
         scene.world().animateTrainStation(stationPos, true);
         scene.overlay().showOutline(PonderPalette.GREEN, new Object(), util.select().position(stationPos), 90);
         PonderLesson.TRAIN_DRIVING.caption(scene, 2, PonderPalette.GREEN);
         scene.effects().indicateSuccess(stationPos);
 
         scene.overlay().showControls(util.vector().topOf(controlsPos), Pointing.DOWN, 40)
-            .withItem(AllItems.SCHEDULE.asStack());
-        scene.idle(40);
+            .rightClick();
+        scene.world().toggleControls(controlsPos);
         PonderLesson.TRAIN_DRIVING.caption(scene, 3, PonderPalette.BLUE);
         scene.markAsFinished();
     }
 
-    /** Scripted finite acceleration; wheels consume exactly the same distance as the carriage each tick. */
-    private static void moveTrain(CreateSceneBuilder scene, ElementLink<WorldSectionElement> train,
-        double fromSpeed, double toSpeed, int duration) {
-        scene.addInstruction(new net.createmod.ponder.foundation.instruction.PonderInstruction() {
-            private int elapsed;
-            @Override public boolean isComplete() { return elapsed > duration; }
-            @Override public void reset(net.createmod.ponder.foundation.PonderScene s) { elapsed = 0; }
-            @Override public void tick(net.createmod.ponder.foundation.PonderScene s) {
-                elapsed++;
-                var section = s.resolve(train);
-                if (section == null) return;
-                double distance = elapsed > duration ? 0
-                    : fromSpeed + (toSpeed - fromSpeed) * (elapsed - .5) / duration;
-                section.setAnimatedOffset(section.getAnimatedOffset().add(distance, 0, 0), false);
-                for (var bogey : new BlockPos[]{TRAIN_BOGEY, TRAIN_REAR_BOGEY})
-                    if (s.getWorld().getBlockEntity(bogey) instanceof AbstractBogeyBlockEntity be)
-                        be.animate((float) -distance);
-            }
+    /** Driver input only; steam, gears, mass, drag and brakes determine displacement. */
+    private static void trainCommand(CreateSceneBuilder scene, ElementLink<WorldSectionElement> train,
+        double throttle, boolean brake, int duration) {
+        scene.addInstruction(s -> {
+            var section = s.resolve(train);
+            if (section != null) PonderSimulation.of(s.getWorld()).train(s.getWorld(), section, throttle, brake, duration);
         });
     }
 
-    /** Both carts and their cargo share a smooth start/stop path. */
+    /** Coupled carts receive driver inputs; rail force, mass and coupling determine travel. */
     private static void moveCarts(CreateSceneBuilder scene, ElementLink<MinecartElement> first,
         ElementLink<MinecartElement> second, ElementLink<WorldSectionElement> cargo, double distance, int duration) {
-        scene.addInstruction(new net.createmod.ponder.foundation.instruction.PonderInstruction() {
-            private int elapsed;
-            private double previous;
-            @Override public boolean isComplete() { return elapsed >= duration; }
-            @Override public void reset(net.createmod.ponder.foundation.PonderScene s) { elapsed = 0; previous = 0; }
-            @Override public void tick(net.createmod.ponder.foundation.PonderScene s) {
-                double t = ++elapsed / (double) duration;
-                double progress = t * t * (3 - 2 * t);
-                double step = distance * (progress - previous);
-                previous = progress;
-                for (var link : java.util.List.of(first, second)) {
-                    var cart = s.resolve(link);
-                    if (cart != null) cart.setPositionOffset(cart.getPositionOffset().add(step, 0, 0), false);
-                }
-                var section = s.resolve(cargo);
-                if (section != null) section.setAnimatedOffset(section.getAnimatedOffset().add(step, 0, 0), false);
-            }
-        });
-    }
-
-    private static void attachmentLoad(CreateSceneBuilder scene, BlockPos actuator,
-        Set<ContraptionGeometry.Cell> cells, Direction direction, double load) {
-        int axisIndex = direction.getAxis().ordinal();
         scene.addInstruction(s -> {
+            var a = s.resolve(first); var b = s.resolve(second); var section = s.resolve(cargo);
+            if (a == null || b == null || section == null) return;
+            var simulation = PonderSimulation.of(s.getWorld());
+            var cells = new java.util.HashSet<ContraptionGeometry.Cell>();
+            var selection = ((com.diliupengyun.differential_create.mixin.PonderWorldSectionAccessor) section).differentialcreate$selection();
+            for (var pos : selection) if (!s.getWorld().getBlockState(pos).isAir())
+                cells.add(new ContraptionGeometry.Cell(pos.getX(), pos.getY(), pos.getZ()));
             var shape = ContraptionGeometry.measure(cells);
-            PonderKinetics.of(s.getWorld()).attachment(s.getWorld(), actuator,
-                shape.linearInertia(), load, shape.linearDrag(axisIndex));
-        });
-    }
-
-    /** Harvest when the moving tool's native active area reaches the crop, not at a caption deadline. */
-    private static void harvestAlongSection(CreateSceneBuilder scene, ElementLink<WorldSectionElement> moving,
-        BlockPos actuator, BlockPos tool, Direction facing, int duration) {
-        scene.addInstruction(new net.createmod.ponder.foundation.instruction.PonderInstruction() {
-            private int elapsed;
-            private double previousDistance, progress;
-            private BlockPos cutting;
-            @Override public boolean isComplete() { return elapsed >= duration; }
-            @Override public void reset(net.createmod.ponder.foundation.PonderScene s) {
-                elapsed = 0; previousDistance = progress = 0; cutting = null;
-            }
-            @Override public void tick(net.createmod.ponder.foundation.PonderScene s) {
-                elapsed++;
-                var section = s.resolve(moving);
-                if (section == null) return;
-                var activeArea = net.minecraft.world.phys.Vec3.atCenterOf(tool).add(section.getAnimatedOffset())
-                    .add(net.minecraft.world.phys.Vec3.atLowerCornerOf(facing.getNormal()).scale(.45));
-                double distance = section.getAnimatedOffset().dot(net.minecraft.world.phys.Vec3.atLowerCornerOf(facing.getNormal()));
-                double travelled = distance - previousDistance; previousDistance = distance;
-                var crop = BlockPos.containing(activeArea);
-                var state = s.getWorld().getBlockState(crop);
-                double load = 0;
-                if (travelled > 0 && state.is(Blocks.WHEAT) && state.getValue(CropBlock.AGE) == 7 && elapsed < duration) {
-                    if (!crop.equals(cutting)) { cutting = crop; progress = 0; }
-                    else progress += travelled;
-                    double stroke = com.diliupengyun.differential_create.kinetics.ContraptionActorWork.FEED_DISTANCE;
-                    double rated = com.simibubi.create.api.stress.BlockStressValues.getImpact(AllBlocks.MECHANICAL_HARVESTER.get());
-                    if (rated <= 0) rated = 2;
-                    load = rated * com.diliupengyun.differential_create.kinetics.ContraptionActorWork.CYCLE_TRAVEL
-                        / (1200 * stroke / (2 * Math.PI * ContraptionGeometry.LINEAR_RADIUS));
-                    if (progress >= stroke) {
-                        s.getWorld().addBlockDestroyEffects(crop, state);
-                        s.getWorld().setBlock(crop, state.setValue(CropBlock.AGE, 0), 3);
-                        s.forEach(WorldSectionElement.class, WorldSectionElement::queueRedraw);
-                        cutting = null; load = 0;
-                    }
-                } else {
-                    cutting = null; progress = 0;
-                }
-                PonderKinetics.of(s.getWorld()).setAttachmentLoad(actuator, load);
-            }
+            simulation.cartLoad(section, a, b, shape.linearInertia(), shape.linearDrag(0));
+            simulation.cart(a, new net.minecraft.world.phys.Vec3(distance, 0, 0), duration);
+            simulation.cart(b, new net.minecraft.world.phys.Vec3(distance, 0, 0), duration);
         });
     }
 
     /** Bind a displayed linear section to a separately integrated mounted rotor. */
-    private static void translateSection(CreateSceneBuilder scene, SceneBuildingUtil util,
-        BlockPos actuator, ElementLink<WorldSectionElement> moving,
-        Set<ContraptionGeometry.Cell> cells, Direction direction, int duration) {
-        attachmentLoad(scene, actuator, cells, direction, 0);
-        scene.addInstruction(new net.createmod.ponder.foundation.instruction.PonderInstruction() {
-            private int elapsed;
-            private Double baseAngle;
-            @Override public boolean isComplete() { return elapsed >= duration; }
-            @Override public void reset(net.createmod.ponder.foundation.PonderScene s) {
-                elapsed = 0;
-                baseAngle = null;
-                var section = s.resolve(moving);
-                if (section != null) section.setAnimatedOffset(util.vector().of(0, 0, 0), true);
-            }
-            @Override public void tick(net.createmod.ponder.foundation.PonderScene s) {
-                elapsed++;
-                if (!(s.getWorld().getBlockEntity(actuator) instanceof com.simibubi.create.content.kinetics.base.KineticBlockEntity be)) return;
-                var section = s.resolve(moving);
-                if (section == null) return;
-                Double angle = PonderKinetics.of(s.getWorld()).outputAngle(be, 1);
-                double current = angle == null ? 0 : angle;
-                if (baseAngle == null) baseAngle = current;
-                double travel = Math.toRadians(current - baseAngle) * ContraptionGeometry.LINEAR_RADIUS;
-                section.setAnimatedOffset(util.vector().of(
-                    direction.getStepX() * travel,
-                    direction.getStepY() * travel,
-                    direction.getStepZ() * travel), false);
-            }
+    private static void translateSection(CreateSceneBuilder scene, BlockPos actuator,
+        ElementLink<WorldSectionElement> moving, Direction direction) {
+        scene.addInstruction(s -> {
+            var section = s.resolve(moving);
+            if (section != null && s.getWorld().getBlockEntity(actuator) instanceof com.simibubi.create.content.kinetics.base.KineticBlockEntity be)
+                PonderSimulation.of(s.getWorld()).attach(section, be, false, direction.getAxis().ordinal(), direction.getAxisDirection().getStep());
         });
     }
 
@@ -1151,10 +1201,15 @@ public final class DifferentialPonderScenes {
         BlockPos bearing, ElementLink<WorldSectionElement> moving,
         java.util.Set<com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell> cells,
         int duration) {
+        coupleSection(scene, util, bearing, moving, cells, Axis.Y, duration);
+    }
+
+    private static void coupleSection(CreateSceneBuilder scene, SceneBuildingUtil util,
+        BlockPos bearing, ElementLink<WorldSectionElement> moving,
+        Set<ContraptionGeometry.Cell> cells, Axis rotationAxis, int duration) {
         scene.addInstruction(s -> {
-            var shape = com.diliupengyun.differential_create.kinetics.ContraptionGeometry.measure(cells);
-            PonderKinetics.of(s.getWorld()).attachment(s.getWorld(), bearing,
-                shape.rotationInertia()[1], 0, shape.rotationDrag()[1]);
+            if (s.getWorld().getBlockEntity(bearing) instanceof com.simibubi.create.content.kinetics.base.KineticBlockEntity be)
+                PonderSimulation.of(s.getWorld()).mounting().bind(s.resolve(moving), be, true, rotationAxis.ordinal(), cells, 1);
         });
         scene.addInstruction(new net.createmod.ponder.foundation.instruction.PonderInstruction() {
             private int elapsed;
@@ -1164,9 +1219,11 @@ public final class DifferentialPonderScenes {
                 elapsed++;
                 if (!(s.getWorld().getBlockEntity(bearing) instanceof com.simibubi.create.content.kinetics.base.KineticBlockEntity be)) return;
                 var section = s.resolve(moving);
-                if (section != null) {
+                if (section != null && section.isVisible()) {
                     Double angle = PonderKinetics.of(s.getWorld()).outputAngle(be, 1);
-                    section.setAnimatedRotation(util.vector().of(0, angle == null ? 0 : angle, 0), false);
+                    double degrees = angle == null ? 0 : angle;
+                    section.setAnimatedRotation(util.vector().of(rotationAxis == Axis.X ? degrees : 0,
+                        rotationAxis == Axis.Y ? degrees : 0, rotationAxis == Axis.Z ? degrees : 0), false);
                     if (be instanceof com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity bearingEntity)
                         bearingEntity.setAngle(angle == null ? 0 : angle.floatValue());
                 }

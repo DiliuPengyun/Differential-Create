@@ -26,6 +26,9 @@ public interface ActorDrive {
     default int wakeDirection() { return 0; }
     boolean motionActive();
     static ActorDrive of(MovementContext context) {
+        if (context.world instanceof PhysicsPreview preview) {
+            var drive = preview.differentialcreate$actorDrive(context); if (drive != null) return drive;
+        }
         var shaft = ContraptionPhysics.drive(context);
         if (shaft != null) return shaft;
         var train = TrainActorMotion.drive(context);

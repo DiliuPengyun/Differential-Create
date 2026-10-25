@@ -65,9 +65,9 @@
 
 ## 验证与边界
 
-数值入口为 [MinecartRegression](../src/physicsTest/java/com/diliupengyun/differential_create/MinecartRegression.java)，真实游戏入口为 [MinecartIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/MinecartIntegrationTests.java)。原生实体逐 tick 对照 Minecraft 的独立速度递推和实际位移，另外检查燃料、组装动量、重复刷新、重载、拆解、有限驱动及双车支撑。
+数值入口为 [MinecartRegression](../src/physicsTest/java/com/diliupengyun/differential_create/MinecartRegression.java)，真实游戏入口为 [MinecartIntegrationTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/MinecartIntegrationTests.java)。原生实体逐 tick 对照 Minecraft 的独立速度递推和实际位移，另外检查燃料、组装动量、重复刷新、重载、拆解、有限驱动及双车支撑。
 
-[矿车机械手供能专项](../src/main/java/com/diliupengyun/differential_create/tests/MinecartHandPowerTests.java)覆盖四个方向的单台与 16 台机械手冷启动、两格通电轨道接近后不停车连续补种三排、高速补种、无外部供能时的能量转移、禁用工具不取能，以及储能不足时不免费种植。共 28 个真实游戏场景，测试不反复赋予矿车速度或机械手能量。另有[机械手专项](../src/main/java/com/diliupengyun/differential_create/tests/MovingDeployerTests.java)验证普通活塞的连续播种、方块放置、锄地、断电、失去接触、采掘与种植混合作业、切换模式、一次性攻击，以及右键使用收回阶段读档后的完成记录。可用 `runMotionCoverageServer '-PmotionSelect=minecart_hand_.+'` 单独运行矿车专项。
+[矿车机械手供能专项](../src/gameTest/java/com/diliupengyun/differential_create/tests/MinecartHandPowerTests.java)覆盖四个方向的单台与 16 台机械手冷启动、两格通电轨道接近后不停车连续补种三排、高速补种、无外部供能时的能量转移、禁用工具不取能，以及储能不足时不免费种植。共 28 个真实游戏场景，测试不反复赋予矿车速度或机械手能量。另有[机械手专项](../src/gameTest/java/com/diliupengyun/differential_create/tests/MovingDeployerTests.java)验证普通活塞的连续播种、方块放置、锄地、断电、失去接触、采掘与种植混合作业、切换模式、一次性攻击，以及右键使用收回阶段读档后的完成记录。可用 `runMotionCoverageServer '-PmotionSelect=minecart_hand_.+'` 单独运行矿车专项。
 
 既有验证：构建及全套数值回归通过，其中矿车数值检查 5668 项；完整运动 GameTest 曾通过 1383 项，随后机械手专项通过 53 项，包含 1331 方块载荷种植。常规机械与流体 GameTest 当时通过 247 项，包含活塞和轴承。2026-10-14 清理旧数据转换后，旧版机械手迁移用例已退出当前套件。详细入口、玩家操作、判据和未覆盖范围见[测试覆盖表](MINECART_TEST_MATRIX.md)。未装配直轨对照覆盖两个轴、正反方向及连续 64 tick；另外检查全部十种轨道形态的原版轨迹和速度修正。
 

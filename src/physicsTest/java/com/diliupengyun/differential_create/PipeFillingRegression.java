@@ -362,6 +362,18 @@ public final class PipeFillingRegression {
             "dry mouths require no fictional extraction");
     }
     private static void receiptCapacity() {
+        double tail = 6.069791401791527, ownedReceipt = .9302085982084769;
+        near(tail, FluidBudget.receiptTransfer(tail, 7 - ownedReceipt), 0,
+            "the last actual pipe parcel completes a seven-mB receipt despite subtraction roundoff");
+        near(7, FluidBudget.deliveryAmount(ownedReceipt + FluidBudget.receiptTransfer(tail, 7 - ownedReceipt)), 0,
+            "capacity admission and integer settlement agree, so a whole-bucket machine can finish");
+        near(0, FluidBudget.receiptTransfer(1e-12, 0), 0, "a full receiver has no implicit extra space");
+        near(.5, FluidBudget.receiptTransfer(.500001, .5), 0, "a genuine capacity excess stays in its donor");
+        near(.2, FluidBudget.receiptTransfer(.2, .5), 0, "a small owned parcel is not enlarged to fill available space");
+        near(2, FluidBudget.reservationAmount(2.000000000000118), 0,
+            "subtracting a held fraction cannot demand a third mB when only two are actually needed");
+        near(3, FluidBudget.reservationAmount(2.000001), 0, "a real excess still reserves the next native unit");
+        near(1, FluidBudget.reservationAmount(1e-12), 0, "even a tiny first withdrawal requires actual native stock");
         near(0, FluidBudget.receiptSpace(1, .9999999999999992), 0,
             "crash-save receipt roundoff is a capacity event, not a sub-machine-precision time step");
         near(0, FluidBudget.receiptSpace(1, .4 + .5999999999999992), 0,
@@ -371,6 +383,8 @@ public final class PipeFillingRegression {
         near(1, FluidBudget.deliveryAmount(.9999999999999992), 0, "the saved integer receipt completes within roundoff");
         near(1, FluidBudget.deliveryAmount(.9999999999999787), 0,
             "front-position arithmetic uses pipe-volume precision at the receipt event");
+        near(1, FluidBudget.deliveryAmount(.9999999999995413), 0,
+            "the two rounded capacity operations cannot strand the final native mB");
         near(0, FluidBudget.deliveryAmount(.999999), 0, "a real fractional deficit cannot create one free mB");
         near(0, FluidBudget.deliveryAmount(1e-12), 0, "small flow has no minimum-rate integer delivery");
         near(1, FluidBudget.deliveryAmount(1.25), 0, "ordinary delivery keeps the actual fractional remainder");
@@ -380,7 +394,7 @@ public final class PipeFillingRegression {
                 "capacity event tolerance scales with floating-point precision");
             near(capacity, FluidBudget.deliveryAmount(capacity - 4 * ulp), 0,
                 "integer receipts complete at capacity-sized arithmetic precision");
-            double pending = capacity - 64 * ulp;
+            double pending = capacity - 128 * ulp;
             near(capacity - pending, FluidBudget.receiptSpace(capacity, pending), 0,
                 "representable space beyond roundoff is not discarded");
             near(capacity - 1, FluidBudget.deliveryAmount(pending), 0,

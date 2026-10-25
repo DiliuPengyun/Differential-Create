@@ -7,6 +7,7 @@ import java.util.Map;
 import com.simibubi.create.content.kinetics.KineticNetwork;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.fan.EncasedFanBlockEntity;
+import com.simibubi.create.content.kinetics.speedController.SpeedControllerBlockEntity;
 import com.simibubi.create.content.kinetics.transmission.ClutchBlockEntity;
 import net.minecraft.core.BlockPos;
 
@@ -206,14 +207,29 @@ public final class ElasticKinetics {
             for (KineticNetwork network : networks) {
                 if (!network.sources.isEmpty()) continue;
                 var dynamics = (INetworkDynamics) network;
+                if (dynamics.differentialcreate$data().jammed) continue;
                 if (Math.abs(dynamics.differentialcreate$getExternalTorque()) > 1e-9) continue;
                 if (dynamics.differentialcreate$getRatios().isEmpty()) continue;
                 boolean massless = true;
                 for (KineticBlockEntity be : network.members.keySet()) {
                     if (be.isRemoved() || be.getLevel() == null) continue;
-                    if (InertiaRegistry.getInertia(be) != 0) { massless = false; break; }
+                    if (InertiaRegistry.getInertia(be) != 0 || be instanceof ISequencerDynamics
+                        || MachineActivity.impact(be) > 0 || MachineActivity.quadraticDrag(be) > 0) {
+                        massless = false; break;
+                    }
                 }
                 if (!massless) continue;
+                // A nominal spanning-tree ratio is not a free physical mode
+                // across friction/CVT boundaries or an incompatible closed loop.
+                boolean freeMode = true;
+                for (var contact : dynamics.differentialcreate$data().connections) {
+                    double a = dynamics.differentialcreate$getRatios().getOrDefault(contact.a, 0f);
+                    double b = dynamics.differentialcreate$getRatios().getOrDefault(contact.b, 0f);
+                    if (contact.clutch != null || contact.a instanceof ClutchBlockEntity || contact.b instanceof ClutchBlockEntity
+                        || contact.a instanceof SpeedControllerBlockEntity || contact.b instanceof SpeedControllerBlockEntity
+                        || b == 0 || Math.abs(contact.ratio * a / b - 1) > 1e-12) { freeMode = false; break; }
+                }
+                if (!freeMode) continue;
                 Integer at = null;
                 float ratio = 0;
                 for (var entry : dynamics.differentialcreate$getRatios().entrySet()) {
@@ -344,12 +360,12 @@ public final class ElasticKinetics {
             this.networks = List.copyOf(networks);
             solver = TorsionSolver.prepare(bodies, links, speeds, twists);
         }
-        /** No world state changes between these pump-load trials. */
+        /** Pump resistance is already captured in the bodies' passive loads. */
         public void setExternalTorques(Map<KineticBlockEntity, Double> torques) {
             double[] drives = sourceDrives.clone();
             for (var entry : torques.entrySet()) {
                 Integer at = indices.get(entry.getKey());
-                if (at != null) drives[at] += entry.getValue();
+                if (at != null && !(entry.getKey() instanceof IPumpDynamics)) drives[at] += entry.getValue();
             }
             solver.updateDrives(drives);
         }
@@ -385,6 +401,16 @@ public final class ElasticKinetics {
     public static Snapshot snapshot(List<KineticNetwork> networks) {
         return snapshot(networks, Map.of());
     }
+    private static boolean currentMember(KineticBlockEntity be) {
+        var level = be.getLevel();
+        if (be.isRemoved() || level == null) return false;
+        if (level instanceof net.minecraft.server.level.ServerLevel server) {
+            var pos = be.getBlockPos();
+            var chunk = server.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4);
+            return chunk != null && chunk.getBlockEntity(pos) == be;
+        }
+        return level.getBlockEntity(be.getBlockPos()) == be;
+    }
     public static Snapshot snapshot(List<KineticNetwork> networks, Map<KineticBlockEntity, Double> externalTorques) {
         List<KineticBlockEntity> members = new ArrayList<>();
         List<Connection> connections = new ArrayList<>();
@@ -392,8 +418,9 @@ public final class ElasticKinetics {
             members.addAll(network.members.keySet());
             connections.addAll(((INetworkDynamics) network).differentialcreate$data().connections);
         }
-        members.removeIf(be -> be.isRemoved() || be.getLevel() == null
-            || be.getLevel().getBlockEntity(be.getBlockPos()) != be);
+        // An entity lookup can create a loading ticket. Do not keep a leaving
+        // chunk alive merely to check whether an old member still exists.
+        members.removeIf(be -> !currentMember(be));
         members.sort(java.util.Comparator.comparing(KineticBlockEntity::getBlockPos));
         Map<KineticBlockEntity, Integer> indices = new HashMap<>();
         List<TorsionSolver.Body> bodies = new ArrayList<>();
@@ -407,14 +434,15 @@ public final class ElasticKinetics {
             indices.put(be, i);
             speeds[i] = NetworkDynamics.preciseSpeed(be);
             var curve = SourcePhysics.curve(be);
-            double load = ContraptionPhysics.manages(be) ? ContraptionPhysics.workTorque(be) : MachineActivity.impact(be);
+            double load = be instanceof IPumpDynamics pump ? Math.abs(pump.differentialcreate$torque())
+                : ContraptionPhysics.manages(be) ? ContraptionPhysics.workTorque(be) : MachineActivity.impact(be);
             double drag = MachineActivity.quadraticDrag(be);
             if (ActorFeed.enabled(be)) drag = 0;
             if (be instanceof EncasedFanBlockEntity) load = 0;
             if (be instanceof com.simibubi.create.content.kinetics.crusher.CrushingWheelBlockEntity) load = 0;
             sourceDrives[i] = be.isSource() ? curve.stallTorque() : 0;
             bodies.add(new TorsionSolver.Body(InertiaRegistry.getInertia(be),
-                sourceDrives[i] + externalTorques.getOrDefault(be, 0d),
+                sourceDrives[i] + (be instanceof IPumpDynamics ? 0 : externalTorques.getOrDefault(be, 0d)),
                 be.isSource() ? curve.damping() : 0, load, drag,
                 be.isSource() ? curve.powerLimit() : Double.POSITIVE_INFINITY,
                 be.isSource() ? curve.governorSpeed() : Double.POSITIVE_INFINITY, curve.governorRange()));

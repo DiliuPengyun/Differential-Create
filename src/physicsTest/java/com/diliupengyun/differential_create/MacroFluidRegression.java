@@ -12,7 +12,7 @@ public final class MacroFluidRegression {
     public static void main(String[] args) { run(); }
     public static void run() {
         dryPump(); hydrostaticAndInventory(); closedWaterDoesNotRebound(); randomClosedNetworks(); blockedReceipt(); exhaustedBudget();
-        reversingPumpBrakesIncomingFlow(); waterBackdrivesStoppedRotor(); extremeSpeedHasBoundedFlow(); wetSeriesPumpsKeepTheirPrime();
+        shaftReversalKeepsPumpDirection(); movingWaterLeavesStoppedRotorAtRest(); extremeSpeedHasBoundedFlow(); wetSeriesPumpsKeepTheirPrime();
         exposedColumnCanRecede(); blindPipeCanFill(); actualGasRetainsInventoryAndPumpWork();
         subResolutionWaterFalls(); horizontalLowerLipDrains();
         openHorizontalRunsEmptyTheirActualStock();
@@ -530,25 +530,25 @@ public final class MacroFluidRegression {
         near(0, result.torque[0], 0, "deferred hydraulic work applies no unaccounted torque");
         near(0, result.solves, 0, "exhausted budget does not start another pressure solve");
     }
-    private static void reversingPumpBrakesIncomingFlow() {
+    private static void shaftReversalKeepsPumpDirection() {
         var cells = List.of(new MacroFluidSolver.Cell(100, 100, -.005, .005, -64, 32));
         var links = List.of(new MacroFluidSolver.Link(0, 1, .25, 0, -1, 0, true),
             new MacroFluidSolver.Link(0, 2, .25, 0, 1, 0, true));
         var borders = new MacroFluidSolver.Boundary[]{border(0, true, true), border(0, true, true)};
         var result = MacroFluidSolver.sample(cells, links, borders, new double[]{-32, 32}, WATER, MacroFluidSolver.MAX_STEP);
-        truth(result.flow[1] < 0, "reversing a wet pump reverses the previously forward stream");
+        truth(result.flow[1] > 0, "shaft reversal preserves the previously forward stream");
         near(100, result.volume[0], 1e-8, "reversal retains actual primed liquid");
         near(0, result.flow[0] + result.flow[1], 1e-8, "reversal debits and credits the same real amount");
         finite(result);
     }
-    private static void waterBackdrivesStoppedRotor() {
+    private static void movingWaterLeavesStoppedRotorAtRest() {
         var cells = List.of(new MacroFluidSolver.Cell(100, 100, -.005, .005, 0, 32));
         var links = List.of(new MacroFluidSolver.Link(0, 1, .25, 0, -1, 0, true),
             new MacroFluidSolver.Link(0, 2, .25, 0, 1, 0, true));
         var borders = new MacroFluidSolver.Boundary[]{border(0, true, true), border(0, true, true)};
         var result = MacroFluidSolver.sample(cells, links, borders, new double[]{-32, 32}, WATER, MacroFluidSolver.MAX_STEP);
-        truth(result.flow[1] > 0 && result.torque[0] > 0, "moving real water backdrives a stopped rotor");
-        near(100, result.volume[0], 1e-8, "backdrive retains the primed liquid");
+        truth(result.flow[1] > 0 && result.torque[0] == 0, "moving real water cannot start a stopped rotor");
+        near(100, result.volume[0], 1e-8, "flow through the stopped pump retains the primed liquid");
         finite(result);
     }
     private static void extremeSpeedHasBoundedFlow() {
@@ -587,7 +587,7 @@ public final class MacroFluidRegression {
                 new MacroFluidSolver.Cell(100, result.volume[1], -.005, .005,
                     64, velocity[2]));
         }
-        truth(backdrive, "faster water returns shaft power to the slower series impeller");
+        truth(!backdrive, "series impellers consume shaft power and never regenerate it");
     }
     private static void blindPipeCanFill() {
         var cells = List.of(cell(0, 0));

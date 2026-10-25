@@ -1,8 +1,5 @@
 package com.diliupengyun.differential_create.client.ponder;
 
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-
 import com.simibubi.create.content.kinetics.belt.transport.TransportedItemStack;
 import com.simibubi.create.content.kinetics.press.MechanicalPressBlockEntity;
 import com.simibubi.create.content.kinetics.press.PressingBehaviour;
@@ -26,16 +23,6 @@ import net.neoforged.neoforge.items.ItemStackHandler;
  * like the server would and releases the permanent machine load.
  */
 final class PonderPressing extends TickingInstruction {
-    private static final MethodHandle OUTPUTS; // DepotBehaviour#processingOutputBuffer is package-private
-    static {
-        try {
-            OUTPUTS = MethodHandles.privateLookupIn(DepotBehaviour.class, MethodHandles.lookup())
-                .findGetter(DepotBehaviour.class, "processingOutputBuffer", ItemStackHandler.class);
-        } catch (ReflectiveOperationException failure) {
-            throw new ExceptionInInitializerError(failure);
-        }
-    }
-
     private final BlockPos pressPos, depotPos;
     private final int[] rimSlots;
     private final ItemStack batch, product;
@@ -84,7 +71,7 @@ final class PonderPressing extends TickingInstruction {
         }
         PressingBehaviour pressing = press.getPressingBehaviour();
         DepotBehaviour depot = tray.getBehaviour(DepotBehaviour.TYPE);
-        ItemStackHandler rim = outputs(depot);
+        ItemStackHandler rim = PonderDepotOutput.buffer(depot);
         if (first) {
             for (int slot = 0; slot < rim.getSlots(); slot++) rim.setStackInSlot(slot, ItemStack.EMPTY);
             place(depot, batch.copy());
@@ -98,12 +85,16 @@ final class PonderPressing extends TickingInstruction {
         if (!busy || pressing.runningTicks < PressingBehaviour.CYCLE / 2) return;
         if (armed) { // the virtual press reports the contact tick exactly once
             armed = false;
+            var results = new java.util.ArrayList<ItemStack>();
+            if (!press.tryProcessOnBelt(new TransportedItemStack(held.copyWithCount(1)), results, false) || results.isEmpty()) {
+                retired = true; pressing.running = false; return;
+            }
             pressing.makePressingParticleEffect(VecHelper.getCenterOf(depotPos).add(0, 8 / 16f, 0),
                 batch.copyWithCount(1));
             if (held.getCount() > 1) {
                 held.shrink(1);
-                rim.insertItem(rimSlots[Math.min(made, rimSlots.length - 1)], product.copy(), false);
-            } else place(depot, product.copy());
+                for (var result : results) rim.insertItem(rimSlots[Math.min(made, rimSlots.length - 1)], result.copy(), false);
+            } else place(depot, results.getFirst().copy());
             made++;
         }
         if (pressing.runningTicks < PressingBehaviour.CYCLE) return;
@@ -129,11 +120,4 @@ final class PonderPressing extends TickingInstruction {
         busy = armed = true;
     }
 
-    private static ItemStackHandler outputs(DepotBehaviour depot) {
-        try {
-            return (ItemStackHandler) OUTPUTS.invokeExact(depot);
-        } catch (Throwable failure) {
-            throw new IllegalStateException(failure);
-        }
-    }
 }

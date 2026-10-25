@@ -241,8 +241,7 @@ public final class KineticGoggleInfo {
 
 		if (kbe instanceof IPumpDynamics pump) {
 			double power = pump.differentialcreate$torque() * local;
-			tooltip.add(Component.translatable(power < 0
-				? "gui.differentialcreate.goggles.output_power" : "gui.differentialcreate.goggles.consumed_power", fmt(Math.abs(power))));
+			tooltip.add(Component.translatable("gui.differentialcreate.goggles.consumed_power", fmt(Math.abs(power))));
 			return;
 		}
 		if (kbe instanceof com.simibubi.create.content.kinetics.crusher.CrushingWheelBlockEntity wheel) {

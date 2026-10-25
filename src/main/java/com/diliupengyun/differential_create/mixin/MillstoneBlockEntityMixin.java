@@ -47,7 +47,7 @@ public abstract class MillstoneBlockEntityMixin implements ShaftWork {
 		target = "Lcom/simibubi/create/content/kinetics/millstone/MillstoneBlockEntity;getProcessingSpeed()I"))
 	private int differentialcreate$shaftTravel(MillstoneBlockEntity self) {
 		if (!self.getLevel().isClientSide) self.setChanged();
-		return differentialcreate$work.advance(Math.abs(self.getSpeed()) / 16.0);
+        return differentialcreate$work.advance(com.diliupengyun.differential_create.kinetics.PhysicsPreview.travel(self) / 16.0);
 	}
 	@Inject(method = "process", at = @At("RETURN"))
 	private void differentialcreate$complete(CallbackInfo ci) { differentialcreate$work.reset(); }

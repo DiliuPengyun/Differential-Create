@@ -40,7 +40,7 @@ public abstract class GlassPipeVisualMixin extends AbstractBlockEntityVisual<Str
 
     @Inject(method = "beginFrame", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$ownedWater(DynamicVisual.Context context, CallbackInfo ci) {
-        if (blockEntity.isVirtual()) return;
+        if (blockEntity.isVirtual() && !com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(blockEntity.getLevel())) return;
         ci.cancel(); stream.resetCount(); surface.resetCount();
         var pipe = blockEntity.getBehaviour(FluidTransportBehaviour.TYPE);
         if (pipe != null) {

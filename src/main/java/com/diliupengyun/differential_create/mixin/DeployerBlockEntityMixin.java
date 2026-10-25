@@ -126,7 +126,7 @@ public abstract class DeployerBlockEntityMixin implements ShaftWork {
 		target = "Lcom/simibubi/create/content/kinetics/deployer/DeployerBlockEntity;getTimerSpeed()I", ordinal = 0))
 	private int differentialcreate$shaftTravel(DeployerBlockEntity self) {
 		if (!self.getLevel().isClientSide) self.setChanged();
-		return differentialcreate$work.advance(Math.abs(self.getSpeed()) * 2.0);
+        return differentialcreate$work.advance(com.diliupengyun.differential_create.kinetics.PhysicsPreview.travel(self) * 2.0);
 	}
 	@Inject(method = "write", at = @At("RETURN"))
 	private void differentialcreate$write(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {

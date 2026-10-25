@@ -27,7 +27,8 @@ public abstract class PumpBlockEntityMixin implements IPumpDynamics {
     @Inject(method = "distributePressureTo", at = @At("HEAD"), cancellable = true)
     private void differentialcreate$jointPressure(Direction side, CallbackInfo ci) {
         var self = (PumpBlockEntity) (Object) this;
-        if (!self.getLevel().isClientSide && !self.isVirtual()) ci.cancel();
+        if (!self.getLevel().isClientSide && !self.isVirtual()
+            || com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(self.getLevel())) ci.cancel();
     }
     @Override public void differentialcreate$saveHydraulics(CompoundTag tag) {
         tag.putFloat("DCPumpHead", differentialcreate$head);

@@ -85,6 +85,14 @@ public abstract class BlockBreakingKineticBlockEntityMixin implements IBlockBrea
 	@Inject(method = "tick", at = @At(value = "INVOKE",
 		target = "Lcom/simibubi/create/content/kinetics/base/KineticBlockEntity;tick()V", shift = At.Shift.AFTER), cancellable = true)
 	private void differentialcreate$defer(CallbackInfo ci) {
+		var self = (BlockBreakingKineticBlockEntity) (Object) this;
+		if (self.getLevel() instanceof com.diliupengyun.differential_create.kinetics.PhysicsPreview preview && differentialcreate$supported()) {
+			if (!preview.differentialcreate$mountedTool(self.getBlockPos()) && preview.differentialcreate$physical(getBreakingPos())) {
+				double remaining = differentialcreate$remaining();
+				if (Double.isFinite(remaining)) differentialcreate$advance(Math.min(remaining, com.diliupengyun.differential_create.kinetics.PhysicsPreview.travel(self)));
+			}
+			ci.cancel(); return;
+		}
 		if (differentialcreate$supported() && MachineWork.deferred((BlockBreakingKineticBlockEntity) (Object) this)) ci.cancel();
 	}
 	@Inject(method = "write", at = @At("RETURN"))

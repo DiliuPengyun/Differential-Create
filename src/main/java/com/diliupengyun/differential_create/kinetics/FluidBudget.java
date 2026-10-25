@@ -25,7 +25,23 @@ public final class FluidBudget {
      * only subtraction roundoff at that capacity event; retain every owned portion. */
     public static double receiptSpace(double capacity, double pending) {
         double remaining = capacity - pending;
-        return remaining <= 32 * Math.ulp(Math.max(OWNERSHIP_SCALE, Math.max(capacity, pending))) ? 0 : remaining;
+        // Admission and settlement each subtract rounded parcel totals. Allow
+        // both operations' error, matching the queue's 64-ULP ownership check.
+        return remaining <= 64 * Math.ulp(Math.max(OWNERSHIP_SCALE, Math.max(capacity, pending))) ? 0 : remaining;
+    }
+    /** Match reservation and settlement precision at the same capacity event.
+     * An owned parcel may finish at subtraction roundoff, but never enter a
+     * genuinely full receiver or cross a rejected fluid identity. */
+    public static double receiptTransfer(double wanted, double available) {
+        if (!(available > 0)) return 0;
+        return receiptSpace(wanted, available) == 0 ? wanted : available;
+    }
+    /** Reserve whole native units, without requesting an extra mB solely
+     * because subtracting an owned fraction rounded just above an integer. */
+    public static int reservationAmount(double needed) {
+        double nearest = Math.rint(needed);
+        double whole = nearest > 0 && receiptSpace(needed, nearest) == 0 ? nearest : Math.ceil(needed);
+        return (int) Math.max(1, Math.min(Integer.MAX_VALUE, whole));
     }
     /** Complete an integer receipt at the same roundoff boundary, so an open-ended
      * native handler can consume its last mB and reopen. No minimum-rate delivery. */

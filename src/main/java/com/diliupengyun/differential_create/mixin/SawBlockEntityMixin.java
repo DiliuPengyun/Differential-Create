@@ -63,7 +63,7 @@ public abstract class SawBlockEntityMixin implements ShaftWork {
 	private float differentialcreate$shaftTravel(float original) {
 		if (differentialcreate$event) return 0;
 		SawBlockEntity self = (SawBlockEntity) (Object) this;
-		return Math.abs(self.getSpeed()) / 24;
+        return (float) (com.diliupengyun.differential_create.kinetics.PhysicsPreview.travel(self) / 24);
 	}
 	@ModifyExpressionValue(method = "tick", at = @At(value = "INVOKE", target = "Lcom/simibubi/create/content/kinetics/saw/SawBlockEntity;getSpeed()F"))
 	private float differentialcreate$atRest(float speed) { return differentialcreate$event && speed == 0 ? Float.MIN_NORMAL : speed; }

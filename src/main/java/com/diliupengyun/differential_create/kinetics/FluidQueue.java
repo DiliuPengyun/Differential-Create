@@ -86,7 +86,7 @@ public final class FluidQueue<T> {
     }
     public List<Part<T>> take(double amount, boolean front) {
         if (!(amount >= 0) || !Double.isFinite(amount) || amount > volume + 64 * Math.ulp(Math.max(1, volume)))
-            throw new IllegalArgumentException("Parcel withdrawal exceeds actual stock");
+            throw new IllegalArgumentException("Parcel withdrawal exceeds actual stock: requested=" + amount + ", available=" + volume);
         amount = Math.min(amount, volume);
         var result = new ArrayList<Part<T>>();
         double takenTotal = 0;

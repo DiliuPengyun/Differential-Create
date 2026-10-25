@@ -8,7 +8,7 @@
 
 | 顺序 | 机制 | 已确认的现状 | 建议与验收重点 |
 | --- | --- | --- | --- |
-| 1 | 负载表及自动化读数 | 指针、护目镜、比较器、显示链接已接入物理负载；非线性指针行程以 100% 为中点，独立休止区表示非数值状态。可选 ComputerCraft 外设仍保留名义应力 | 后续实现零速时间右极限求值及新的外设接口；现有整体零速起动预算未改变。继续覆盖飞轮惰行、离合打滑、泵反拖与实际异常输入 |
+| 1 | 负载表及自动化读数 | 指针、护目镜、比较器、显示链接已接入物理负载；非线性指针行程以 100% 为中点，独立休止区表示非数值状态。可选 ComputerCraft 外设仍保留名义应力 | 后续实现零速时间右极限求值及新的外设接口；现有整体零速起动预算未改变。继续覆盖飞轮惰行、离合打滑、泵仅耗功、不回馈动力及实际异常输入 |
 | 2 | 铜背罐／下界合金背罐充气 | 已按实际绝对轴行程累计，每 128 RPM-tick 充入 1 点空气；小数进度随方块与物品保存。充满事件即时卸载，水淹暂停并卸载，均保留惯量 | 数值回归及两种材质共 16 项真实服务端测试已通过；覆盖极低速自然停转、正反转、高速、满罐边界、水淹与存档／掉落／穿戴／放回。自然区块卸载和多人体验仍可继续验收，无需先引入真实气体压力模型 |
 | 3 | 弹射置物台 | 已按实际轴行程回卷并保存已付额度，充满即时卸载，发射耗尽一轮额度；改近目标丢弃超额。每批在途物品独立保存目标轨迹，沿用原版弹射与批量标定 | 覆盖耗功、改目标、取消、重复触发、红石、库存阻塞、碰撞、物品 NBT 与客户端显示。真实实体质量／动能、自然区块重载、多人延迟和动态结构上的原生支持范围仍需进一步设计或验收 |
 | 4 | 粉碎轮两轮异速 | 已累计双轮相对行程并施加配对反力，支持一侧停转和同向异速；恢复对数批量优势，单件基准有限，整批出料 | 已覆盖运动、耗功、六种安装方向、批量和受控重载；独立驱动与离合滑移见动力覆盖。真实物料惯量、剪切滑移、自然区块重载和大型工厂性能仍可进一步设计或验收 |
@@ -38,7 +38,7 @@
 | 普通传送带 | 传输仍走原生 tick；带体惯量为零，货物不附加质量，无额定应力 | 继续验证高速跨段转交、漏斗和加工接触；本次锁链传动轮的修复不覆盖普通传送带 |
 | 锁链传动轮／链式传送带 | 已修复高速半圈／整圈／多圈漏出口事件，按方向依次处理蛙港、分支和终点，跨段保留余时，防止接收端同 tick 再次推进；保留固定额定负载与零惯量 | 正反转、接收阻塞、跨段变速、极高速闭环及受控 NBT 已有回归；乘链客户端共用未取模行程判定。仍是原生每 tick 转速采样，严格积分行程、货物惯量、抬升耗功和自然区块重载可继续验收或设计 |
 
-软管升降入口见 [HosePulleyBlockEntity](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/content/fluids/hosePulley/HosePulleyBlockEntity.java)，已实现的水头边界见 [FluidKinetics.Endpoint](../src/main/java/com/diliupengyun/differential_create/kinetics/FluidKinetics.java)。阀门入口见 [FluidValveBlockEntity](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/content/fluids/pipes/valve/FluidValveBlockEntity.java)；相关现有验证见 [FluidMachineIntegrationTests](../src/main/java/com/diliupengyun/differential_create/tests/FluidMachineIntegrationTests.java)。这些设备的流体接入已经存在，不能笼统列为未适配。
+软管升降入口见 [HosePulleyBlockEntity](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/content/fluids/hosePulley/HosePulleyBlockEntity.java)，已实现的水头边界见 [FluidKinetics.Endpoint](../src/main/java/com/diliupengyun/differential_create/kinetics/FluidKinetics.java)。阀门入口见 [FluidValveBlockEntity](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/content/fluids/pipes/valve/FluidValveBlockEntity.java)；相关现有验证见 [FluidMachineIntegrationTests](../src/gameTest/java/com/diliupengyun/differential_create/tests/FluidMachineIntegrationTests.java)。这些设备的流体接入已经存在，不能笼统列为未适配。
 
 输送入口分别为 [BeltInventory](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/content/kinetics/belt/transport/BeltInventory.java) 和 [ChainConveyorBlockEntity](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/content/kinetics/chainConveyor/ChainConveyorBlockEntity.java)。项目的零惯量标定见 [InertiaRegistry](../src/main/java/com/diliupengyun/differential_create/kinetics/InertiaRegistry.java)，原生额定负载见 [AllBlocks](https://github.com/Creators-of-Create/Create/blob/mc1.21.1-6.0.10/src/main/java/com/simibubi/create/AllBlocks.java)。
 
@@ -48,7 +48,7 @@
 
 - **结构重力与势能**：轴承、活塞、绳索滑轮、升降机和龙门架已经计入结构惯量、空气阻力和工具耗功，但没有升降重力项或偏心结构的重力矩。若加入，需要统一向上做功、向下反拖、断电保持、制动和配重的规则，并把势能纳入能量账目。列车坡度力和液体重力已经实现，不属于这个缺口。实现边界见 [ContraptionPhysics](../src/main/java/com/diliupengyun/differential_create/kinetics/ContraptionPhysics.java)。
 - **货物、液体与乘客质量**：目前结构按方块统计质量，装卸不改变逐物品或逐流体质量。若让满罐、满载列车明显更重，需一起处理装卸中的动量、重心、惯量和存档；这会改变既有质量标定，适合独立设计。见[动态结构质量](CONTRAPTIONS.md#质量与惯量)和 [TrainPhysics](../src/main/java/com/diliupengyun/differential_create/trains/TrainPhysics.java)。
-- **风扇吹动实体与转盘带人**：鼓风加工和风扇平方阻力已适配；实体受风和转盘带动仍保留原生动作规则。是否建立实体加速、传递功率及反作用的统一模型，应与上述实体质量规则一起决定，不必为补齐加工时钟同时重做。
+- **风扇吹动实体与转盘带人**：风扇保留平方阻力与连续旋转，鼓风加工恢复原生固定计时，不随转速加快；实体受风和转盘带动仍保留原生动作规则。是否建立实体加速、传递功率及反作用的统一模型，应与上述实体质量规则一起决定。
 - **轮轨黏着、车钩弹性、储热储汽、可压缩气体、水阻力及疲劳**：均为更大的模型扩展。当前文档已明确这些边界，优先级低于读数一致性、既有设备的付功规则和运行验收。
 
 ## 已实现机制的剩余验收

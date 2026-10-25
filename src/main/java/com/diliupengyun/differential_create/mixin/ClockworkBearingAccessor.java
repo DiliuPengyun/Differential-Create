@@ -9,4 +9,8 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface ClockworkBearingAccessor {
 	@Accessor("hourHand") ControlledContraptionEntity differentialcreate$hour();
 	@Accessor("minuteHand") ControlledContraptionEntity differentialcreate$minute();
+	@Accessor("hourAngle") float differentialcreate$hourAngle();
+	@Accessor("hourAngle") void differentialcreate$hourAngle(float value);
+	@Accessor("minuteAngle") float differentialcreate$minuteAngle();
+	@Accessor("minuteAngle") void differentialcreate$minuteAngle(float value);
 }

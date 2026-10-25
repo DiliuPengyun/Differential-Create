@@ -88,7 +88,8 @@ public abstract class PressingBehaviourMixin implements ShaftWork {
 	@Redirect(method = "tick", at = @At(value = "INVOKE",
 		target = "Lcom/simibubi/create/content/kinetics/press/PressingBehaviour;getRunningTickSpeed()I"))
 	private int differentialcreate$shaftTravel(PressingBehaviour self) {
-		float speed = Math.abs(self.specifics.getKineticSpeed());
+        double speed = self.blockEntity instanceof KineticBlockEntity shaft
+            ? com.diliupengyun.differential_create.kinetics.PhysicsPreview.travel(shaft) : Math.abs(self.specifics.getKineticSpeed());
 		if (speed == 0) return 0;
 		if (!self.getWorld().isClientSide) self.blockEntity.setChanged();
 		int progress = differentialcreate$work.advance(speed / 8.0);

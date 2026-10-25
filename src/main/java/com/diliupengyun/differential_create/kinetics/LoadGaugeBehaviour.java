@@ -29,17 +29,17 @@ public final class LoadGaugeBehaviour extends BlockEntityBehaviour {
 
     public static LoadFactor.Reading reading(StressGaugeBlockEntity gauge) {
         if (gauge.getLevel() == null) return LoadFactor.Reading.UNKNOWN;
-        if (gauge.getLevel().isClientSide) return gauge.hasNetwork()
-            ? ClientNetworkSpeeds.loadFactorOf(gauge) : LoadFactor.Reading.NO_POWER;
+        if (gauge.getLevel().isClientSide) {
+            if (gauge.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel level)
+                return com.diliupengyun.differential_create.client.ponder.PonderKinetics.of(level).loadReading(gauge);
+            return gauge.hasNetwork() ? ClientNetworkSpeeds.loadFactorOf(gauge) : LoadFactor.Reading.NO_POWER;
+        }
         return gauge.hasNetwork() ? ((INetworkDynamics) gauge.getOrCreateNetwork()).differentialcreate$data().loadFactor
             : LoadFactor.Reading.NO_POWER;
     }
 
     public void refresh() {
         var gauge = (StressGaugeBlockEntity) blockEntity;
-        // Ponder has no server network; its storyboard supplies the dial samples.
-        if (gauge.isVirtual() && gauge.getLevel() != null && gauge.getLevel().isClientSide
-            && gauge.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel) return;
         var reading = reading(gauge);
         gauge.dialTarget = LoadGaugeScale.position(reading);
         gauge.color = LoadGaugeScale.color(reading);

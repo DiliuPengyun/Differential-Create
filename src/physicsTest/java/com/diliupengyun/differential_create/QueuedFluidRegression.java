@@ -109,13 +109,13 @@ public final class QueuedFluidRegression {
             var open = new QueuedFluidSolver.Boundary[]{new QueuedFluidSolver.Boundary(0, true, true, 1000), new QueuedFluidSolver.Boundary(0, true, true, 1000)};
             var moved = QueuedFluidSolver.sample(List.of(cell), links, open, new double[2], RotationMath.TICK_MINUTES, Long.MAX_VALUE, (e, f) -> true);
             near(0, moved.flow()[0] + moved.flow()[1], 1e-11, "full air cell has zero net volume flux");
-            require(rpm == 0 ? moved.flow()[1] == 0 : moved.flow()[1] * rpm > 0, "empty-pipe air pump drives flow at either altitude");
+            require(rpm == 0 ? moved.flow()[1] == 0 : moved.flow()[1] > 0, "empty-pipe air pump follows its facing at either altitude and shaft sign");
             require(moved.solves() <= 3 && moved.solves() > 0, "one shared bounded pressure solve");
             require(moved.torque()[0] * rpm <= 1e-10, "pumping air accounts for the shaft reaction");
             var closed = new QueuedFluidSolver.Boundary[]{new QueuedFluidSolver.Boundary(0, false, false, 1000), new QueuedFluidSolver.Boundary(0, false, false, 1000)};
             var held = QueuedFluidSolver.sample(List.of(cell), links, closed, new double[2], RotationMath.TICK_MINUTES, Long.MAX_VALUE, (e, f) -> true);
             near(0, held.flow()[0], 1e-12, "sealed incompressible air cannot leave"); near(0, held.torque()[0], 1e-12, "ideal zero-flow pressure has zero continuous power");
-            near(16 * rpm * Math.abs(rpm) / (64 * 64), held.head()[0], 1e-10, "pump pressure remains available at shutoff");
+            near(16 * rpm * rpm / (64 * 64), held.head()[0], 1e-10, "pump pressure remains available at shutoff");
             var deferred = QueuedFluidSolver.sample(List.of(cell), links, open, new double[2], RotationMath.TICK_MINUTES, 0, (e, f) -> true);
             require(deferred.solves() == 0 && deferred.flow()[0] == 0, "an expired work budget never advances inventory");
         }

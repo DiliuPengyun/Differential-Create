@@ -50,6 +50,15 @@ base {
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
+// Game integration tests and client audits are available in development runs only.
+// The published Java component still contains only sourceSets.main.output.
+sourceSets {
+    gameTest {
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+
 neoForge {
     // Specify the version of NeoForge to use.
     version = project.neo_version
@@ -117,6 +126,14 @@ neoForge {
             systemProperty 'differentialcreate.logisticsClientSmoke', 'true'
         }
 
+        beltClientSmoke {
+            client()
+            gameDirectory = project.file('build/belt/client-runs/' + UUID.randomUUID())
+            systemProperty 'differentialcreate.beltClientSmoke', 'true'
+            programArguments.addAll '--width', '1100', '--height', '760'
+            logLevel = org.slf4j.event.Level.INFO
+        }
+
         ejectorClientSmoke {
             client()
             gameDirectory = project.file('build/ejector/client-runs/' + UUID.randomUUID())
@@ -137,9 +154,19 @@ neoForge {
             gameDirectory = project.file('build/ponder/runs/' + UUID.randomUUID())
             systemProperty 'differentialcreate.ponderClientSmoke', 'true'
             systemProperty 'differentialcreate.ponderAudit', providers.gradleProperty('ponderAudit').orElse('false').get()
+            systemProperty 'differentialcreate.ponderCapture', providers.gradleProperty('ponderCapture').orElse('true').get()
+            systemProperty 'differentialcreate.ponderCaptureScenes', providers.gradleProperty('ponderCaptureScenes').orElse('').get()
             systemProperty 'differentialcreate.ponderFrameAudit', providers.gradleProperty('ponderFrameAudit').orElse('').get()
+            systemProperty 'differentialcreate.ponderVideo', providers.gradleProperty('ponderVideo').orElse('false').get()
+            systemProperty 'differentialcreate.ponderVideoScenes', providers.gradleProperty('ponderVideoScenes').orElse('').get()
+            systemProperty 'differentialcreate.ponderVideoComponent', providers.gradleProperty('ponderVideoComponent').orElse('').get()
+            systemProperty 'differentialcreate.ponderVideoEncoder', providers.gradleProperty('ponderVideoEncoder').orElse('').get()
+            systemProperty 'differentialcreate.ponderVideoPath', project.file(providers.gradleProperty('ponderVideoPath').orElse('build/ponder-video/recordings').get()).absolutePath
+            systemProperty 'differentialcreate.ponderVideoGuiScale', providers.gradleProperty('ponderVideoGuiScale').orElse('2').get()
+            systemProperty 'differentialcreate.ponderVideoFps', providers.gradleProperty('ponderVideoFps').orElse('60').get()
             systemProperty 'differentialcreate.ponderPreviewPath', project.file('build/ponder/previews').absolutePath
-            programArguments.addAll '--width', '1200', '--height', '900'
+            programArguments.addAll '--width', providers.gradleProperty('ponderWidth').orElse('1200').get(),
+                '--height', providers.gradleProperty('ponderHeight').orElse('900').get()
         }
 
         server {
@@ -244,6 +271,7 @@ neoForge {
         // multi mod projects should define one per mod
         "${mod_id}" {
             sourceSet(sourceSets.main)
+            sourceSet(sourceSets.gameTest)
         }
     }
 }
@@ -254,6 +282,7 @@ neoForge.runs.ejectorServer { logLevel = org.slf4j.event.Level.INFO }
 neoForge.runs.ejectorClientSmoke { logLevel = org.slf4j.event.Level.INFO }
 neoForge.runs.logisticsServer { logLevel = org.slf4j.event.Level.INFO }
 neoForge.runs.logisticsClientSmoke { logLevel = org.slf4j.event.Level.INFO }
+neoForge.runs.beltClientSmoke { logLevel = org.slf4j.event.Level.INFO }
 neoForge.runs.ponderClientSmoke { logLevel = org.slf4j.event.Level.INFO }
 
 tasks.named('runPonderClientSmoke') {
@@ -273,6 +302,16 @@ tasks.named('runLogisticsClientSmoke') {
         def log = new File(directory, 'logs/latest.log')
         if (!log.isFile() || !log.text.contains('DC_CREATE6_CLIENT_PASS') || log.text.contains('DC_CREATE6_CLIENT_FAIL'))
             throw new GradleException('Logistics client verification did not pass; inspect its latest.log.')
+    }
+}
+
+tasks.named('runBeltClientSmoke') {
+    notCompatibleWithConfigurationCache('Belt surface verification uses a fresh disposable client world.')
+    doLast {
+        def directory = neoForge.runs.getByName('beltClientSmoke').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !log.text.contains('DC_BELT_CLIENT_PASS') || log.text.contains('DC_BELT_CLIENT_FAIL'))
+            throw new GradleException('Belt surface verification did not pass; inspect its latest.log.')
     }
 }
 
@@ -468,8 +507,8 @@ tasks.withType(JavaCompile).configureEach {
 
 sourceSets {
     physicsTest {
-        compileClasspath += sourceSets.main.output
-        runtimeClasspath += sourceSets.main.output
+        compileClasspath += sourceSets.main.output + sourceSets.gameTest.output
+        runtimeClasspath += sourceSets.main.output + sourceSets.gameTest.output
     }
 }
 tasks.register('physicsTest', JavaExec) {
@@ -477,7 +516,30 @@ tasks.register('physicsTest', JavaExec) {
     classpath = sourceSets.physicsTest.runtimeClasspath
     mainClass = 'com.diliupengyun.differential_create.PhysicsRegression'
 }
-tasks.named('check') { dependsOn tasks.named('physicsTest') }
+tasks.register('verifyReleaseJar') {
+    def releaseJar = tasks.named('jar', Jar).flatMap { it.archiveFile }
+    dependsOn tasks.named('jar')
+    inputs.file(releaseJar)
+    doLast {
+        new java.util.zip.ZipFile(releaseJar.get().asFile).withCloseable { archive ->
+            archive.entries().each { entry ->
+                if (entry.name.startsWith('com/diliupengyun/differential_create/tests/')
+                    || entry.name.matches('data/[^/]+/structure/(kineticphysicstests\\.)?physics_test\\.nbt'))
+                    throw new GradleException("Development test included in release: ${entry.name}")
+                if (entry.name.endsWith('.class')) {
+                    def contents = archive.getInputStream(entry).withCloseable {
+                        new String(it.readAllBytes(), java.nio.charset.StandardCharsets.ISO_8859_1)
+                    }
+                    if (contents.contains('com/diliupengyun/differential_create/tests/'))
+                        throw new GradleException("Release class depends on development tests: ${entry.name}")
+                }
+            }
+        }
+    }
+}
+tasks.named('check') {
+    dependsOn tasks.named('physicsTest'), tasks.named('gameTestClasses'), tasks.named('verifyReleaseJar')
+}
 
 tasks.register('fluidBenchmark', JavaExec) {
     dependsOn tasks.named('physicsTestClasses')

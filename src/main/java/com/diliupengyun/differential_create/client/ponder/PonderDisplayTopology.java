@@ -7,8 +7,10 @@ import java.util.Set;
 
 import com.diliupengyun.differential_create.kinetics.NetworkTopology;
 import com.diliupengyun.differential_create.mixin.PonderWorldSectionAccessor;
+import com.diliupengyun.differential_create.mixin.PonderChainGearshiftAccessor;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
+import com.simibubi.create.content.kinetics.chainDrive.ChainGearshiftBlockEntity;
 import com.simibubi.create.content.kinetics.speedController.SpeedControllerBlockEntity;
 
 import net.createmod.ponder.api.element.WorldSectionElement;
@@ -22,7 +24,9 @@ import org.joml.Vector3f;
  * Active assemblies connect at their displayed locations, excluding unused template copies. */
 final class PonderDisplayTopology {
     private record Pose(Vec3 position, Vec3 rotation, WorldSectionElement section) {}
+    private record Signal(Vec3 position, int power) {}
     private final Map<KineticBlockEntity, Pose> poses = new LinkedHashMap<>();
+    private final java.util.List<Signal> signals = new java.util.ArrayList<>();
     private final Map<KineticBlockEntity, Map<KineticBlockEntity, BlockPos>> neighbours = new HashMap<>();
 
     PonderDisplayTopology(PonderLevel level) {
@@ -31,12 +35,36 @@ final class PonderDisplayTopology {
             if (selection == null) return;
             var transform = new PoseStack();
             ((WorldSectionElementImpl) section).transformMS(transform, 1);
-            for (var pos : selection) if (level.getBlockEntity(pos) instanceof KineticBlockEntity be) {
+            for (var pos : selection) {
                 var point = transform.last().pose().transformPosition(new Vector3f(pos.getX(), pos.getY(), pos.getZ()));
-                poses.put(be, new Pose(new Vec3(point), section.getAnimatedRotation(), section));
+                // A vertical valve wheel spins about its shaft. Its block centre
+                // and shaft connection stay fixed; its rotating corner does not.
+                if (level.getBlockEntity(pos) instanceof com.simibubi.create.content.kinetics.crank.ValveHandleBlockEntity handle
+                    && handle.getBlockState().getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.FACING)
+                        .getAxis().isVertical()
+                    && section.getAnimatedRotation().x == 0 && section.getAnimatedRotation().z == 0)
+                    point = transform.last().pose().transformPosition(new Vector3f(pos.getX() + .5f, pos.getY() + .5f, pos.getZ() + .5f))
+                        .sub(.5f, .5f, .5f);
+                var position = new Vec3(point);
+                if (level.getBlockEntity(pos) instanceof KineticBlockEntity be)
+                    poses.put(be, new Pose(position, section.getAnimatedRotation(), section));
+                var state = level.getBlockState(pos);
+                if (state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.POWER))
+                    signals.add(new Signal(position, state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.POWER)));
             }
         });
         steamInstallation(level);
+        for (var entry : poses.entrySet()) if (entry.getKey() instanceof ChainGearshiftBlockEntity gearshift) {
+            int signal = 0;
+            if (gearshift.getBlockState().getValue(com.simibubi.create.content.kinetics.chainDrive.ChainGearshiftBlock.POWERED)) {
+                for (var wire : signals)
+                    if (Math.abs(wire.position().distanceToSqr(entry.getValue().position()) - 1) < 1e-6)
+                        signal = Math.max(signal, wire.power());
+                // Binary scripted power also works when its lever is off-stage.
+                if (signal == 0) signal = 15;
+            }
+            ((PonderChainGearshiftAccessor) gearshift).differentialcreate$setSignal(signal);
+        }
     }
 
     /** SteamScenes reveals a completed boiler's cylinders one row at a time. The gear
@@ -70,6 +98,15 @@ final class PonderDisplayTopology {
     }
 
     boolean contains(KineticBlockEntity be) { return poses.containsKey(be); }
+
+    KineticBlockEntity shaftNeighbour(KineticBlockEntity from, net.minecraft.core.Direction face) {
+        if (!contains(from)) return null;
+        neighbours(from);
+        var offset = BlockPos.ZERO.relative(face);
+        for (var entry : neighbours.get(from).entrySet())
+            if (entry.getValue().equals(offset)) return entry.getKey();
+        return null;
+    }
 
     Set<KineticBlockEntity> neighbours(KineticBlockEntity from) {
         return neighbours.computeIfAbsent(from, key -> {
@@ -114,6 +151,9 @@ final class PonderDisplayTopology {
             : positioned.getBlockPos().offset(to.source.subtract(to.getBlockPos()));
         if (positioned instanceof SpeedControllerBlockEntity controller && to instanceof SpeedControllerBlockEntity originalController)
             controller.targetSpeed.setValue(originalController.targetSpeed.getValue());
+        if (positioned instanceof ChainGearshiftBlockEntity && to instanceof ChainGearshiftBlockEntity)
+            ((PonderChainGearshiftAccessor) positioned).differentialcreate$setSignal(
+                ((PonderChainGearshiftAccessor) to).differentialcreate$getSignal());
         return NetworkTopology.connection(from, positioned);
     }
 }

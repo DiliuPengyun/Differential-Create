@@ -82,11 +82,14 @@ public final class CrushingKinetics {
         if (controller.getLevel() == null || controller.isRemoved()) return;
         Pair pair = pair(controller);
         double speed = pair == null ? 0 : pair.speed();
+        // Match the solver's static relative-contact tolerance (1e-8 / 2).
+        // Roundoff in a stopped feed coordinate must not emit dust or flip the outlet.
+        if (Math.abs(speed) <= 5e-9) speed = 0;
         float published = (float) (Math.abs(speed) / 50);
         BlockState state = controller.getBlockState();
         boolean valid = pair != null && speed != 0;
         Direction facing = valid ? pair.facing() : state.getValue(CrushingWheelControllerBlock.FACING);
-        if (!controller.getLevel().isClientSide && (valid != state.getValue(CrushingWheelControllerBlock.VALID)
+        if ((!controller.getLevel().isClientSide || controller.isVirtual()) && (valid != state.getValue(CrushingWheelControllerBlock.VALID)
             || facing != state.getValue(CrushingWheelControllerBlock.FACING)))
             controller.getLevel().setBlockAndUpdate(controller.getBlockPos(), state.setValue(CrushingWheelControllerBlock.VALID, valid)
                 .setValue(CrushingWheelControllerBlock.FACING, facing));

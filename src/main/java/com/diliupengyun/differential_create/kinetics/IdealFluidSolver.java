@@ -50,7 +50,9 @@ public final class IdealFluidSolver {
             return isGas ? 0 : pressureForce(density * GRAVITY * height);
         }
         public double pumpScale() { return pressureForce(density * GRAVITY * REFERENCE_HEAD); }
-        /** Kinetic energy carried out to an original inventory, outside the pipe model. */
+        /** Dissipative boundary exchange: stored fluid retains no pipe momentum.
+         * Equal reference pressure does not make inventory exchange lossless;
+         * this velocity-squared head opposes flow in either direction. */
         public double outletForce(double flow) {
             double velocity = FLOW_TO_SI * flow / AREA;
             return Math.copySign(pressureForce(.5 * density * velocity * velocity), flow);
@@ -59,15 +61,21 @@ public final class IdealFluidSolver {
     public static double pressureForce(double pascals) { return pascals * FLOW_TO_SI / WATTS_PER_SU; }
     public static double pressurePa(double force) { return force * WATTS_PER_SU / FLOW_TO_SI; }
 
-    /** One shared coefficient gives both pressure and finite zero-speed torque.
-     * This is a reversible ideal game impeller, not a measured centrifugal pump. */
+    /** Pressure coefficient only: the configured inlet/outlet is independent
+     * of shaft direction. The signed linear flow term is passive resistance;
+     * it must not become a turbine drive when an external stream overruns it. */
     public static double coupling(Material fluid, double rpm, double flow) {
-        return fluid.pumpScale() / REFERENCE_RPM
-            * (Math.abs(rpm) / REFERENCE_RPM - Math.abs(flow) / REFERENCE_FLOW);
+        return Math.signum(rpm) * fluid.pumpScale() / REFERENCE_RPM
+            * (Math.abs(rpm) / REFERENCE_RPM - flow / REFERENCE_FLOW);
     }
     public static double pumpSlope(Material fluid, double rpm, double flow) {
-        double direction = flow == 0 ? Math.signum(rpm) : Math.signum(flow);
-        return -fluid.pumpScale() / REFERENCE_RPM / REFERENCE_FLOW * rpm * direction;
+        return -fluid.pumpScale() / REFERENCE_RPM / REFERENCE_FLOW * Math.abs(rpm);
+    }
+    /** Signed shaft reaction. The shaft pays for forward hydraulic input and
+     * never receives energy from the liquid. Flow losses and reverse hydraulic
+     * work are dissipated. This expression has a finite, zero standstill limit. */
+    public static double pumpReaction(Material fluid, double rpm, double forwardFlow) {
+        return -rpm * fluid.pumpScale() / (REFERENCE_RPM * REFERENCE_RPM) * Math.max(0, forwardFlow);
     }
 
     public record Edge(int from, int to, double inertia) {
