@@ -72,7 +72,7 @@ final class ContraptionPhysicsTests {
 				h.assertTrue(rows.size() == 1, "every kinetic machine supplies one strength readout: " + be.getBlockState().getBlock());
 				near(h, strength, Double.parseDouble(((TranslatableContents) rows.getFirst().getContents()).getArgs()[0].toString()), 0, "displayed strength");
 				if (AllBlocks.CRUSHING_WHEEL.has(be.getBlockState()))
-					near(h, .1, InertiaRegistry.getInertia(be), 1e-8, "each crushing wheel carries ten times the ordinary machine inertia");
+					near(h, .1, InertiaRegistry.totalInertia(be), 1e-8, "each crushing wheel carries ten times the ordinary machine inertia");
 			}
 			h.assertTrue(ElasticKinetics.strengthOf(motor) == Double.POSITIVE_INFINITY, "stopped creative motor retains infinite structural strength");
 			var tooltip = new ArrayList<Component>(); KineticGoggleInfo.append(motor, tooltip, false);
@@ -108,31 +108,33 @@ final class ContraptionPhysicsTests {
 				long count = blocks.values().stream().filter(b -> !b.state().isAir()).count();
 				double gear = pos.equals(elevator) ? 2 : 1;
 				double expected = .01 + count * .0006 * Math.pow(gear * 1200 / (512 * 2 * Math.PI), 2);
-				near(h, expected, InertiaRegistry.getInertia(be), 1e-7, "translation folds total mass into shaft inertia");
+				near(h, expected, InertiaRegistry.totalInertia(be), 1e-7, "translation folds total mass into shaft inertia");
 				near(h, 0, MachineActivity.impact(be), 0, "empty moving structure has no fixed work torque");
 				speed(be, pos.equals(piston) ? -16 : 16);
 				if (pos.equals(elevator)) be.movedContraption.setContraptionMotion(new Vec3(0, -32.0 / 512, 0));
 				double drag = ContraptionPhysics.airDrag(be);
 				h.assertTrue(drag > 0, "moving actuator has air drag: " + be.getBlockState().getBlock());
-				near(h, drag * 64 * 64, MachineActivity.loadTorque(be, -64), 1e-12, "air torque is even in speed and quadratic");
+				if (ActorFeed.enabled(be)) near(h, 0, MachineActivity.loadTorque(be, -64), 1e-12,
+					"independent output owns air resistance without duplicating it on the input shaft");
+				else near(h, drag * 64 * 64, MachineActivity.loadTorque(be, -64), 1e-12, "air torque is even in speed and quadratic");
 				var entry = blocks.entrySet().stream().filter(e -> e.getValue().state().is(Blocks.OAK_PLANKS)).findFirst().orElseThrow();
 				be.movedContraption.setBlock(entry.getKey(), new StructureBlockInfo(entry.getKey(), AllBlocks.FLYWHEEL.getDefaultState(), null));
-				near(h, expected, InertiaRegistry.getInertia(be), 1e-7, "mounted flywheel has the same mass as a plank");
+				near(h, expected, InertiaRegistry.totalInertia(be), 1e-7, "mounted flywheel has the same mass as a plank");
 				near(h, drag, ContraptionPhysics.airDrag(be), 1e-12, "material does not change air geometry");
 				var tag = be.saveWithFullMetadata(h.getLevel().registryAccess());
 				var clone = (KineticBlockEntity) be.getType().create(be.getBlockPos(), be.getBlockState());
 				clone.setLevel(h.getLevel()); clone.loadWithComponents(tag, h.getLevel().registryAccess());
-				near(h, expected, InertiaRegistry.getInertia(clone), 1e-7, "late entity loading preserves actuator inertia");
+				near(h, expected, InertiaRegistry.totalInertia(clone), 1e-7, "late entity loading preserves actuator inertia");
 				near(h, drag, ContraptionPhysics.airDrag(clone), 1e-12, "late entity loading preserves air drag");
 				selfShadow(h, be, be.movedContraption, pos.equals(piston) ? 0 : 1);
 				be.disassemble(); ContraptionPhysics.checkAttachments(be);
-				near(h, .01, InertiaRegistry.getInertia(be), 1e-8, "native disassembly releases attached mass");
+				near(h, .01, InertiaRegistry.totalInertia(be), 1e-8, "native disassembly releases attached mass");
 				near(h, 0, ContraptionPhysics.airDrag(be), 0, "native disassembly releases air load");
 			}
 			ClockworkBearingBlockEntity be = h.getBlockEntity(clock); be.setSpeed(16); speed(be, 16); be.assemble();
 			h.assertTrue(((ClockworkBearingAccessor) be).differentialcreate$hour() != null, "clock keeps native hand assembly");
 			ContraptionPhysics.checkAttachments(be);
-			near(h, .0102, InertiaRegistry.getInertia(be), 1e-8, "hour hand's half-speed gearing folds trial inertia by one quarter");
+			near(h, .0102, InertiaRegistry.totalInertia(be), 1e-8, "hour hand's half-speed gearing folds trial inertia by one quarter");
 			for (var drive : ContraptionPhysics.drives(be)) {
 				int axis = drive.axis().ordinal();
 				var shell = new java.util.HashSet<ContraptionGeometry.Cell>(); var filled = new java.util.HashSet<ContraptionGeometry.Cell>();
@@ -145,7 +147,7 @@ final class ContraptionPhysicsTests {
 					ContraptionPhysics.shape(drive.entity().getContraption()).rotationDrag()[axis], 1e-15,
 					"native clock hand excludes its sealed internal cavity independently of other hands");
 			}
-			be.disassemble(); near(h, .01, InertiaRegistry.getInertia(be), 1e-8, "clock disassembly removes hand inertia");
+			be.disassemble(); near(h, .01, InertiaRegistry.totalInertia(be), 1e-8, "clock disassembly removes hand inertia");
 			h.succeed();
 		});
 	}
@@ -167,11 +169,11 @@ final class ContraptionPhysicsTests {
 		var hidden = new ContraptionGeometry.Cell(axis == 0 ? 3 : 0, axis == 1 ? 3 : 0, axis == 2 ? 3 : 0);
 		cells(entity, java.util.Set.of(origin, hidden));
 		near(h, single, ContraptionPhysics.airDrag(be), 1e-15, "native actuator excludes a separated trailing cube");
-		double inertia = InertiaRegistry.getInertia(be);
+		double inertia = InertiaRegistry.totalInertia(be);
 		var side = new ContraptionGeometry.Cell(axis == 0 ? 0 : 3, axis == 1 ? 0 : 3, 0);
 		cells(entity, java.util.Set.of(origin, side));
 		near(h, 2 * single, ContraptionPhysics.airDrag(be), 1e-15, "moving a cube out of the shadow invalidates native geometry caches");
-		near(h, inertia, InertiaRegistry.getInertia(be), 1e-7, "translation keeps the same mass when shadowing changes");
+		near(h, inertia, InertiaRegistry.totalInertia(be), 1e-7, "translation keeps the same mass when shadowing changes");
 		cells(entity, java.util.Set.of(origin, hidden));
 		var saved = entity.getContraption().writeNBT(h.getLevel().registryAccess(), false);
 		var restored = com.simibubi.create.content.contraptions.Contraption.fromNBT(h.getLevel(), saved, false);
@@ -196,9 +198,9 @@ final class ContraptionPhysicsTests {
 			for (int x = -1; x <= 1; x++) for (int y = -1; y <= 1; y++) for (int z = -1; z <= 1; z++) {
 				var cell = new ContraptionGeometry.Cell(x, y + 2, z); solid.add(cell); if (x != 0 || y != 0 || z != 0) shell.add(cell);
 			}
-			cells(entity, shell); double hollow = ContraptionPhysics.airDrag(be); double inertia = InertiaRegistry.getInertia(be);
+			cells(entity, shell); double hollow = ContraptionPhysics.airDrag(be); double inertia = InertiaRegistry.totalInertia(be);
 			cells(entity, solid); near(h, hollow, ContraptionPhysics.airDrag(be), 1e-15, "native bearing excludes the sealed inner cavity");
-			h.assertTrue(InertiaRegistry.getInertia(be) > inertia, "filling the cavity still adds rotational inertia");
+			h.assertTrue(InertiaRegistry.totalInertia(be) > inertia, "filling the cavity still adds rotational inertia");
 			var saved = entity.getContraption().writeNBT(h.getLevel().registryAccess(), false);
 			var restored = com.simibubi.create.content.contraptions.Contraption.fromNBT(h.getLevel(), saved, false);
 			near(h, hollow, ContraptionPhysics.shape(restored).rotationDrag()[1], 1e-15, "native bearing geometry survives NBT readback");
@@ -294,12 +296,12 @@ final class ContraptionPhysicsTests {
 			var entity = entities.getFirst(); entity.tick();
 			h.assertFalse(entity.isRemoved(), "zero physical startup speed does not dismantle a powered carriage");
 			double expected = 3 * .0006 * Math.pow(1200 / (512 * 2 * Math.PI), 2);
-			near(h, expected, InertiaRegistry.getInertia(shaft), 1e-7, "carriage mass belongs to the supporting world shaft");
+			near(h, expected, InertiaRegistry.totalInertia(shaft), 1e-7, "carriage mass belongs to the supporting world shaft");
 			speed(shaft, -64); double energy = ElasticKinetics.kineticEnergy(shaft.getOrCreateNetwork());
 			entity.setPos(entity.getX() + 1, entity.getY(), entity.getZ()); ContraptionPhysics.bindGantry(entity, Double.NaN);
 			KineticBlockEntity next = h.getBlockEntity(shaftPos.east());
-			near(h, 0, InertiaRegistry.getInertia(shaft), 0, "previous shaft releases carriage mass");
-			near(h, expected, InertiaRegistry.getInertia(next), 1e-7, "next shaft acquires carriage mass");
+			near(h, 0, InertiaRegistry.totalInertia(shaft), 0, "previous shaft releases carriage mass");
+			near(h, expected, InertiaRegistry.totalInertia(next), 1e-7, "next shaft acquires carriage mass");
 			near(h, -64, next.getSpeed(), 0, "pinion handover preserves velocity");
 			near(h, energy, ElasticKinetics.kineticEnergy(next.getOrCreateNetwork()), 1e-8, "pinion handover preserves kinetic energy");
 			near(h, -64, entity.saveWithoutId(new CompoundTag()).getDouble("DCGantrySpeed"), 0, "carriage reload stores its momentum");
@@ -309,7 +311,7 @@ final class ContraptionPhysicsTests {
 			ContraptionPhysics.bindGantry(entity, Double.NaN);
 			selfShadow(h, next, entity, 0);
 			entity.disassemble();
-			near(h, 0, InertiaRegistry.getInertia(next), 0, "native carriage disassembly releases mass");
+			near(h, 0, InertiaRegistry.totalInertia(next), 0, "native carriage disassembly releases mass");
 			h.succeed();
 		});
 	}

@@ -5,6 +5,7 @@
   "minVersion": "0.8",
   "refmap": "differentialcreate.refmap.json",
   "mixins": [
+    "ElevatorPulleyAccessor",
     "PonderLootTableMixin",
     "SteamBogeyMixin",
     "SteamBogeyRestoreMixin",

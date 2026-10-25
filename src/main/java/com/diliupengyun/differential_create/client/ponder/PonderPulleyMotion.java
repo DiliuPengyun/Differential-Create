@@ -24,6 +24,10 @@ public final class PonderPulleyMotion {
     }
     void limit(double maximum) { floor = Math.min(floor, maximum); }
     public boolean arrived() { return Math.abs(position - Math.min(target, floor)) < 1e-5; }
+    PonderSimulation.TravelBounds bounds() {
+        double remaining = (Math.min(target, floor) - position) * 512 / 1200;
+        return new PonderSimulation.TravelBounds(Math.min(0, remaining), Math.max(0, remaining));
+    }
     private void sampleAngle() {
         var physics = PonderKinetics.of((PonderLevel) pulley.getLevel());
         Double angle = mountedAngle(physics);

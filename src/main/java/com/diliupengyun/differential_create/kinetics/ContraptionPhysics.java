@@ -76,13 +76,15 @@ public final class ContraptionPhysics {
 				motionRatio = Math.abs((ratio == .5 ? clock.getHourArmSpeed() : clock.getMinuteArmSpeed()) / (.3 * speed));
 			if (shaft instanceof LinearActuatorBlockEntity linear) {
 				if (((LinearActuatorAccessor) linear).differentialcreate$waiting()) return 0;
-				if (shaft instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity) {
+				if (ActorFeed.enabled(shaft)) {
+					motionRatio = ratio;
+				} else if (shaft instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity) {
 					// Elevator's getter advances its arrival controller. Physics reads
 					// must not advance that controller a second time.
 					if (speed > 0) motionRatio = root.getDeltaMovement().length() * 512 / speed;
 				} else if (speed > 0 && !ActorFeed.enabled(shaft)) motionRatio = Math.abs(linear.getMovementSpeed() * 512 / speed);
 			}
-			if (shaft instanceof GantryShaftBlockEntity && speed > 0) motionRatio = Math.min(1, .49 * 512 / speed);
+			if (shaft instanceof GantryShaftBlockEntity && speed > 0 && !ActorFeed.enabled(shaft)) motionRatio = Math.min(1, .49 * 512 / speed);
 			var shape = shape(entity.getContraption());
 			if (stabilized()) {
 				// Project the world velocity onto the child's own exposed face normals.
@@ -209,6 +211,11 @@ public final class ContraptionPhysics {
 		for (var drive : drives) if (!drive.stabilized())
 			count += 1 + ((ContraptionAccessor) drive.entity.getContraption()).differentialcreate$stabilizedChildren().size();
 		return awaitingEntity(be) ? Math.max(count, ElasticKinetics.state(be).pendingStructureCount) : count;
+	}
+	public static boolean incomplete(KineticBlockEntity be) {
+		if (!manages(be)) return false;
+		var drives = drives(be);
+		return drives.size() < expectedCount(be, drives);
 	}
 	public static double workTorque(KineticBlockEntity be) {
 		var state = ElasticKinetics.state(be);

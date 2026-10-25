@@ -43,30 +43,28 @@ public final class ContraptionMotion {
 				angular = speed == 0 ? 0 : nativeSpeed / speed;
 				limit = Math.abs(nativeSpeed);
 			} else if (drive.shaft() instanceof LinearActuatorBlockEntity actuator) {
-				distanceLimit = actuator instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity ? 1.99 : .49;
+				// Native collision-safe speed is an output brake, not a new wall every tick.
 				double sequence = ((LinearActuatorAccessor) actuator).differentialcreate$offsetLimit();
 				if (sequence >= 0) distanceLimit = Math.min(distanceLimit, sequence);
 				if (!((LinearActuatorAccessor) actuator).differentialcreate$waiting()) {
-					if (speed != 0) linear = drive.root().getDeltaMovement().scale(1 / speed);
-					if (!(actuator instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity)) {
-						linear = actuator.getMotionVector();
-						// Native travel can already be clamped to zero at an endpoint.
-						// Retain the drive direction so offset/sequence limits still
-						// distinguish blocked feed from a stationary cutting stroke.
-						if (speed != 0 && linear.lengthSqr() != 0) linear = linear.scale(1 / speed);
-						else if (actuator instanceof MechanicalPistonBlockEntity) {
-							var facing = actuator.getBlockState().getValue(BlockStateProperties.FACING);
-							linear = Vec3.atLowerCornerOf(facing.getNormal()).scale(-facing.getAxisDirection().getStep()
-								* (facing.getAxis() == Direction.Axis.Z ? -1 : 1) / 512.0);
-						} else linear = new Vec3(0, -1.0 / 512, 0);
+					if (actuator instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity) {
+						linear = ((LinearActuatorAccessor) actuator).differentialcreate$toMotionVector(1)
+							.scale(ElasticKinetics.state(actuator).elevatorMotionPerRpm);
+						int target = ((com.diliupengyun.differential_create.mixin.ElevatorPulleyAccessor) actuator).differentialcreate$targetOffset();
+						distanceLimit = Math.min(distanceLimit, Math.abs(target - actuator.offset));
 					}
+					if (actuator instanceof MechanicalPistonBlockEntity) {
+						var facing = actuator.getBlockState().getValue(BlockStateProperties.FACING);
+						linear = Vec3.atLowerCornerOf(facing.getNormal()).scale(-facing.getAxisDirection().getStep()
+							* (facing.getAxis() == Direction.Axis.Z ? -1 : 1) / 512.0);
+					} else if (!(actuator instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity))
+						linear = new Vec3(0, -1.0 / 512, 0);
 				}
 			} else if (drive.shaft() instanceof GantryShaftBlockEntity gantry) {
-				distanceLimit = .49;
 				if (drive.root() instanceof com.simibubi.create.content.contraptions.gantry.GantryContraptionEntity carriage && carriage.sequencedOffsetLimit >= 0)
 					distanceLimit = Math.min(distanceLimit, carriage.sequencedOffsetLimit);
 				var facing = gantry.getBlockState().getValue(GantryShaftBlock.FACING);
-				double coefficient = speed == 0 ? -1.0 / 512 : gantry.getPinionMovementSpeed() / speed;
+				double coefficient = -1.0 / 512;
 				linear = Vec3.atLowerCornerOf(facing.getNormal()).scale(coefficient);
 			}
 			angularRate = angular; angularLimit = limit; translation = linear;
@@ -100,6 +98,17 @@ public final class ContraptionMotion {
 		return root != null && (root.isStalled() || root.getContraption() != null && root.getContraption().stalled);
 	}
 	public static boolean active() { return advancing; }
+	public record Geometry(Vec3 translation, double angularRate, double angle) {}
+	public static Geometry geometry(ContraptionPhysics.Drive drive) {
+		var output = outputs.get(drive.root());
+		if (output != null && (advancing || output.ready && !output.consumed))
+			return new Geometry(output.translation, output.angularRate, output.angle);
+		boolean previous = sampling;
+		try {
+			sampling = true; output = new Output(drive);
+			return new Geometry(output.translation, output.angularRate, 0);
+		} finally { sampling = previous; }
+	}
 	public static boolean samplingGeometry() { return sampling; }
 	public static boolean managed(AbstractContraptionEntity entity) {
 		return entity != null && (outputs.containsKey(entity) || entity.getContraption() != null && entity.getContraption().getActors().stream()
@@ -114,10 +123,7 @@ public final class ContraptionMotion {
 			for (var network : MachiningClock.networks(level)) for (var shaft : network.members.keySet()) {
 				var drives = ContraptionPhysics.drives(shaft);
 				for (var drive : drives) {
-					if (drive.stabilized() || !SequencerKinetics.controlled(shaft) && drives.stream().noneMatch(d -> d.root() == drive.root()
-						&& d.entity().getContraption().getActors().stream().anyMatch(a -> a.getRight() != null
-							&& (ContraptionActorWork.of(a.getRight()).motionManaged()
-								|| com.diliupengyun.differential_create.kinetics.portable.PortableDocking.isPortable(a.getRight()))))) continue;
+					if (drive.stabilized()) continue;
 					outputs.put(drive.root(), new Output(drive));
 					captured.add(drive.root());
 				}
@@ -128,6 +134,58 @@ public final class ContraptionMotion {
 	public static void advance(ElasticKinetics.Trial trial) {
 		for (var output : outputs.values()) if (!output.ready && !output.drive.shaft().isRemoved())
 			output.advance(ActorFeed.enabled(output.drive.shaft()) ? trial.outputTravel(output.drive.shaft()) : trial.signedTravel(output.drive.shaft()));
+	}
+	/** Geometric limits belong to every structure, including ones without tools. */
+	public static void boundaries(java.util.List<ElasticKinetics.WorkEvent> limits) {
+		for (var output : outputs.values()) if (!output.ready && output.drive != null && !output.drive.shaft().isRemoved()) {
+			double positive = output.upperTravel - output.signedTravel, negative = output.signedTravel - output.lowerTravel;
+			// Already supported directions are handled by the unilateral reaction.
+			positive = positive <= MOTION_EPSILON ? Double.POSITIVE_INFINITY : positive;
+			negative = negative <= MOTION_EPSILON ? Double.POSITIVE_INFINITY : negative;
+			if (Double.isFinite(positive) || Double.isFinite(negative))
+				limits.add(new ElasticKinetics.WorkEvent(output.drive.shaft(),
+					new ShaftWork.Boundary(Double.POSITIVE_INFINITY, positive, negative), 0, ActorFeed.enabled(output.drive.shaft())));
+		}
+	}
+	/** A native pause is a fixed geometric constraint; an endpoint supports only outward forces. */
+	public static int stop(com.simibubi.create.content.kinetics.base.KineticBlockEntity shaft) {
+		if (!ContraptionPhysics.manages(shaft)) return 0;
+		boolean lower = false, upper = false;
+		for (var output : outputs.values()) if (!output.ready && output.drive != null && output.drive.shaft() == shaft) {
+			if (shaft instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity
+				&& output.translation.lengthSqr() == 0) return 2;
+			if (stalled(output.drive.root()) || shaft instanceof LinearActuatorBlockEntity actuator
+				&& ((LinearActuatorAccessor) actuator).differentialcreate$waiting())
+				return ActorFeed.enabled(shaft) ? 2 : 0;
+			lower |= output.signedTravel - output.lowerTravel <= MOTION_EPSILON;
+			upper |= output.upperTravel - output.signedTravel <= MOTION_EPSILON;
+		}
+		return lower && upper ? 2 : lower ? -1 : upper ? 1 : 0;
+	}
+	public static double speedLimit(com.simibubi.create.content.kinetics.base.KineticBlockEntity shaft) {
+		if (!(shaft instanceof LinearActuatorBlockEntity) && !(shaft instanceof GantryShaftBlockEntity)) return Double.POSITIVE_INFINITY;
+		return shaft instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity ? 1.99 * 256 : .49 * 512;
+	}
+	/** Resolve an inelastic endpoint impact once, before the resting contact solve. */
+	public static void resolveStops(java.util.List<com.simibubi.create.content.kinetics.KineticNetwork> networks) {
+		for (var network : networks) {
+			if (network.members.keySet().stream().anyMatch(ContraptionPhysics::incomplete)) continue;
+			for (var shaft : network.members.keySet()) {
+				boolean feed = ActorFeed.enabled(shaft);
+				double speed = feed ? ActorFeed.of(shaft).speed : NetworkDynamics.preciseSpeed(shaft);
+				double limit = feed ? speedLimit(shaft) : Double.POSITIVE_INFINITY;
+				if (Math.abs(speed) > limit) {
+					ElasticKinetics.state(shaft).structureImpactLoss += .5 * ActorFeed.of(shaft).inertia * (speed * speed - limit * limit);
+					speed = Math.copySign(limit, speed); ActorFeed.of(shaft).speed = speed;
+				}
+				int stop = stop(shaft); if (stop == 0) continue;
+				if (speed == 0 || stop != 2 && stop * speed <= 0) continue;
+				double inertia = feed ? ActorFeed.of(shaft).inertia : InertiaRegistry.getInertia(shaft);
+				ElasticKinetics.state(shaft).structureImpactLoss += .5 * inertia * speed * speed;
+				if (feed) ActorFeed.of(shaft).speed = 0;
+				else ElasticKinetics.state(shaft).physicalSpeed = 0;
+			}
+		}
 	}
 	public static void end(Level level) {
 		for (var output : outputs.values()) if (output.drive != null && output.drive.shaft().getLevel() == level) output.ready = true;
@@ -149,7 +207,7 @@ public final class ContraptionMotion {
 	public static void load(AbstractContraptionEntity root, CompoundTag tag) {
 		if (tag.contains("DCOutputMotion")) outputs.put(root, new Output(tag.getCompound("DCOutputMotion")));
 	}
-	/** Null lets native controllers keep their existing movement when no swept tools are present. */
+	/** Null keeps native motion only when no physical output has been captured. */
 	public static Double angular(AbstractContraptionEntity root) {
 		var o = outputs.get(root); return sampling || o == null || !o.ready || o.consumed ? null : stalled(root) ? 0 : o.angle;
 	}

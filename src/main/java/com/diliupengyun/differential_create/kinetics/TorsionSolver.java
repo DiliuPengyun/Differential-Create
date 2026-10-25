@@ -16,7 +16,11 @@ import java.util.concurrent.RecursiveAction;
 public final class TorsionSolver {
 
     public record Body(double inertia, double drive, double damping, double load, double drag, double powerLimit,
-                       double governorSpeed, double governorRange) {
+                       double governorSpeed, double governorRange, ShaftPotential potential, int stop, double speedLimit) {
+        public Body(double inertia, double drive, double damping, double load, double drag, double powerLimit,
+                    double governorSpeed, double governorRange) {
+            this(inertia, drive, damping, load, drag, powerLimit, governorSpeed, governorRange, ShaftPotential.NONE, 0, Double.POSITIVE_INFINITY);
+        }
         public Body(double inertia, double drive, double damping, double load, double drag) {
             this(inertia, drive, damping, load, drag, Double.POSITIVE_INFINITY);
         }
@@ -24,6 +28,21 @@ public final class TorsionSolver {
             this(inertia, drive, damping, load, drag, powerLimit, Double.POSITIVE_INFINITY, 0);
         }
         boolean nonlinearDrive() { return Double.isFinite(powerLimit) || Double.isFinite(governorSpeed); }
+        boolean numericalMotion() { return nonlinearDrive() || potential.active() || stop != 0 || Double.isFinite(speedLimit); }
+        public Body withPotential(ShaftPotential value) {
+            return new Body(inertia, drive, damping, load, drag, powerLimit, governorSpeed, governorRange, value, stop, speedLimit);
+        }
+        /** -1: lower stop, +1: upper stop, 2: fixed. Stops react without doing work. */
+        public Body withStop(int value) {
+            return new Body(inertia, drive, damping, load, drag, powerLimit, governorSpeed, governorRange, potential, value, speedLimit);
+        }
+        public Body withSpeedLimit(double value) {
+            if (!(value > 0)) throw new IllegalArgumentException("Invalid output speed limit");
+            return new Body(inertia, drive, damping, load, drag, powerLimit, governorSpeed, governorRange, potential, stop, value);
+        }
+        boolean supports(double reaction) {
+            return stop == 2 || stop < 0 && reaction < 0 || stop == 1 && reaction > 0 || Math.abs(reaction) <= load + 1e-7;
+        }
         double driveAt(double speed) { return DriveTorque.torque(drive, powerLimit, speed, governorSpeed, governorRange); }
         double driveSlope(double speed) { return DriveTorque.slope(drive, powerLimit, speed, governorSpeed, governorRange); }
     }
@@ -145,9 +164,9 @@ public final class TorsionSolver {
             batches = parallelBatches(components, componentResults, componentFailures);
             analyticShafts = new boolean[bodies.size()];
             if (components.size() <= 1) java.util.Arrays.fill(analyticShafts,
-                this.links.isEmpty() && this.bodies.stream().noneMatch(Body::nonlinearDrive));
+                this.links.isEmpty() && this.bodies.stream().noneMatch(Body::numericalMotion));
             else for (var component : components) {
-                boolean analytic = component.links.isEmpty() && component.bodies.stream().noneMatch(Body::nonlinearDrive);
+                boolean analytic = component.links.isEmpty() && component.bodies.stream().noneMatch(Body::numericalMotion);
                 for (int shaft : component.nodes) analyticShafts[shaft] = analytic;
             }
         }
@@ -169,7 +188,7 @@ public final class TorsionSolver {
                 Body body = bodies.get(i);
                 if (Double.doubleToLongBits(body.drive) == Double.doubleToLongBits(drives[i])) continue;
                 bodies.set(i, new Body(body.inertia, drives[i], body.damping, body.load, body.drag,
-                    body.powerLimit, body.governorSpeed, body.governorRange));
+                    body.powerLimit, body.governorSpeed, body.governorRange, body.potential, body.stop, body.speedLimit));
                 changed = true;
             }
             if (!changed) return;
@@ -376,11 +395,11 @@ public final class TorsionSolver {
         private Result eventSegment(Result start, double h) {
             if (components.size() <= 1) {
                 lastReference = referenceMode || matrix.tree == null;
-                try { return graphSegment(bodies, links, start.speed, start.twist, h, frame, eventMatrix()); }
+                try { return graphSegment(bodies, links, start.speed, start.twist, h, frame, eventMatrix(), start.angle); }
                 catch (OriginalRequired | ConvergenceFailure failure) {
                     if (eventMatrix().tree == null) throw failure;
                     fallbacks++; useReferenceSolver(); lastReference = true;
-                    return graphSegment(bodies, links, start.speed, start.twist, h, frame, eventMatrix());
+                    return graphSegment(bodies, links, start.speed, start.twist, h, frame, eventMatrix(), start.angle);
                 }
             }
             long cost = 0;
@@ -702,7 +721,7 @@ public final class TorsionSolver {
 
     /** One accepted physical interval, with no endpoint recovery or hidden substeps. */
     private static Result graphSegment(List<Body> bodies, List<Link> links, double[] previous, double[] twist,
-                                       double h, SpeedFrame frame, MatrixGraph matrix) {
+                                       double h, SpeedFrame frame, MatrixGraph matrix, double[] position) {
         int n = bodies.size(), m = links.size();
         double[] angle = new double[n], travel = new double[n];
         // Only an unstressed, compatible free component can coast without a solve.
@@ -714,7 +733,7 @@ public final class TorsionSolver {
             }
             return new Result(h, speed, twist.clone(), angle, travel, new double[m], new boolean[m], -1);
         }
-        if (m == 0 && bodies.stream().noneMatch(Body::nonlinearDrive)) {
+        if (m == 0 && bodies.stream().noneMatch(Body::numericalMotion)) {
             double[] speed = new double[n];
             for (int i = 0; i < n; i++) {
                 Body body = bodies.get(i);
@@ -724,19 +743,19 @@ public final class TorsionSolver {
             return new Result(h, speed, twist.clone(), angle, travel, new double[m], new boolean[m], -1);
         }
         frame.origins(previous, matrix.workspace.origins);
-        Step next = step(bodies, links, matrix, previous, matrix.workspace.origins, twist, h);
+        Step next = step(bodies, links, matrix, previous, matrix.workspace.origins, twist, h, position);
         // A sliding work contact must stop before its reaction changes sign. Charging
         // an averaged sub-rated torque over the whole interval would grant excess travel.
         if (matrix.hasWork && crossesWorkStop(links, previous, next.speed)) {
             double low = 0, high = h;
             for (int k = 0; k < 55 && high - low > Math.max(1e-16, 8 * Math.ulp(h)); k++) {
                 double mid = (low + high) / 2;
-                Step probe = step(bodies, links, matrix, previous, matrix.workspace.origins, twist, mid);
+                Step probe = step(bodies, links, matrix, previous, matrix.workspace.origins, twist, mid, position);
                 if (crossesWorkStop(links, previous, probe.speed)) high = mid;
                 else low = mid;
             }
             h = high;
-            next = step(bodies, links, matrix, previous, matrix.workspace.origins, twist, h);
+            next = step(bodies, links, matrix, previous, matrix.workspace.origins, twist, h, position);
         }
         for (int i = 0; i < n; i++) {
             angle[i] = h * next.velocity[i];
@@ -771,7 +790,7 @@ public final class TorsionSolver {
             double remaining = duration - state.duration, h = Math.min(remaining, maxStep);
             Result segment;
             for (int retry = 0; ; retry++) {
-                try { segment = graphSegment(bodies, links, state.speed, state.twist, h, frame, matrix); break; }
+                try { segment = graphSegment(bodies, links, state.speed, state.twist, h, frame, matrix, state.angle); break; }
                 catch (ConvergenceFailure failure) {
                     if (retry == 16 || h / 2 <= Math.ulp(state.duration)) throw failure;
                     h /= 2;
@@ -781,10 +800,10 @@ public final class TorsionSolver {
                 double low = 0, high = segment.duration;
                 for (int k = 0; k < 26 && high - low > 1e-12; k++) {
                     double mid = (low + high) / 2;
-                    var probe = graphSegment(bodies, links, state.speed, state.twist, mid, frame, matrix);
+                    var probe = graphSegment(bodies, links, state.speed, state.twist, mid, frame, matrix, state.angle);
                     if (probe.broken < 0) low = mid; else high = mid;
                 }
-                segment = graphSegment(bodies, links, state.speed, state.twist, high, frame, matrix);
+                segment = graphSegment(bodies, links, state.speed, state.twist, high, frame, matrix, state.angle);
             }
             state = acceptSegment(state, segment);
             if (state.broken >= 0 && locateBreak) break;
@@ -798,7 +817,7 @@ public final class TorsionSolver {
             state.twist, state.angle, state.travel, state.torque, state.slipping, state.broken, state.workTravel) : state;
     }
 
-    private record SegmentTrial(double minutes, boolean reference, double[] speed, double[] twist, Result result) {}
+    private record SegmentTrial(double minutes, boolean reference, double[] speed, double[] twist, double[] position, Result result) {}
 
     private static final class Component {
         final List<Integer> nodes = new ArrayList<>(), edges = new ArrayList<>();
@@ -823,28 +842,30 @@ public final class TorsionSolver {
             return referenceMatrix;
         }
         Result segment(Result start, double h) {
-            double[] localSpeed = segmentSpeed, localTwist = segmentTwist;
+            double[] localSpeed = segmentSpeed, localTwist = segmentTwist, position = new double[nodes.size()];
+            for (int i = 0; i < position.length; i++) position[i] = start.angle[nodes.get(i)];
             for (int i = 0; i < localSpeed.length; i++) localSpeed[i] = start.speed[nodes.get(i)];
             for (int e = 0; e < localTwist.length; e++) localTwist[e] = start.twist[edges.get(e)];
             lastReference = referenceMode || matrix.tree == null;
             for (int i = segments.size() - 1; i >= 0; i--) {
                 var cached = segments.get(i);
                 if (cached.minutes == h && cached.reference == lastReference
-                    && java.util.Arrays.equals(cached.speed, localSpeed) && java.util.Arrays.equals(cached.twist, localTwist))
+                    && java.util.Arrays.equals(cached.speed, localSpeed) && java.util.Arrays.equals(cached.twist, localTwist)
+                    && java.util.Arrays.equals(cached.position, position))
                     return copyResult(cached.result);
             }
             Result result;
-            try { result = graphSegment(bodies, links, localSpeed, localTwist, h, frame, eventMatrix()); }
+            try { result = graphSegment(bodies, links, localSpeed, localTwist, h, frame, eventMatrix(), position); }
             catch (OriginalRequired | ConvergenceFailure failure) {
                 if (eventMatrix().tree == null) throw failure;
                 fallbacks++; referenceMode = true; lastReference = true;
-                result = graphSegment(bodies, links, localSpeed, localTwist, h, frame, eventMatrix());
+                result = graphSegment(bodies, links, localSpeed, localTwist, h, frame, eventMatrix(), position);
             }
             // Retain the successive states of a short event search, not only its
             // last segment. Another pump-load trial starts at the same initial
             // state and must be able to reuse that unchanged component's prefix.
             if (segments.size() == 16) segments.removeFirst();
-            segments.add(new SegmentTrial(h, lastReference, localSpeed.clone(), localTwist.clone(), copyResult(result)));
+            segments.add(new SegmentTrial(h, lastReference, localSpeed.clone(), localTwist.clone(), position.clone(), copyResult(result)));
             return result;
         }
         private Result reference(double duration, double maxStep, boolean locateBreak, boolean recoverSpeeds) {
@@ -1044,7 +1065,7 @@ public final class TorsionSolver {
             }
             java.util.Arrays.fill(work.sticking, false);
             checkEnergy(bodies, links, previous, speed, twist, nextTwist, velocity, increment, relative,
-                torque, rates, work.sticking, work.signs, h, work.forces);
+                torque, rates, work.sticking, work.signs, h, work.forces, null, null);
             return new Step(speed, nextTwist, velocity, torque, slipping, broken);
         }
     }
@@ -1160,11 +1181,11 @@ public final class TorsionSolver {
     }
 
     private static SpeedFrame integrationFrame(List<Body> bodies, List<Link> links) {
-        return links.isEmpty() && bodies.stream().noneMatch(Body::nonlinearDrive) ? null : speedFrame(bodies, links);
+        return links.isEmpty() && bodies.stream().noneMatch(Body::numericalMotion) ? null : speedFrame(bodies, links);
     }
 
     private static boolean passiveMassless(Body body) {
-        return body.inertia == 0 && body.drive == 0 && body.damping == 0 && body.load == 0 && body.drag == 0;
+        return body.inertia == 0 && body.drive == 0 && body.damping == 0 && body.load == 0 && body.drag == 0 && !body.potential.active() && body.stop == 0 && !Double.isFinite(body.speedLimit);
     }
 
     /** Preserve the free speed selected by topology without bypassing elastic forces
@@ -1283,7 +1304,7 @@ public final class TorsionSolver {
         double[] travel = prefix == null ? new double[n] : prefix.travel.clone();
         double[] torque = prefix == null ? new double[m] : prefix.torque.clone();
         boolean[] slipping = prefix == null ? new boolean[m] : prefix.slipping.clone();
-        if (m == 0 && bodies.stream().noneMatch(Body::nonlinearDrive)) {
+        if (m == 0 && bodies.stream().noneMatch(Body::numericalMotion)) {
             for (int i = 0; i < n; i++) {
                 Body b = bodies.get(i);
                 var motion = RotationMath.motion(speed[i], b.drive, b.damping, b.load, b.inertia, b.drag, duration);
@@ -1305,7 +1326,7 @@ public final class TorsionSolver {
             frame.origins(speed, origin);
             Step next;
             for (int retry = 0; ; retry++) {
-                try { next = step(bodies, links, matrix, speed, origin, twist, h); break; }
+                try { next = step(bodies, links, matrix, speed, origin, twist, h, angle); break; }
                 catch (ConvergenceFailure failure) {
                     if (matrix.tree != null) throw ORIGINAL_REQUIRED;
                     if (retry == 12 || h / 2 <= Math.ulp(elapsed)) throw new ConvergenceFailure(failure.getMessage()
@@ -1322,12 +1343,12 @@ public final class TorsionSolver {
                 double low = 0, high = h;
                 for (int k = 0; k < 26 && high - low > 1e-12; k++) {
                     double mid = (low + high) / 2;
-                    Step trial = step(bodies, links, matrix, speed, origin, twist, mid);
+                    Step trial = step(bodies, links, matrix, speed, origin, twist, mid, angle);
                     if (trial.broken < 0) low = mid;
                     else { high = mid; next = trial; }
                 }
                 h = high;
-                next = step(bodies, links, matrix, speed, origin, twist, h);
+                next = step(bodies, links, matrix, speed, origin, twist, h, angle);
             }
             for (int i = 0; i < n; i++) {
                 angle[i] += h * next.velocity[i];
@@ -1353,7 +1374,7 @@ public final class TorsionSolver {
     }
 
     private static Step step(List<Body> bodies, List<Link> links, MatrixGraph matrix, double[] previous, double[] origin,
-                             double[] twist, double h) {
+                             double[] twist, double h, double[] position) {
         if (matrix.freeTree != null) {
             Step free = matrix.freeTree.step(bodies, links, matrix.workspace, previous, origin, twist, h);
             if (free != null) return free;
@@ -1373,15 +1394,17 @@ public final class TorsionSolver {
             elasticConstants[e] = prestress[e] + slopes[e] * relative[e];
         }
         double[] signs = work.signs, fixed = work.fixedValues;
-        boolean[] sticking = work.sticking, limited = work.limited;
+        boolean[] sticking = work.sticking, limited = work.limited, fixedNodes = new boolean[n];
+        int[] limiting = new int[n];
         double[] diag = work.base, rhs = work.rhs, rhsMagnitude = work.rhsMagnitude, forces = work.forces;
         boolean linear = true;
         for (int i = 0; i < n; i++) {
             Body b = bodies.get(i);
-            if (b.drag != 0 || (b.drive != 0 && b.nonlinearDrive())) linear = false;
-            signs[i] = Math.signum(previous[i] == 0 ? b.drive : previous[i]);
-            sticking[i] = b.load > 0 && previous[i] == 0 && Math.abs(b.drive) <= b.load;
-            if (matrix.tree != null && b.load > 0 && previous[i] == 0) throw ORIGINAL_REQUIRED;
+            if (b.drag != 0 || Double.isFinite(b.speedLimit) || b.potential.active() || (b.drive != 0 && b.nonlinearDrive())) linear = false;
+            double force = b.driveAt(previous[i]) + b.potential.torque(position[i], 0);
+            signs[i] = Math.signum(previous[i] == 0 ? force : previous[i]);
+            sticking[i] = previous[i] == 0 && (b.load > 0 || b.stop != 0) && b.supports(force);
+            if (matrix.tree != null && (b.load > 0 || b.stop != 0) && previous[i] == 0) throw ORIGINAL_REQUIRED;
         }
         for (int iteration = 0; iteration < 80; iteration++) {
             for (int i = 0; i < n; i++) {
@@ -1392,15 +1415,20 @@ public final class TorsionSolver {
                 double cylinder = DriveTorque.torque(b.drive, b.powerLimit, v[i]);
                 double sourceSlope = DriveTorque.slope(b.drive, b.powerLimit, v[i]) * opening
                     + Math.abs(cylinder) * SteamGovernor.slope(b.drive, v[i], b.governorSpeed, b.governorRange);
-                diag[i] = 2 * b.inertia / h + b.damping + sourceSlope + 2 * b.drag * Math.abs(v[i]);
+                double gravity = b.potential.torque(position[i], h * v[i]);
+                double gravitySlope = -h * b.potential.slope(position[i], h * v[i]);
+                diag[i] = 2 * b.inertia / h + b.damping + sourceSlope + gravitySlope + 2 * b.drag * Math.abs(v[i]);
+                if (b.potential.active() && !(diag[i] > 0)) throw new ConvergenceFailure("Potential curvature requires a smaller step");
                 // Solve the midpoint increment u, v = origin + u. Cancel 2J/h*previous
                 // algebraically, before rounding a huge coasting RHS against a tiny load.
-                double drive = cylinder * opening, damping = b.damping * previous[i], load = b.load * signs[i];
-                double tangent = sourceSlope * increment[i], drag = b.drag * Math.abs(v[i]);
+                double drive = cylinder * opening + gravity, damping = b.damping * previous[i], load = b.load * signs[i];
+                double tangent = (sourceSlope + gravitySlope) * increment[i], drag = b.drag * Math.abs(v[i]);
                 rhs[i] = drive - damping - load + tangent + drag * (increment[i] - previous[i]);
                 rhsMagnitude[i] = Math.abs(drive) + Math.abs(damping) + Math.abs(load) + Math.abs(tangent)
                     + drag * (Math.abs(increment[i]) + Math.abs(previous[i]));
-                fixed[i] = b.inertia > 0 ? -previous[i] / 2 : -previous[i];
+                fixed[i] = limiting[i] != 0 ? (limiting[i] * b.speedLimit - previous[i]) / (b.inertia > 0 ? 2 : 1)
+                    : b.inertia > 0 ? -previous[i] / 2 : -previous[i];
+                fixedNodes[i] = sticking[i] || limiting[i] != 0;
             }
             for (int e = 0; e < m; e++) {
                 Link link = links.get(e);
@@ -1421,8 +1449,8 @@ public final class TorsionSolver {
                     : Math.abs(prestress[e]) + Math.abs(slope * relative[e]);
                 rhsMagnitude[link.a] += Math.abs(link.ratio) * magnitude; rhsMagnitude[link.b] += magnitude;
             }
-            double[] next = solve(matrix, coefficients, diag, rhs, rhsMagnitude, sticking, fixed, increment);
-            if (matrix.hasWork) next = solveWorkReactions(links, matrix, previous, coefficients, diag, sticking, next, constants);
+            double[] next = solve(matrix, coefficients, diag, rhs, rhsMagnitude, fixedNodes, fixed, increment);
+            if (matrix.hasWork) next = solveWorkReactions(links, matrix, previous, coefficients, diag, fixedNodes, next, constants);
             boolean changed = false;
             double maxChange = 0;
             java.util.Arrays.fill(forces, 0);
@@ -1455,21 +1483,30 @@ public final class TorsionSolver {
                 Body b = bodies.get(i);
                 maxChange = Math.max(maxChange, Math.abs(next[i] - increment[i]) / (1 + Math.abs(next[i])));
                 double velocity = origin[i] + next[i];
-                if (b.load == 0) continue;
+                double endSpeed = b.inertia > 0 ? previous[i] + 2 * next[i] : velocity;
+                double reaction = b.driveAt(velocity) + b.potential.torque(position[i], h * velocity) - b.damping * velocity
+                    - b.drag * velocity * Math.abs(velocity) + forces[i] - 2 * b.inertia / h * next[i];
+                if (limiting[i] != 0) {
+                    if (limiting[i] * reaction < -1e-7) { limiting[i] = 0; changed = true; }
+                    continue;
+                }
+                if (Math.abs(endSpeed) > b.speedLimit + 1e-9) {
+                    limiting[i] = endSpeed > 0 ? 1 : -1; sticking[i] = false; changed = true; continue;
+                }
+                if (b.load == 0 && b.stop == 0) continue;
                 if (matrix.tree != null) {
                     double end = b.inertia > 0 ? previous[i] + 2 * next[i] : velocity;
                     if (Math.abs(end) <= 1e-8 * (1 + Math.abs(previous[i])) || end * signs[i] < 0)
                         throw ORIGINAL_REQUIRED;
                 }
-                double reaction = b.driveAt(velocity) - b.damping * velocity - b.drag * velocity * Math.abs(velocity)
-                    + forces[i] - 2 * b.inertia / h * next[i];
                 if (sticking[i]) {
-                    if (Math.abs(reaction) > b.load + 1e-7) {
+                    if (!b.supports(reaction)) {
                         sticking[i] = false; signs[i] = Math.signum(reaction); changed = true;
                     }
                 } else {
                     double end = b.inertia > 0 ? previous[i] + 2 * next[i] : velocity;
-                    if (end * signs[i] < -1e-9 || signs[i] == 0) {
+                    if (end * signs[i] < -1e-9 || signs[i] == 0 || b.stop == 2
+                        || b.stop == 1 && end > 0 || b.stop < 0 && end < 0) {
                         sticking[i] = true; changed = true;
                     }
                 }
@@ -1484,6 +1521,7 @@ public final class TorsionSolver {
         for (int i = 0; i < n; i++) {
             speed[i] = bodies.get(i).inertia > 0 ? previous[i] + 2 * increment[i] : v[i];
             if (sticking[i]) speed[i] = 0;
+            if (limiting[i] != 0) speed[i] = limiting[i] * bodies.get(i).speedLimit;
             if (Math.abs(speed[i]) < 1e-9) speed[i] = 0;
             if (!Double.isFinite(speed[i])) throw new IllegalStateException("Non-finite torsional speed");
         }
@@ -1513,7 +1551,7 @@ public final class TorsionSolver {
             if (peak >= link.strength && broken < 0) broken = e;
         }
         checkEnergy(bodies, links, previous, speed, twist, nextTwist, v, increment, relative,
-            torque, elasticRates, sticking, signs, h, forces);
+            torque, elasticRates, sticking, signs, h, forces, position, limiting);
         return new Step(speed, nextTwist, v, torque, limited.clone(), broken);
     }
 
@@ -1570,7 +1608,7 @@ public final class TorsionSolver {
     private static void checkEnergy(List<Body> bodies, List<Link> links, double[] previous, double[] speed,
                                     double[] twist, double[] nextTwist, double[] v, double[] increment,
                                     double[] relative, double[] torque, double[] rates,
-                                    boolean[] sticking, double[] signs, double h, double[] forces) {
+                                    boolean[] sticking, double[] signs, double h, double[] forces, double[] position, int[] limiting) {
         double change = 0, work = 0, workScale = 0, roundoff = 0;
         java.util.Arrays.fill(forces, 0);
         for (int e = 0; e < links.size(); e++) {
@@ -1587,9 +1625,12 @@ public final class TorsionSolver {
         for (int i = 0; i < bodies.size(); i++) {
             Body body = bodies.get(i);
             change += .5 * body.inertia * (speed[i] - previous[i]) * (speed[i] + previous[i]);
+            double gravity = position == null ? 0 : body.potential.torque(position[i], h * v[i]);
+            double potentialChange = position == null ? 0 : body.potential.change(position[i], h * v[i]);
+            change += potentialChange; workScale += Math.abs(potentialChange);
             double drive = body.driveAt(v[i]), damping = body.damping * v[i], drag = body.drag * v[i] * Math.abs(v[i]);
             // A pinned node's static reaction is an unknown, bounded by the active-set check.
-            double load = sticking[i] ? drive - damping - drag + forces[i] - 2 * body.inertia / h * increment[i]
+            double load = (sticking[i] || limiting != null && limiting[i] != 0) ? drive + gravity - damping - drag + forces[i] - 2 * body.inertia / h * increment[i]
                 : body.load * signs[i];
             work += h * v[i] * (drive - damping - drag - load);
             workScale += h * Math.abs(v[i]) * (Math.abs(drive) + Math.abs(damping) + Math.abs(drag) + Math.abs(load));

@@ -171,9 +171,20 @@ public final class PonderSimulation {
         }
         return false;
     }
+    public record TravelBounds(double lower, double upper) {}
     public boolean linearBlocked(KineticBlockEntity be) {
         return attachments.entrySet().stream().filter(entry -> entry.getValue().actuator() == be && entry.getKey().isVisible())
             .anyMatch(entry -> linearMotions.containsKey(entry.getKey()) && linearMotions.get(entry.getKey()).blocked());
+    }
+    public TravelBounds linearBounds(KineticBlockEntity be) {
+        double lower = Double.NEGATIVE_INFINITY, upper = Double.POSITIVE_INFINITY;
+        for (var entry : attachments.entrySet()) if (entry.getValue().actuator() == be && entry.getKey().isVisible()) {
+            var motion = linearMotions.get(entry.getKey());
+            if (motion == null) continue;
+            var bounds = motion.bounds((PonderLevel) be.getLevel());
+            lower = Math.max(lower, bounds.lower()); upper = Math.min(upper, bounds.upper());
+        }
+        return new TravelBounds(lower, upper);
     }
     private record ValveHandle(com.simibubi.create.content.fluids.pipes.valve.FluidValveBlockEntity valve,
                                net.minecraft.world.phys.Vec3 start) {}
@@ -273,6 +284,13 @@ public final class PonderSimulation {
             ownCells.put(cursor.immutable(), new com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell((int) Math.round(position.x), (int) Math.round(position.y), (int) Math.round(position.z)));
         }
         mounting.bindSection(section, be, rotation, axis, ownCells, 1);
+    }
+    double motionRatio(WorldSectionElement section, double fallback) {
+        var binding = attachments.get(section);
+        if (binding == null) return clockwork.motionRatio(section, fallback);
+        if (binding.rotation()) return binding.sign();
+        var motion = linearMotions.get(section);
+        return motion == null ? fallback : motion.direction();
     }
     public void finish(PonderLevel world) {
         var machines = java.util.stream.StreamSupport.stream(world.getBlockEntities().spliterator(), false).toList();

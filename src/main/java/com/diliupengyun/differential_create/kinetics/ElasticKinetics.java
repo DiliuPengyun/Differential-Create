@@ -86,6 +86,10 @@ public final class ElasticKinetics {
             local.merge(edge.a, edge.ratio * edge.ratio * atB, Double::sum);
             local.merge(edge.b, atB, Double::sum);
         }
+        for (var be : network.members.keySet()) if (ActorFeed.enabled(be)) {
+            double energy = ActorFeed.of(be).elasticEnergy();
+            total += energy; local.merge(be, energy, Double::sum);
+        }
         return new ElasticEnergy(total, local);
     }
     public static void alignAngles(KineticNetwork network) {
@@ -155,6 +159,11 @@ public final class ElasticKinetics {
                 momentum += SequencerMotion.OUTPUT_INERTIA * r * servo.differentialcreate$motion().speed;
                 inertia += SequencerMotion.OUTPUT_INERTIA * r * r;
             }
+            if (ActorFeed.enabled(be)) {
+                var feed = ActorFeed.of(be);
+                momentum += feed.inertia * r * feed.speed;
+                inertia += feed.inertia * r * r;
+            }
         }
         double speed = inertia > 0 ? momentum / inertia : dynamics.differentialcreate$getSpeed();
         if (inertia == 0 && !dynamics.differentialcreate$getRatios().isEmpty()) {
@@ -213,7 +222,7 @@ public final class ElasticKinetics {
                 boolean massless = true;
                 for (KineticBlockEntity be : network.members.keySet()) {
                     if (be.isRemoved() || be.getLevel() == null) continue;
-                    if (InertiaRegistry.getInertia(be) != 0 || be instanceof ISequencerDynamics
+                    if (InertiaRegistry.getInertia(be) != 0 || be instanceof ISequencerDynamics || ActorFeed.enabled(be)
                         || MachineActivity.impact(be) > 0 || MachineActivity.quadraticDrag(be) > 0) {
                         massless = false; break;
                     }
@@ -287,6 +296,9 @@ public final class ElasticKinetics {
                     var feed = ActorFeed.of(entry.getKey());
                     feed.speed = applied.speed()[at]; feed.angle += applied.angle()[at];
                     feed.brakeHeat += feed.brake * applied.travel()[at];
+                    // Servo contacts precede the structural output contacts.
+                    int feedIndex = at - members.size();
+                    feed.twist = applied.twist()[connections.size() + feedIndex];
                 }
                 entry.getKey().setChanged();
             }
@@ -415,6 +427,9 @@ public final class ElasticKinetics {
         List<KineticBlockEntity> members = new ArrayList<>();
         List<Connection> connections = new ArrayList<>();
         for (var network : networks) {
+            // Preserve both velocity and pose while saved child entities are still
+            // loading. A partial mass/centre capture cannot represent this network.
+            if (network.members.keySet().stream().anyMatch(ContraptionPhysics::incomplete)) continue;
             members.addAll(network.members.keySet());
             connections.addAll(((INetworkDynamics) network).differentialcreate$data().connections);
         }
@@ -445,7 +460,9 @@ public final class ElasticKinetics {
                 sourceDrives[i] + (be instanceof IPumpDynamics ? 0 : externalTorques.getOrDefault(be, 0d)),
                 be.isSource() ? curve.damping() : 0, load, drag,
                 be.isSource() ? curve.powerLimit() : Double.POSITIVE_INFINITY,
-                be.isSource() ? curve.governorSpeed() : Double.POSITIVE_INFINITY, curve.governorRange()));
+                be.isSource() ? curve.governorSpeed() : Double.POSITIVE_INFINITY, curve.governorRange())
+                .withPotential(ActorFeed.enabled(be) ? ShaftPotential.NONE : ContraptionGravity.capture(be))
+                .withStop(ActorFeed.enabled(be) ? 0 : ContraptionMotion.stop(be)));
         }
         for (var be : servos) {
             int at = bodies.size();
@@ -459,7 +476,9 @@ public final class ElasticKinetics {
             int at = bodies.size(); outputs.put(be, at);
             var feed = ActorFeed.of(be); speeds[at] = feed.speed;
             bodies.add(new TorsionSolver.Body(feed.inertia, 0, 0,
-                feed.brake + ContraptionPhysics.feedLoad(be), ContraptionPhysics.airDrag(be)));
+                feed.brake + ContraptionPhysics.feedLoad(be), ContraptionPhysics.airDrag(be))
+                .withPotential(ContraptionGravity.capture(be)).withStop(ContraptionMotion.stop(be))
+                .withSpeedLimit(ContraptionMotion.speedLimit(be)));
         }
         connections.removeIf(edge -> !indices.containsKey(edge.a) || !indices.containsKey(edge.b));
         List<TorsionSolver.Link> links = new ArrayList<>();
@@ -478,8 +497,10 @@ public final class ElasticKinetics {
         }
         for (var be : feeds) {
             var feed = ActorFeed.of(be);
-            links.add(new TorsionSolver.Link(indices.get(be), outputs.get(be), 1, 0,
-                ActorFeed.DAMPING, Double.POSITIVE_INFINITY, feed.coupling));
+            allTwists[links.size()] = feed.twist;
+            links.add(new TorsionSolver.Link(indices.get(be), outputs.get(be), 1,
+                feed.stiffness(), feed.damping(),
+                Double.POSITIVE_INFINITY, feed.coupling));
         }
         var crushing = new HashMap<CrushingKinetics.Pair, Integer>();
         for (var pair : CrushingKinetics.pairs(networks)) if (pair.active() && indices.containsKey(pair.a()) && indices.containsKey(pair.b())) {

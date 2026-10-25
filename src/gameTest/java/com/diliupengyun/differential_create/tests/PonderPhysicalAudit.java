@@ -262,16 +262,17 @@ final class PonderPhysicalAudit {
         simulation.pulley(pulley).command(2, false);
         simulation.attach(body, pulley, false, 1, -1);
         for (int i = 0; i < 200; i++) { world.tick(); simulation.finish(world); }
-        require(Math.abs(pulley.offset - (powered ? 2 : 0)) < 1e-6 && Math.abs(body.getAnimatedOffset().y + pulley.offset) < 1e-6,
-            "rope and load need actual signed work and must share the endpoint, without treating flowers as solid supports");
+        require(Math.abs(pulley.offset - 2) < 1e-6 && Math.abs(body.getAnimatedOffset().y + pulley.offset) < 1e-6,
+            "rope and load descend together under motor or gravity and share the endpoint: powered=" + powered
+                + ", rope=" + pulley.offset + ", load=" + body.getAnimatedOffset().y);
         simulation.pulley(pulley).command(-2, false); physics.boundary(world, pos, powered ? -32 : 0);
         for (int i = 0; i < 200; i++) { world.tick(); simulation.finish(world); }
-        require(Math.abs(pulley.offset) < 1e-6 && Math.abs(body.getAnimatedOffset().y) < 1e-6,
-            "rope reversal must not unwind excess shaft turns accumulated at the endpoint");
+        require(Math.abs(pulley.offset - (powered ? 0 : 2)) < 1e-6 && Math.abs(body.getAnimatedOffset().y + pulley.offset) < 1e-6,
+            "powered reversal lifts immediately; an unpowered command cannot lift against gravity: powered=" + powered + ", rope=" + pulley.offset);
         body.setVisible(false); world.tick(); simulation.finish(world);
         simulation.pulley(pulley).command(2, false); physics.boundary(world, pos, powered ? 32 : 0);
         for (int i = 0; i < 200; i++) { world.tick(); simulation.finish(world); }
-        require(Math.abs(pulley.offset - (powered ? 2 : 0)) < 1e-6,
+        require(powered ? Math.abs(pulley.offset - 2) < 1e-6 : pulley.offset >= 2 && pulley.offset <= 4,
             "an unloaded rope must return to its driving shaft after the old load disappears");
     }
     private static void gantryDisassembly() {

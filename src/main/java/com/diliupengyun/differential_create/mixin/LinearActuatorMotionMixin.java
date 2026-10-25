@@ -16,6 +16,11 @@ public abstract class LinearActuatorMotionMixin {
 	private void differentialcreate$integratedStructureTravel(CallbackInfoReturnable<Float> cir) {
 		var self = (LinearActuatorBlockEntity) (Object) this;
 		if (self.getLevel() == null || self.getLevel().isClientSide) return;
+		if (self instanceof ElevatorPulleyBlockEntity && !ContraptionMotion.samplingGeometry()) {
+			double speed = com.diliupengyun.differential_create.kinetics.NetworkDynamics.preciseSpeed(self);
+			com.diliupengyun.differential_create.kinetics.ElasticKinetics.state(self).elevatorMotionPerRpm =
+				speed == 0 ? 0 : cir.getReturnValue() / speed;
+		}
 		Vec3 motion = ContraptionMotion.linear(self.movedContraption);
 		if (motion != null) cir.setReturnValue((float) motion.dot(((LinearActuatorAccessor) self).differentialcreate$toMotionVector(1)));
 		else if (!ContraptionMotion.samplingGeometry() && com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(self)) cir.setReturnValue(0f);

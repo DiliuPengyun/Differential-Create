@@ -322,14 +322,19 @@ final class ContinuousActorTests {
 			network.differentialcreate$setSpeed(-32 / network.differentialcreate$getRatios().get(be));
 			root.tickActors(); Vec3 start = root.position(); float offset = be.offset; MachiningClock.advance(h.getLevel());
 			Vec3 planned = ContraptionMotion.linear(root);
-			near(h, 0, NetworkDynamics.preciseSpeed(be), 0, "obsidian exhausts the weak rotor and causes a physical stop");
+			near(h, 0, ActorFeed.speed(be), 0, "obsidian exhausts the structural output and stops the drill");
 			h.assertTrue(context.data.getDouble("DCActorTravel") > 0 && h.getLevel().getBlockState(target).is(Blocks.OBSIDIAN), "hard target retains a partly paid cutting stroke");
 			be.tick();
 			near(h, offset + planned.x, be.offset, 2e-6, "stall notification retains the fractional extension instead of rounding it");
 			near(h, start.x + planned.x, root.position().x, 2e-5, "stall notification cannot move the drilling carriage backward");
-			network.differentialcreate$setSpeed(-512 / network.differentialcreate$getRatios().get(be));
-			root.tickActors(); start = root.position(); MachiningClock.advance(h.getLevel()); planned = ContraptionMotion.linear(root); be.tick();
-			h.assertTrue(h.getLevel().getBlockState(target).isAir(), "restoring energy finishes the obsidian cut");
+			// Restore a driven input below the native speed limit. Supplying each
+			// step explicitly also pays the independent contact's damping losses.
+			for (int tick = 0; tick < 8 && h.getLevel().getBlockState(target).is(Blocks.OBSIDIAN); tick++) {
+				network.differentialcreate$setSpeed(-128 / network.differentialcreate$getRatios().get(be));
+				root.tickActors(); start = root.position(); MachiningClock.advance(h.getLevel()); planned = ContraptionMotion.linear(root); be.tick();
+				near(h, start.x + planned.x, root.position().x, 2e-5, "each paid cutting step follows its integrated path");
+			}
+			h.assertTrue(h.getLevel().getBlockState(target).isAir(), "restoring paid drive finishes the obsidian cut");
 			near(h, start.x + planned.x, root.position().x, 2e-5, "breaking obsidian leaves the carriage on its physically integrated path");
 			// An actual reversal still retracts, but by its signed integrated displacement.
 			network.differentialcreate$setSpeed(64 / network.differentialcreate$getRatios().get(be));

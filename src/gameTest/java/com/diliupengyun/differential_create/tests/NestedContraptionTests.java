@@ -67,22 +67,26 @@ final class NestedContraptionTests {
 					"child payload is not duplicated in the parent block map");
 				double expectedBase = .01;
 				for (int r = 0; r <= radius; r++) expectedBase += .0001 + .0006 * r * r;
-				near(h, expectedBase + 3 * .0006 * radius * radius, InertiaRegistry.getInertia(be), 1e-6, "orbital mass uses the mount radius for " + facing);
+				near(h, expectedBase + 3 * .0006 * radius * radius, InertiaRegistry.totalInertia(be), 1e-6, "orbital mass uses the mount radius for " + facing);
 				near(h, 3 * .0006 * radius * radius, drive.inertia(), 1e-12, "stabilized body has no intrinsic spin inertia");
 				near(h, 3.0 * radius * radius * radius / 409600, drive.drag(), 1e-12, "broadside child air drag at assembly angle");
+				double descent = facing.getAxis() == Direction.Axis.Y ? 0 : -.0006 * ShaftPotential.WEIGHT
+					* (radius * (radius + 1) / 2.0 + 3 * radius);
+				near(h, descent, ContraptionGravity.capture(be).change(0, .25), 1e-9,
+					"stabilized child weight follows its mount without duplicating its eccentricity: " + facing);
 				root.setAngle(90);
 				near(h, 1.0 * radius * radius * radius / 409600, drive.drag(), 1e-10, "child keeps its orientation while orbital velocity turns");
-				near(h, expectedBase + 3 * .0006 * radius * radius, InertiaRegistry.getInertia(be), 1e-6, "orbital mass is independent of wheel angle");
+				near(h, expectedBase + 3 * .0006 * radius * radius, InertiaRegistry.totalInertia(be), 1e-6, "orbital mass is independent of wheel angle");
 				root.setAngle(0);
 				var payload = drive.entity().getContraption().getBlocks().entrySet().stream().filter(e -> e.getValue().state().is(Blocks.OAK_PLANKS)).findFirst().orElseThrow();
 				drive.entity().setBlock(payload.getKey(), new StructureBlockInfo(payload.getKey(), AllBlocks.FLYWHEEL.getDefaultState(), null));
-				near(h, expectedBase + 3 * .0006 * radius * radius, InertiaRegistry.getInertia(be), 1e-6, "child machine type does not add rotor inertia");
+				near(h, expectedBase + 3 * .0006 * radius * radius, InertiaRegistry.totalInertia(be), 1e-6, "child machine type does not add rotor inertia");
 				drive.entity().setBlock(payload.getKey(), new StructureBlockInfo(payload.getKey(), Blocks.AIR.defaultBlockState(), null));
-				near(h, expectedBase + 2 * .0006 * radius * radius, InertiaRegistry.getInertia(be), 1e-6, "changed child geometry invalidates parent mass");
+				near(h, expectedBase + 2 * .0006 * radius * radius, InertiaRegistry.totalInertia(be), 1e-6, "changed child geometry invalidates parent mass");
 				speed(be, 7);
 				be.disassemble();
 				h.assertTrue(drive.entity().isRemoved(), "immediate native disassembly also restores an unmounted child");
-				near(h, .01, InertiaRegistry.getInertia(be), 1e-8, "disassembly removes parent and child mass");
+				near(h, .01, InertiaRegistry.totalInertia(be), 1e-8, "disassembly removes parent and child mass");
 				near(h, 0, ContraptionPhysics.airDrag(be), 0, "disassembly releases child air load");
 				// Clear only the blocks restored by this fixture before the next orientation.
 				for (var entity : List.of(root, drive.entity())) for (var entry : entity.getContraption().getBlocks().values())
@@ -122,16 +126,20 @@ final class NestedContraptionTests {
 			h.assertTrue(blockTag.getInt("DCStructureCount") == 4, "unload order preserves the child count");
 			var restored = (MechanicalBearingBlockEntity) BlockEntity.loadStatic(original.getBlockPos(), original.getBlockState(), blockTag, h.getLevel().registryAccess());
 			h.getLevel().setBlockEntity(restored); NetworkTopology.mark(restored); NetworkTopology.flush(); ElasticKinetics.refresh(restored.getOrCreateNetwork());
-			near(h, expected, InertiaRegistry.getInertia(restored), 1e-6, "controller alone preserves all saved moving mass");
+			near(h, expected, InertiaRegistry.totalInertia(restored), 1e-6, "controller alone preserves all saved moving mass");
 			near(h, drag, ContraptionPhysics.airDrag(restored), 1e-12, "controller alone preserves all saved air load");
 			var loadedRoot = (ControlledContraptionEntity) EntityType.loadEntityRecursive(rootTag, h.getLevel(), e -> e);
 			h.getLevel().addFreshEntity(loadedRoot); restored.attach(loadedRoot);
 			for (int loaded = 0; loaded <= 3; loaded++) {
 				ContraptionPhysics.checkAttachments(restored); ElasticKinetics.refresh(restored.getOrCreateNetwork());
-				near(h, expected, InertiaRegistry.getInertia(restored), 1e-6, "partial child loading keeps saved mass: " + loaded);
+				near(h, expected, InertiaRegistry.totalInertia(restored), 1e-6, "partial child loading keeps saved mass: " + loaded);
 				near(h, drag, ContraptionPhysics.airDrag(restored), 1e-12, "partial child loading keeps saved air load: " + loaded);
 				near(h, 7, restored.getSpeed(), 1e-6, "child reload does not slow the same saved rotor twice");
 				h.assertTrue(ContraptionPhysics.drives(restored).size() == 1 + loaded, "only loaded child entities are attached once");
+				double travel = ElasticKinetics.snapshot(List.of(restored.getOrCreateNetwork()))
+					.sample(RotationMath.TICK_MINUTES).signedTravel(restored);
+				if (loaded < 3) near(h, 0, travel, 0, "partial child loading suspends the whole physical capture");
+				else h.assertTrue(travel > 0, "complete child loading resumes physical movement");
 				if (loaded < 3) {
 					var child = EntityType.loadEntityRecursive(childTags.get(loaded), h.getLevel(), e -> e);
 					h.getLevel().addFreshEntity(child); child.startRiding(loadedRoot);
@@ -140,9 +148,9 @@ final class NestedContraptionTests {
 			h.assertTrue(Float.isNaN(ElasticKinetics.state(restored).pendingStructureInertia), "last child releases the saved summary");
 			var detached = ContraptionPhysics.drives(restored).stream().filter(ContraptionPhysics.Drive::stabilized).findFirst().orElseThrow();
 			detached.entity().disassemble(); ContraptionPhysics.checkAttachments(restored);
-			near(h, expected - .0006 * 4, InertiaRegistry.getInertia(restored), 1e-6, "separately dismantled child releases only its own mass");
+			near(h, expected - .0006 * 4, InertiaRegistry.totalInertia(restored), 1e-6, "separately dismantled child releases only its own mass");
 			h.assertTrue(restored.saveWithFullMetadata(h.getLevel().registryAccess()).getInt("DCStructureCount") == 3, "dismantled child's UUID cannot become a phantom saved attachment");
-			restored.disassemble(); near(h, .01, InertiaRegistry.getInertia(restored), 1e-8, "loaded tree disassembles completely");
+			restored.disassemble(); near(h, .01, InertiaRegistry.totalInertia(restored), 1e-8, "loaded tree disassembles completely");
 			h.succeed();
 		});
 	}
@@ -204,13 +212,13 @@ final class NestedContraptionTests {
 					try { ((LinearActuatorAccessor) be).differentialcreate$assemble(); } catch (Exception e) { throw new AssertionError(e); }
 					h.assertTrue(be.running, "native pulley assembles with stabilized separation=" + separated);
 					ContraptionPhysics.checkAttachments(be); NetworkTopology.flush(); speed(be, 16);
-					near(h, .01 + 5 * .0006 * Math.pow(ContraptionGeometry.LINEAR_RADIUS, 2), InertiaRegistry.getInertia(be), 1e-7, "translation includes every cube regardless of separation");
+					near(h, .01 + 5 * .0006 * Math.pow(ContraptionGeometry.LINEAR_RADIUS, 2), InertiaRegistry.totalInertia(be), 1e-7, "translation includes every cube regardless of separation");
 					near(h, 5.0 / 409600 * Math.pow(ContraptionGeometry.LINEAR_RADIUS, 3), ContraptionPhysics.airDrag(be), 1e-12, "moving parent and child share their actual translational air resistance");
 					if (separated) {
 						var drive = child(h, be); near(h, 1, drive.workRatio(null), 0, "translating child uses the native linear drive ratio");
 						near(h, 3 * .0006 * Math.pow(ContraptionGeometry.LINEAR_RADIUS, 2), drive.inertia(), 1e-12, "child's radius does not affect linear mass");
 					}
-					be.disassemble(); near(h, .01, InertiaRegistry.getInertia(be), 1e-8, "pulley teardown removes the whole tree");
+					be.disassemble(); near(h, .01, InertiaRegistry.totalInertia(be), 1e-8, "pulley teardown removes the whole tree");
 					for (int x = 0; x <= 4; x++) h.setBlock(POS.below().east(x), Blocks.AIR);
 					h.setBlock(POS, Blocks.AIR);
 				}

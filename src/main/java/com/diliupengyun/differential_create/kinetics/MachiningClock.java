@@ -19,6 +19,7 @@ public final class MachiningClock {
     public static void advance(Level level) {
         com.diliupengyun.differential_create.kinetics.portable.PortableDocking.time(level);
         if (level.tickRateManager().isFrozen()) return;
+        NetworkTopology.flush();
         for (var network : networks(level)) ClutchPhysics.prepare(network);
         ContraptionMotion.begin(level);
         try { advanceRotors(level); }
@@ -36,6 +37,7 @@ public final class MachiningClock {
         while (remaining > 1e-14) {
             NetworkTopology.flush();
             var networks = networks(level);
+            ContraptionMotion.resolveStops(networks);
             if (SequencerKinetics.finishReady(networks)) continue;
             for (var network : networks) for (var shaft : network.members.keySet()) ActorFeed.prepare(shaft);
             var phases = new ArrayList<Phase>();
@@ -75,6 +77,7 @@ public final class MachiningClock {
             for (var dock : docks) if (dock.drive() instanceof ContraptionPhysics.Drive drive)
                 limits.add(new ElasticKinetics.WorkEvent(drive.shaft(), new ShaftWork.Boundary(Double.POSITIVE_INFINITY, dock.boundary(1), dock.boundary(-1)), 0, ActorFeed.enabled(drive.shaft())));
             ActorFeed.boundaries(networks, limits);
+            ContraptionMotion.boundaries(limits);
             var snapshot = ElasticKinetics.snapshot(networks, hydraulicTorques);
             snapshot.setExternalTorques(hydraulicTorques);
             SequencerKinetics.boundaries(networks, limits);
@@ -94,6 +97,7 @@ public final class MachiningClock {
             for (var pair : CrushingKinetics.pairs(networks)) CrushingKinetics.update(pair.controller());
             SequencerKinetics.observe(networks, trial.result.duration(), hydraulicTorques);
             ContraptionMotion.advance(trial);
+            ContraptionMotion.resolveStops(networks);
             for (var dock : docks) if (dock.drive() instanceof ContraptionPhysics.Drive drive)
                 com.diliupengyun.differential_create.kinetics.portable.PortableDocking.observe(List.of(dock), ActorFeed.enabled(drive.shaft()) ? trial.outputTravel(drive.shaft()) : trial.signedTravel(drive.shaft()));
             for (var network : networks) ElasticKinetics.publishReference(network);

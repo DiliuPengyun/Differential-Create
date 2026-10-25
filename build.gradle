@@ -95,6 +95,14 @@ neoForge {
             logLevel = org.slf4j.event.Level.INFO
         }
 
+        gravityServer {
+            type = 'gameTestServer'
+            gameDirectory = project.file('build/gravity/runs/' + UUID.randomUUID())
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_gravity'
+            systemProperty 'differentialcreate.gravity.select', providers.gradleProperty('gravitySelect').getOrElse('.*')
+            logLevel = org.slf4j.event.Level.INFO
+        }
+
         backtankServer {
             type = "gameTestServer"
             gameDirectory = project.file('build/backtank/runs/' + UUID.randomUUID())

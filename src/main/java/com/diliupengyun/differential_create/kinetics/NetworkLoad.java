@@ -53,8 +53,14 @@ public final class NetworkLoad {
             var feed = ActorFeed.of(be); double ratio = ratios.getOrDefault(be, 1f);
             members.add(new LoadFactor.Member(ratio, feed.speed, 0, feed.brake + ContraptionPhysics.feedLoad(be)
                 + ContraptionPhysics.airDrag(be) * feed.speed * feed.speed, false));
-            loss += LoadFactor.contactLoss(0, ActorFeed.DAMPING, feed.coupling, 0, NetworkDynamics.preciseSpeed(be) - feed.speed);
+            loss += LoadFactor.contactLoss(feed.stiffness(), feed.damping(), feed.coupling, feed.twist, NetworkDynamics.preciseSpeed(be) - feed.speed);
         }
+        // Gravitational power opposes lifting and supplies descent. Keep it
+        // separate from source torque so opposing terms cannot cancel before
+        // the readout totals demand and supply; stored energy is not a source.
+        for (var be : network.members.keySet()) if (ContraptionPhysics.manages(be))
+            members.add(new LoadFactor.Member(ratios.getOrDefault(be, 1f), ActorFeed.speed(be),
+                ContraptionGravity.capture(be).torque(0, 0), 0, false));
         return LoadFactor.calculate(members, loss);
     }
 

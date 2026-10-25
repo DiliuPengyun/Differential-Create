@@ -54,7 +54,7 @@ public final class InertiaRegistry {
 
 	public static float getInertia(KineticBlockEntity kbe) {
 		double inertia = getBaseInertia(kbe);
-		if (ActorFeed.enabled(kbe)) return (float) inertia + ActorFeed.INPUT_INERTIA;
+		if (ActorFeed.enabled(kbe)) return (float) inertia + (ActorFeed.of(kbe).toolTakeoff ? ActorFeed.INPUT_INERTIA : 0);
 		inertia += ContraptionPhysics.inertia(kbe);
 		if (ContraptionPhysics.awaitingEntity(kbe)) {
 			var state = ElasticKinetics.state(kbe);
@@ -63,6 +63,10 @@ public final class InertiaRegistry {
 				inertia = Math.max(inertia, state.pendingStructureInertia);
 		}
 		return (float) inertia;
+	}
+	/** Total local moving inertia, including an independently constrained structure output. */
+	public static double totalInertia(KineticBlockEntity be) {
+		return getInertia(be) + (ActorFeed.enabled(be) ? ActorFeed.of(be).inertia : 0);
 	}
 
 	public static void checkAttachments(KineticBlockEntity be) {

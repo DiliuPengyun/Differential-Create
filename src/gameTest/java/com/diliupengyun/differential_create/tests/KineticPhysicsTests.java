@@ -65,6 +65,15 @@ public final class KineticPhysicsTests {
 	private static final String TEMPLATE = "physics_test";
 	private static final int TOTAL_CHECKS = 14;
 
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_bearing", timeoutTicks = 100)
+	public static void gravityBearings(GameTestHelper helper) { forceImpactChunks(helper); ContraptionGravityTests.bearings(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_pulley", timeoutTicks = 100)
+	public static void gravityPulley(GameTestHelper helper) { forceImpactChunks(helper); ContraptionGravityTests.pulley(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_gantry", timeoutTicks = 100)
+	public static void gravityGantry(GameTestHelper helper) { forceImpactChunks(helper); ContraptionGravityTests.gantry(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_elevator", timeoutTicks = 240)
+	public static void gravityElevator(GameTestHelper helper) { forceImpactChunks(helper); ContraptionGravityTests.elevator(helper); }
+
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "boundary_snapshot", timeoutTicks = 100)
 	public static void boundarySnapshotReuse(GameTestHelper helper) { forceImpactChunks(helper); BoundarySnapshotTests.capture(helper); }
 

@@ -11,6 +11,7 @@ public final class PhysicsRegression {
 	private static int checks;
 	public static void main(String[] args) {
 		TorsionRegression.run();
+		GravityRegression.run();
 		CrushingPairRegression.run();
 		ClutchEngagementRegression.run();
 		SolverPrecisionRegression.run();

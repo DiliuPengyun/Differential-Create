@@ -26,6 +26,7 @@ public final class ContraptionGeometry {
 	}
 	public static final class Shape {
 		private final int blocks;
+		private final double[] centre;
 		private final double[] rotationInertia, rotationDrag, translationArea;
 		private final Sample[] surface;
 		private final Node index;
@@ -33,12 +34,15 @@ public final class ContraptionGeometry {
 		private final Map<Wind, Double> directions = new LinkedHashMap<>(16, .75f, true) {
 			@Override protected boolean removeEldestEntry(Map.Entry<Wind, Double> eldest) { return size() > 16; }
 		};
-		private Shape(int blocks, double[] inertia, double[] drag, double[] area, Sample[] surface, Node index, boolean boxSilhouette) {
+		private Shape(int blocks, double[] centre, double[] inertia, double[] drag, double[] area, Sample[] surface, Node index, boolean boxSilhouette) {
+			this.centre = centre;
 			this.blocks = blocks; rotationInertia = inertia; rotationDrag = drag; translationArea = area;
 			this.surface = surface; this.index = index;
 			this.boxSilhouette = boxSilhouette;
 		}
 		public int blocks() { return blocks; }
+		public double mass() { return blocks * CUBE_MASS; }
+		public double centre(int axis) { return centre[axis]; }
 		public double[] rotationInertia() { return rotationInertia; }
 		public double[] rotationDrag() { return rotationDrag; }
 		public double[] translationArea() { return translationArea; }
@@ -80,6 +84,7 @@ public final class ContraptionGeometry {
 	private ContraptionGeometry() {}
 
 	public static Shape measure(Set<Cell> cubes) {
+		double[] centre = new double[3];
 		double[] inertia = new double[3], drag = new double[3], area = new double[3];
 		var columns = List.of(new HashSet<Long>(), new HashSet<Long>(), new HashSet<Long>());
 		var samples = new ArrayList<Sample>();
@@ -88,6 +93,7 @@ public final class ContraptionGeometry {
 		int boundaryCells = 0;
 		double quadrature = 1 / (2 * Math.sqrt(3));
 		for (Cell cell : cells) {
+			for (int axis = 0; axis < 3; axis++) centre[axis] += cell.coordinate(axis);
 			if (cell.x == index.minX + .5 || cell.x == index.maxX - .5 || cell.y == index.minY + .5
 				|| cell.y == index.maxY - .5 || cell.z == index.minZ + .5 || cell.z == index.maxZ - .5) boundaryCells++;
 			for (int axis = 0; axis < 3; axis++) {
@@ -121,11 +127,14 @@ public final class ContraptionGeometry {
 				}
 			}
 		}
-		for (int axis = 0; axis < 3; axis++) area[axis] = columns.get(axis).size();
+		for (int axis = 0; axis < 3; axis++) {
+			area[axis] = columns.get(axis).size();
+			if (cells.length > 0) centre[axis] /= cells.length;
+		}
 		double width = index == null ? 0 : index.maxX - index.minX, height = index == null ? 0 : index.maxY - index.minY,
 			depth = index == null ? 0 : index.maxZ - index.minZ;
 		double shell = width * height * depth - Math.max(0, width - 2) * Math.max(0, height - 2) * Math.max(0, depth - 2);
-		return new Shape(cubes.size(), inertia, drag, area, samples.toArray(Sample[]::new), index, boundaryCells == shell);
+		return new Shape(cubes.size(), centre, inertia, drag, area, samples.toArray(Sample[]::new), index, boundaryCells == shell);
 	}
 
 	/** A cached spatial index avoids walking every intervening empty block along long rays. */

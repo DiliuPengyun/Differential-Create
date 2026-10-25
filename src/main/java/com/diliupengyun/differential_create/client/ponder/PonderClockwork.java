@@ -52,6 +52,13 @@ public final class PonderClockwork {
         state.differentialcreate$hourAngle(0); state.differentialcreate$minuteAngle(0);
     }
     public void release(WorldSectionElement section) { hands.remove(section); }
+    double motionRatio(WorldSectionElement section, double fallback) {
+        var hand = hands.get(section);
+        if (hand == null) return fallback;
+        double rpm = hand.bearing().getSpeed();
+        if (Math.abs(rpm) < 1e-9) return 0;
+        return (hand.minute() ? hand.bearing().getMinuteArmSpeed() : hand.bearing().getHourArmSpeed()) / (.3 * rpm);
+    }
     public void reset() { clocks.clear(); hands.clear(); }
     public void tick() {
         clocks.forEach((bearing, clock) -> {

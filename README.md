@@ -47,6 +47,8 @@ Linux 使用 `./gradlew build runGameTestServer runVirtualAirServer`，首次运
 
 `build` 自动运行数值回归；`runGameTestServer` 验证拓扑、配方、物品控制、供汽和动态结构，默认使用 `run-gametest/`。`runVirtualAirServer` 在 `build/` 中运行流体、机器、动态管网与卸载场景，可用 `-PvirtualAirSelect=pump_direction_.*,structure_.*` 选择子集。CI 执行完整构建、常规 GameTest、流体、背罐、弹射置物台及粉碎轮专项并保存日志，验证入口见 [设计文档](DESIGN.md#9-验证与维护) 和 [流体覆盖矩阵](docs/FLUID_COVERAGE.md)。
 
+结构与动力定向回归可运行 `.\gradlew.bat runGravityServer`，默认在独立测试世界运行全部动力 GameTest；追加 `'-PgravitySelect=gravity.*,nested.*'` 可选择重力和嵌套结构用例。
+
 专项性能命令为 `.\gradlew.bat runFluidBenchmarkServer`，可用 `-PfluidPerfCase=loops` 选择多泵回路；类别和测量范围见 [性能测试](docs/FLUID_PERFORMANCE.md)。
 
 列车专项验证使用 `.\gradlew.bat runTrainCoverageServer runTrainClientSmoke`，测试目录均位于 `build/`；客户端检查自动退出。搭建、刻度和覆盖范围见[列车说明](docs/TRAINS.md)。
@@ -63,7 +65,7 @@ Linux 使用 `./gradlew build runGameTestServer runVirtualAirServer`，首次运
 
 ## 当前边界与待办
 
-结构使用等质量方块与自身遮挡后的平方空气阻力，不模拟结构重力势能、内容物质量、真实流场或水阻力。矿车已适配惯量、驱动、阻力、连续工具耗功及转向圆弧作业；列车已接入蒸汽动力、手动档位、真实资源消耗和有限制动。移动机械手已有独立作业取力或有限储能，移动式接口也已接入列车的物理制动与库存会话。列车弯轨作业、载具机械手的驻车外部补能、复杂车队与多人体验仍待适配或验收，其他附属模组的特殊逻辑尚未全面适配。
+结构使用等质量方块、自身遮挡后的平方空气阻力以及沿实际运动自由度投影的重力：升降会消耗或释放势能，水平轴上的偏心结构会产生重力矩。拆回保留原生取整，内容物质量、真实流场或水阻力仍未模拟。矿车已适配惯量、驱动、阻力、连续工具耗功及转向圆弧作业；列车已接入蒸汽动力、手动档位、真实资源消耗和有限制动。移动机械手已有独立作业取力或有限储能，移动式接口也已接入列车的物理制动与库存会话。列车弯轨作业、载具机械手的驻车外部补能、复杂车队与多人体验仍待适配或验收，其他附属模组的特殊逻辑尚未全面适配。
 
 管网不模拟真空、压缩、密度分层、同口逆向交换或管内反应，泛用机器使用近似水头。原生整数接口保留真实小数余量，普通重载不补气。流体预算不足时推迟更新，不积累补算任务。完整燃料链、多人中途加入或切维度、长期大型工厂、全部配方组合与完整客户端交互仍需专项验收。
 

@@ -87,6 +87,7 @@ public final class PonderKinetics {
     private static final class Attachment {
         boolean active = true;
         double inertia, load, actorLoad, drag, speed, previous, angle, twist;
+        com.diliupengyun.differential_create.kinetics.ShaftPotential gravity = com.diliupengyun.differential_create.kinetics.ShaftPotential.NONE;
     }
     public record AttachmentState(boolean active, double inertia, double load, double actorLoad) {}
     public AttachmentState attachmentState(BlockPos pos) {
@@ -97,7 +98,7 @@ public final class PonderKinetics {
         var rotor = rotors.get(be.getBlockPos());
         if (rotor == null || rotor.be != be || rotor.attachment == null) return;
         var mounted = rotor.attachment;
-        if (!active) { mounted.speed = 0; mounted.load = mounted.actorLoad = 0; }
+        if (!active) { mounted.speed = mounted.twist = 0; mounted.load = mounted.actorLoad = 0; }
         mounted.active = active;
     }
 
@@ -251,6 +252,10 @@ public final class PonderKinetics {
     public void setAttachmentLoad(BlockPos pos, double load) {
         var rotor = rotors.get(pos);
         if (rotor != null && rotor.attachment != null) rotor.attachment.load = Math.max(0, load);
+    }
+    public void attachmentGravity(KineticBlockEntity be, com.diliupengyun.differential_create.kinetics.ShaftPotential gravity) {
+        var rotor = rotors.get(be.getBlockPos());
+        if (rotor != null && rotor.attachment != null) rotor.attachment.gravity = gravity;
     }
     public void setActorLoad(BlockPos pos, double load) {
         var rotor = rotors.get(pos);
@@ -456,9 +461,13 @@ public final class PonderKinetics {
         for (int i = 0; i < attachments.size(); i++) {
             Rotor rotor = attachments.get(i); Attachment mounted = rotor.attachment;
             int at = bodies.size(); speed[at] = mounted.speed;
-            bodies.add(new TorsionSolver.Body(mounted.inertia, 0, 0, mounted.load + mounted.actorLoad, mounted.drag));
+            bodies.add(new TorsionSolver.Body(mounted.inertia, 0, 0, mounted.load + mounted.actorLoad, mounted.drag)
+                .withPotential(mounted.gravity).withSpeedLimit(com.diliupengyun.differential_create.kinetics.ContraptionMotion.speedLimit(rotor.be)));
+            boolean linear = rotor.be instanceof com.simibubi.create.content.contraptions.piston.LinearActuatorBlockEntity
+                || rotor.be instanceof com.simibubi.create.content.kinetics.gantry.GantryShaftBlockEntity;
             links.add(new TorsionSolver.Link(indices.get(rotor.be), at, 1, PhysicsTuning.TORSIONAL_STIFFNESS,
-                PhysicsTuning.TORSIONAL_DAMPING, StrengthRegistry.of(rotor.be), Double.POSITIVE_INFINITY));
+                PhysicsTuning.TORSIONAL_DAMPING, linear ? Double.POSITIVE_INFINITY : StrengthRegistry.of(rotor.be),
+                linear ? StrengthRegistry.of(rotor.be) : Double.POSITIVE_INFINITY));
             twist[connections.size() + i] = mounted.twist;
         }
         int couplingStart = links.size();
@@ -475,9 +484,9 @@ public final class PonderKinetics {
         for (var pair : crushers)
             links.add(TorsionSolver.Link.work(indices.get(pair.a()), indices.get(pair.b()), pair.torque()));
         twist = Arrays.copyOf(twist, links.size());
-        var result = servos.isEmpty()
+        var result = servos.isEmpty() && attachments.isEmpty()
             ? TorsionSolver.advance(bodies, links, speed, twist, RotationMath.TICK_MINUTES, PhysicsTuning.TORSION_MAX_STEP)
-            : advanceSequencers(level, members, servos, connections, indices, outputs, bodies, links, speed, twist, couplingStart, explicitSources);
+            : advanceMotion(level, members, servos, attachments, connections, indices, outputs, bodies, links, speed, twist, couplingStart, explicitSources);
         for (int i = 0; i < crushers.size(); i++)
             ((ICrushingDynamics) crushers.get(i).controller()).differentialcreate$reaction(result.torque()[crushingStart + i]);
         sampleLoads(members, servos, attachments, outputs, bodies, links, result);
@@ -734,6 +743,8 @@ public final class PonderKinetics {
                 Math.abs(driving) + Math.abs(body.damping() * rpm));
             samples.computeIfAbsent(groups[i], ignored -> new ArrayList<>()).add(new LoadFactor.Member(
                 ratios[i], rpm, drive, body.load() + body.drag() * rpm * rpm, body.drive() != 0));
+            if (body.potential().active()) samples.get(groups[i]).add(new LoadFactor.Member(
+                ratios[i], rpm, body.potential().torque(0, 0), 0, false));
         }
         for (int i = 0; i < links.size(); i++) {
             var link = links.get(i);
@@ -835,12 +846,15 @@ public final class PonderKinetics {
     }
 
     /** Replan at the production control interval, keeping separate input/output energy and reaction torque. */
-    private static TorsionSolver.Result advanceSequencers(PonderLevel level, List<Rotor> members, List<Rotor> servos,
+    private static TorsionSolver.Result advanceMotion(PonderLevel level, List<Rotor> members, List<Rotor> servos, List<Rotor> attachments,
         List<ElasticKinetics.Connection> connections, Map<KineticBlockEntity, Integer> indices,
         Map<KineticBlockEntity, Integer> outputs, List<TorsionSolver.Body> bodies, List<TorsionSolver.Link> links,
         double[] speed, double[] twist, int couplingStart, boolean updateDisplay) {
         double remaining = RotationMath.TICK_MINUTES;
         double[] angles = new double[speed.length], travel = new double[speed.length];
+        var initialBodies = List.copyOf(bodies);
+        var initialLinks = List.copyOf(links);
+        var bounds = attachments.stream().map(rotor -> PonderSimulation.of(level).linearBounds(rotor.be)).toList();
         TorsionSolver.Result result = null;
         while (remaining > 1e-14) {
             for (int i = 0; i < members.size(); i++) {
@@ -848,6 +862,25 @@ public final class PonderKinetics {
                 ElasticKinetics.state(members.get(i).be).physicalSpeed = speed[i];
             }
             var limits = new ArrayList<TorsionSolver.EventLimit>();
+            for (int i = 0; i < attachments.size(); i++) {
+                int out = members.size() + servos.size() + i, edge = connections.size() + i;
+                var range = bounds.get(i);
+                double lower = range.lower() - angles[out], upper = range.upper() - angles[out];
+                boolean atLower = lower >= -1e-8, atUpper = upper <= 1e-8;
+                int stop = atLower && atUpper ? 2 : atLower ? -1 : atUpper ? 1 : 0;
+                var body = initialBodies.get(out);
+                bodies.set(out, body.withPotential(body.potential().shifted(angles[out])).withStop(stop));
+                speed[out] = Math.clamp(speed[out], -body.speedLimit(), body.speedLimit());
+                if (stop == 2 || atLower && speed[out] < 0 || atUpper && speed[out] > 0) speed[out] = 0;
+                var link = initialLinks.get(edge);
+                double input = speed[link.a()];
+                boolean open = stop == 2 || atLower && input < 0 || atUpper && input > 0;
+                links.set(edge, open ? new TorsionSolver.Link(link.a(), out, 1, 0, 0, Double.POSITIVE_INFINITY, 0) : link);
+                if (open) twist[edge] = 0;
+                if (!atUpper && Double.isFinite(upper) || !atLower && Double.isFinite(lower))
+                    limits.add(new TorsionSolver.EventLimit(out, Double.POSITIVE_INFINITY,
+                        atUpper ? Double.POSITIVE_INFINITY : upper, atLower ? Double.POSITIVE_INFINITY : -lower));
+            }
             for (int i = 0; i < servos.size(); i++) {
                 var rotor = servos.get(i);
                 var motion = ((ISequencerDynamics) rotor.be).differentialcreate$motion();
@@ -862,10 +895,11 @@ public final class PonderKinetics {
                         motion.direction > 0 ? distance : Double.POSITIVE_INFINITY,
                         motion.direction < 0 ? distance : Double.POSITIVE_INFINITY));
             }
-            double duration = Math.min(remaining, SequencerMotion.CONTROL_INTERVAL);
+            double duration = servos.isEmpty() ? remaining : Math.min(remaining, SequencerMotion.CONTROL_INTERVAL);
+            double step = Math.min(duration, PhysicsTuning.TORSION_MAX_STEP);
             var captured = TorsionSolver.prepare(bodies, links, speed, twist);
-            result = limits.isEmpty() ? captured.advance(duration, duration)
-                : captured.advanceToEvent(duration, duration, limits);
+            result = limits.isEmpty() ? captured.advance(duration, step)
+                : captured.advanceToEvent(duration, step, limits);
             speed = result.speed(); twist = result.twist();
             for (int i = 0; i < speed.length; i++) {
                 angles[i] += result.angle()[i]; travel[i] += result.travel()[i];

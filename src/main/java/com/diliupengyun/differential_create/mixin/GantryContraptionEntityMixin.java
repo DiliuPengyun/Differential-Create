@@ -50,9 +50,14 @@ public abstract class GantryContraptionEntityMixin {
 		}
 	}
 	@Redirect(method = "checkPinionShaft", at = @At(value = "INVOKE",
-		target = "Lcom/simibubi/create/content/contraptions/gantry/GantryContraptionEntity;disassemble()V"))
+		target = "Lcom/simibubi/create/content/contraptions/gantry/GantryContraptionEntity;disassemble()V", ordinal = 1))
 	private void differentialcreate$keepPoweredStall(GantryContraptionEntity self) {
 		var shaft = ContraptionPhysics.gantryShaft(self);
+		// A gravity-driven carriage can pass through zero speed without placing
+		// itself into the world. Redstone still requests native immediate placement.
+		if (shaft != null && !shaft.getBlockState().getValue(GantryShaftBlock.POWERED)
+			&& com.diliupengyun.differential_create.kinetics.ContraptionMotion.managed(self)
+			&& com.diliupengyun.differential_create.kinetics.ActorFeed.speed(shaft) == 0) return;
 		if (shaft != null && com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(shaft)
 			&& !shaft.getBlockState().getValue(GantryShaftBlock.POWERED)) return;
 		// A stationary physical rotor can still be commanded to move: it first has

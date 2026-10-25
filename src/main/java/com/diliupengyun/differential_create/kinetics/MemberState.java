@@ -14,6 +14,10 @@ public final class MemberState {
 	public int pendingStructureCount;
 	public double pendingStructureDrag = Double.NaN;
 	public double structureDrag, structureLoad;
+	/** Dissipated kinetic energy at structural stops; never reusable shaft work. */
+	public double structureImpactLoss;
+	/** Last native elevator command, sampled without re-running its arrival controller. */
+	public double elevatorMotionPerRpm;
 	public double sampledStructureDrag = Double.NaN, sampledStructureLoad = Double.NaN;
 	public final java.util.Set<com.simibubi.create.content.contraptions.gantry.GantryContraptionEntity> gantryAttachments = new java.util.HashSet<>();
 	/** Signed contact torque on this member, preferring its source-side connection. */

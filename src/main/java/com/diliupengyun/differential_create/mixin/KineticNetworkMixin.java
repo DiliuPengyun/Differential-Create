@@ -93,8 +93,15 @@ public abstract class KineticNetworkMixin implements INetworkDynamics {
 	public void differentialcreate$setSpeed(double speed) {
 		this.differentialcreate$speed = speed;
 		if (!differentialcreate$data.publishingReference)
-			differentialcreate$ratios.forEach((be, ratio) ->
-				((com.diliupengyun.differential_create.kinetics.IMemberDynamics) be).differentialcreate$member().physicalSpeed = ratio * speed);
+			differentialcreate$ratios.forEach((be, ratio) -> {
+				var state = ((com.diliupengyun.differential_create.kinetics.IMemberDynamics) be).differentialcreate$member();
+				state.physicalSpeed = ratio * speed;
+				// Explicit whole-network state seeding includes ordinary linear
+				// outputs. Publishing the real reference never takes this path.
+				if (state.actorFeed.initialized && !state.actorFeed.toolTakeoff) {
+					state.actorFeed.speed = ratio * speed; state.actorFeed.twist = 0;
+				}
+			});
 	}
 
 	@Override
