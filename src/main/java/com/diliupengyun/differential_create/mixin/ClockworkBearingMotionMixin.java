@@ -6,6 +6,8 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
+import org.objectweb.asm.Opcodes;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
@@ -13,7 +15,18 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class ClockworkBearingMotionMixin {
 	@Shadow protected float hourAngle;
 	@Shadow protected float minuteAngle;
+	@Shadow protected boolean assembleNextTick;
 	@Shadow protected abstract void applyRotations();
+	@Redirect(method = "onSpeedChanged", at = @At(value = "FIELD", opcode = Opcodes.PUTFIELD,
+		target = "Lcom/simibubi/create/content/contraptions/bearing/ClockworkBearingBlockEntity;assembleNextTick:Z"))
+	private void differentialcreate$keepAcceptedTravel(ClockworkBearingBlockEntity self, boolean requested) {
+		// Continuous load changes notify RPM every tick. Create's assembly branch
+		// returns before applying either hand, discarding already-paid travel.
+		// Retain the native auto-assembly request only before a body is attached.
+		if (self.isRunning() && self.getLevel() != null && !self.getLevel().isClientSide
+			&& ContraptionMotion.managed(((ClockworkBearingAccessor) self).differentialcreate$hour())) return;
+		assembleNextTick = requested;
+	}
 	@Inject(method = "attach", at = @At("RETURN"))
 	private void differentialcreate$recoverPaidTravel(com.simibubi.create.content.contraptions.ControlledContraptionEntity root, CallbackInfo ci) {
 		var self = (ClockworkBearingBlockEntity) (Object) this;

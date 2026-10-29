@@ -11,6 +11,7 @@ public interface LinearActuatorAccessor {
 	@Accessor("sequencedOffsetLimit") void differentialcreate$setOffsetLimit(double limit);
 	@Accessor("waitingForSpeedChange") boolean differentialcreate$waiting();
 	@Accessor("waitingForSpeedChange") void differentialcreate$setWaiting(boolean waiting);
+	@Accessor("movementMode") com.simibubi.create.foundation.blockEntity.behaviour.scrollValue.ScrollOptionBehaviour<com.simibubi.create.content.contraptions.IControlContraption.MovementMode> differentialcreate$movementMode();
 	@Invoker("isPassive") boolean differentialcreate$passive();
 	@Invoker("toMotionVector") net.minecraft.world.phys.Vec3 differentialcreate$toMotionVector(float speed);
 	@Invoker("getExtensionRange") int differentialcreate$extensionRange();

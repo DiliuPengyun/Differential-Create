@@ -71,7 +71,7 @@ public final class PortableDocking {
         long now = level.getServer().getTickCount();
         if (clock.serverTick != now) {
             clock.serverTick = now;
-            if (!level.tickRateManager().isFrozen()) clock.tick++;
+            if (level.tickRateManager().runsNormally()) clock.tick++;
         }
         return clock.tick;
     }

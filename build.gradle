@@ -100,6 +100,16 @@ neoForge {
             gameDirectory = project.file('build/gravity/runs/' + UUID.randomUUID())
             systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_gravity'
             systemProperty 'differentialcreate.gravity.select', providers.gradleProperty('gravitySelect').getOrElse('.*')
+            systemProperty 'differentialcreate.gravity.report', project.file('build/gravity-measurement/samples').absolutePath
+            logLevel = org.slf4j.event.Level.INFO
+        }
+
+        selectedRegressionServer {
+            type = 'gameTestServer'
+            gameDirectory = project.file('build/regression/selected/' + UUID.randomUUID())
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'differentialcreate_regression'
+            systemProperty 'differentialcreate.regression.select', providers.gradleProperty('regressionSelect').getOrElse('(?!)')
+            systemProperty 'differentialcreate.regression.repeat', providers.gradleProperty('regressionRepeat').getOrElse('1')
             logLevel = org.slf4j.event.Level.INFO
         }
 
@@ -175,6 +185,17 @@ neoForge {
             systemProperty 'differentialcreate.ponderPreviewPath', project.file('build/ponder/previews').absolutePath
             programArguments.addAll '--width', providers.gradleProperty('ponderWidth').orElse('1200').get(),
                 '--height', providers.gradleProperty('ponderHeight').orElse('900').get()
+        }
+
+        structureClientAudit {
+            client()
+            gameDirectory = project.file('build/full-audit/client-runs/' + UUID.randomUUID())
+            systemProperty 'differentialcreate.structureClientAudit', 'true'
+            systemProperty 'differentialcreate.structureClientSelect', providers.gradleProperty('structureClientSelect').getOrElse('.*')
+            systemProperty 'differentialcreate.structureClientHold', providers.gradleProperty('structureClientHold').getOrElse('false')
+            systemProperty 'differentialcreate.structureClientGridStart', providers.gradleProperty('structureClientGridStart').getOrElse('0')
+            systemProperty 'differentialcreate.structureClientReport', project.file(providers.gradleProperty('structureClientReport').getOrElse('build/full-audit/world')).absolutePath
+            programArguments.addAll '--width', '1280', '--height', '900'
         }
 
         server {
@@ -292,6 +313,28 @@ neoForge.runs.logisticsServer { logLevel = org.slf4j.event.Level.INFO }
 neoForge.runs.logisticsClientSmoke { logLevel = org.slf4j.event.Level.INFO }
 neoForge.runs.beltClientSmoke { logLevel = org.slf4j.event.Level.INFO }
 neoForge.runs.ponderClientSmoke { logLevel = org.slf4j.event.Level.INFO }
+neoForge.runs.structureClientAudit { logLevel = org.slf4j.event.Level.INFO }
+neoForge.runs.selectedRegressionServer { logLevel = org.slf4j.event.Level.INFO }
+
+tasks.named('runSelectedRegressionServer') {
+    notCompatibleWithConfigurationCache('Selected regressions use fresh owned test worlds.')
+    doLast {
+        def directory = neoForge.runs.getByName('selectedRegressionServer').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !(log.text =~ /All [1-9][0-9]* required tests passed/).find())
+            throw new GradleException('Selected regressions did not complete a non-empty successful test run.')
+    }
+}
+
+tasks.named('runStructureClientAudit') {
+    notCompatibleWithConfigurationCache('Structure visual audits use an owned disposable client world.')
+    doLast {
+        def directory = neoForge.runs.getByName('structureClientAudit').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !log.text.contains('DC_STRUCTURE_CLIENT_PASS') || log.text.contains('DC_STRUCTURE_CLIENT_FAIL'))
+            throw new GradleException('Structure client verification failed; inspect its latest.log.')
+    }
+}
 
 tasks.named('runPonderClientSmoke') {
     notCompatibleWithConfigurationCache('Ponder playback and visual QA use an owned disposable client directory.')

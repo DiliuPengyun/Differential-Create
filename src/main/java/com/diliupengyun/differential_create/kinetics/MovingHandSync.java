@@ -20,7 +20,7 @@ public final class MovingHandSync {
             var hand = ContraptionActorWork.of(ctx).hand(); var drive = ActorDrive.of(ctx);
             var shaft = drive instanceof ContraptionPhysics.Drive s ? s.shaft() : null;
             var feed = shaft == null ? null : ActorFeed.of(shaft);
-            boolean frozen = ctx.world.tickRateManager().isFrozen();
+            boolean frozen = !ctx.world.tickRateManager().runsNormally();
             double rpm = frozen ? 0 : shaft != null ? NetworkDynamics.preciseSpeed(shaft) : hand.cartSpeed();
             double angle = shaft != null ? ElasticKinetics.state(shaft).angle * 360 : ctx.data.getCompound(MovingDeployerWork.TAG).getDouble("Angle") * 360;
             groups.computeIfAbsent(entity, e -> new ArrayList<>()).add(new MovingHandPayload.Hand(ctx.localPos,

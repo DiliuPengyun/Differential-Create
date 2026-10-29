@@ -16,8 +16,10 @@ final class PonderMechanismAudit {
     private int bearingSamples, nestedSamples, pulleySamples, gantrySamples, reversals;
     private int forwardSamples, reverseSamples;
     private double firstPlankTravel, previousPlankAngle, previousOffset = Double.NaN, direction;
+    private final PonderLiftAudit lifts = new PonderLiftAudit();
 
     void sample(PonderScene scene) {
+        lifts.sample(scene);
         switch (scene.getId().getPath()) {
             case "mechanical_bearing" -> bearing(scene, new BlockPos(3, 2, 3), new BlockPos(4, 3, 2), true);
             case "bearing" -> bearing(scene, new BlockPos(2, 2, 2), new BlockPos(2, 3, 2), false);
@@ -123,6 +125,7 @@ final class PonderMechanismAudit {
         });
     }
     void verify(PonderScene scene) {
+        lifts.verify(scene);
         switch (scene.getId().getPath()) {
             case "mechanical_bearing", "bearing" -> require(bearingSamples > 30 && firstPlankTravel > 10,
                 "the first bearing example never bound or rotated: " + scene.getId());

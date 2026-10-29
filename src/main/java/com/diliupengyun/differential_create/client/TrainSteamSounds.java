@@ -16,7 +16,7 @@ public final class TrainSteamSounds {
     public void tick(CarriageContraptionEntity entity) {
         var mc = Minecraft.getInstance(); var sample = ClientTrainKinetics.soundSample(entity);
         if (sample == null || entity.level() != mc.level || mc.cameraEntity == null || entity.getContraption() == null
-            || !entity.validForRender || entity.firstPositionUpdate || entity.level().tickRateManager().isFrozen()) {
+            || !entity.validForRender || entity.firstPositionUpdate || !entity.level().tickRateManager().runsNormally()) {
             engines.clear(); return;
         }
         double age = ClientKineticAngles.renderTick() - sample.at();

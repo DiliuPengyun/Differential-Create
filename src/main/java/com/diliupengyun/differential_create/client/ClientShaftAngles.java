@@ -95,7 +95,7 @@ public final class ClientShaftAngles {
         if (be.getLevel() instanceof PonderLevel) return new RotationFrame(tick, 0, 0);
         double angle = Math.toDegrees(KineticBlockEntityRenderer.getAngleForBe(be, be.getBlockPos(), axis))
             - KineticBlockEntityRenderer.getRotationOffsetForPosition(be, be.getBlockPos(), axis);
-        double rate = be.getLevel() != null && be.getLevel().tickRateManager().isFrozen() ? 0 : be.getSpeed() * .3;
+        double rate = be.getLevel() != null && !be.getLevel().tickRateManager().runsNormally() ? 0 : be.getSpeed() * .3;
         return new RotationFrame(tick, angle - (ClientKineticAngles.renderTick() - tick) * rate, rate);
     }
 }

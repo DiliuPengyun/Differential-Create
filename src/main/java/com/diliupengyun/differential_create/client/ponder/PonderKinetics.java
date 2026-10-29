@@ -86,7 +86,7 @@ public final class PonderKinetics {
 
     private static final class Attachment {
         boolean active = true;
-        double inertia, load, actorLoad, drag, speed, previous, angle, twist;
+        double inertia, load, actorLoad, drag, speed, previous, angle, twist, ratio = 1;
         com.diliupengyun.differential_create.kinetics.ShaftPotential gravity = com.diliupengyun.differential_create.kinetics.ShaftPotential.NONE;
     }
     public record AttachmentState(boolean active, double inertia, double load, double actorLoad) {}
@@ -460,12 +460,14 @@ public final class PonderKinetics {
         }
         for (int i = 0; i < attachments.size(); i++) {
             Rotor rotor = attachments.get(i); Attachment mounted = rotor.attachment;
+            double ratio = PonderSimulation.of(level).couplingRatio(rotor.be);
+            if (ratio != mounted.ratio) { mounted.twist = 0; mounted.ratio = ratio; }
             int at = bodies.size(); speed[at] = mounted.speed;
             bodies.add(new TorsionSolver.Body(mounted.inertia, 0, 0, mounted.load + mounted.actorLoad, mounted.drag)
                 .withPotential(mounted.gravity).withSpeedLimit(com.diliupengyun.differential_create.kinetics.ContraptionMotion.speedLimit(rotor.be)));
             boolean linear = rotor.be instanceof com.simibubi.create.content.contraptions.piston.LinearActuatorBlockEntity
                 || rotor.be instanceof com.simibubi.create.content.kinetics.gantry.GantryShaftBlockEntity;
-            links.add(new TorsionSolver.Link(indices.get(rotor.be), at, 1, PhysicsTuning.TORSIONAL_STIFFNESS,
+            links.add(new TorsionSolver.Link(indices.get(rotor.be), at, ratio, PhysicsTuning.TORSIONAL_STIFFNESS,
                 PhysicsTuning.TORSIONAL_DAMPING, linear ? Double.POSITIVE_INFINITY : StrengthRegistry.of(rotor.be),
                 linear ? StrengthRegistry.of(rotor.be) : Double.POSITIVE_INFINITY));
             twist[connections.size() + i] = mounted.twist;
@@ -731,7 +733,7 @@ public final class PonderKinetics {
         }
         for (int i = 0; i < attachments.size(); i++) {
             groups[members.size() + servos.size() + i] = attachments.get(i).componentId;
-            ratios[members.size() + servos.size() + i] = attachments.get(i).componentRatio;
+            ratios[members.size() + servos.size() + i] = attachments.get(i).componentRatio * attachments.get(i).attachment.ratio;
         }
         var samples = new HashMap<Long, List<LoadFactor.Member>>();
         var losses = new HashMap<Long, Double>();
@@ -873,7 +875,7 @@ public final class PonderKinetics {
                 speed[out] = Math.clamp(speed[out], -body.speedLimit(), body.speedLimit());
                 if (stop == 2 || atLower && speed[out] < 0 || atUpper && speed[out] > 0) speed[out] = 0;
                 var link = initialLinks.get(edge);
-                double input = speed[link.a()];
+                double input = speed[link.a()] * link.ratio();
                 boolean open = stop == 2 || atLower && input < 0 || atUpper && input > 0;
                 links.set(edge, open ? new TorsionSolver.Link(link.a(), out, 1, 0, 0, Double.POSITIVE_INFINITY, 0) : link);
                 if (open) twist[edge] = 0;

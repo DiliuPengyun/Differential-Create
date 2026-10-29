@@ -15,6 +15,7 @@ public final class GravityIntegrationSuite {
     @GameTestGenerator public static Collection<TestFunction> cases() {
         var result = new ArrayList<TestFunction>();
         String selected = System.getProperty("differentialcreate.gravity.select", ".*");
+        result.addAll(GravityAccelerationMeasurements.cases(selected));
         for (var method : KineticPhysicsTests.class.getDeclaredMethods()) {
             var test = method.getAnnotation(GameTest.class);
             if (test == null || java.util.Arrays.stream(selected.split(",")).noneMatch(method.getName()::matches)) continue;

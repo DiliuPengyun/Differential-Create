@@ -974,7 +974,8 @@ public final class PonderClientSmokeTests {
                     }
                     if (scene.getId().getPath().equals("portable_fluid_interface") || redstoneInterface
                         || java.util.Set.of("piston_pole", "mechanical_bearing", "stabilized_bearings", "bearing_modes",
-                            "rope_pulley", "rope_pulley_modes", "gantry_redstone", "gantry_cascaded").contains(scene.getId().getPath())) attachmentReplay(scene);
+                            "rope_pulley", "rope_pulley_modes", "rope_pulley_multi_rope", "elevator_pulley", "elevator_pulley_multi_rope",
+                            "clockwork_bearing", "gantry_redstone", "gantry_cascaded").contains(scene.getId().getPath())) attachmentReplay(scene);
                 } catch (Throwable failure) {
                     playbackFailures.add(scene.getId() + ": " + failure);
                     DifferentialCreate.LOGGER.error("DC_PONDER_NATIVE_FAIL: {}", scene.getId(), failure);

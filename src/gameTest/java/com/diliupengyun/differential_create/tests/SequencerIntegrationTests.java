@@ -403,8 +403,9 @@ public final class SequencerIntegrationTests {
                     h.assertTrue(java.util.Arrays.equals(first.result.speed(), repeated.result.speed()) && java.util.Arrays.equals(first.result.angle(), repeated.result.angle()), "discarded servo trials remain capture-order independent");
                     h.assertTrue(m().angle == angle && m().speed == speed && m().target == target && m().progress() == progress && m().index == index, "solver probes cannot move the virtual output or consume instructions");
                     h.getLevel().tickRateManager().setFrozen(true);
+                    h.getLevel().tickRateManager().tick();
                     try { seq.tick(); MachiningClock.advance(h.getLevel()); }
-                    finally { h.getLevel().tickRateManager().setFrozen(false); }
+                    finally { h.getLevel().tickRateManager().setFrozen(false); h.getLevel().tickRateManager().tick(); }
                     h.assertTrue(m().angle == angle && m().speed == speed && m().progress() == progress && m().index == index, "tick freeze suspends both mechanical output and instruction execution");
                 }
                 default -> { }

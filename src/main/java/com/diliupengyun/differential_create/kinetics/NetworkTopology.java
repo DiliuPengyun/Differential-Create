@@ -66,10 +66,10 @@ public final class NetworkTopology {
 	public static void flush() {
 		for (int pass = 0; pass < 32 && !pending.isEmpty(); pass++) {
 			Map<Level, Set<KineticBlockEntity>> changes = new LinkedHashMap<>(pending);
-			if (changes.keySet().stream().allMatch(level -> level.tickRateManager().isFrozen())) break;
+			if (changes.keySet().stream().allMatch(level -> !level.tickRateManager().runsNormally())) break;
 			pending.clear();
 			changes.forEach((level, seeds) -> {
-				if (!level.tickRateManager().isFrozen())
+				if (level.tickRateManager().runsNormally())
 					rebuild(level, seeds);
 				else
 					pending.computeIfAbsent(level, $ -> new LinkedHashSet<>()).addAll(seeds);

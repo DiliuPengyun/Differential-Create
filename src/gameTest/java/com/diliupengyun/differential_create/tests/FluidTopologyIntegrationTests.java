@@ -301,28 +301,31 @@ public final class FluidTopologyIntegrationTests {
         var firstDrive = n.drive(a); var secondDrive = n.drive(b); n.build();
         h.runAfterDelay(20, () -> {
             n.fill(a, Fluids.WATER, 14000); n.fill(b, Fluids.LAVA, 14000);
-            // Keep both receivers open when the bridge is installed, and use
-            // unequal real drives to force an observable cross-identity front.
-            n.speed(firstDrive, 16); n.speed(secondDrive, 32);
+            n.fill(x, Fluids.WATER, 1000);
+            // Total water stays below receiver capacity, so the native tank is
+            // occupied but never capacity-blocked before the unlike front.
+            n.speed(firstDrive, 8); n.speed(secondDrive, 32);
         }); n.watch();
-        double[] before = new double[2];
         for (int tick = 200; tick <= 700; tick += 100) h.runAfterDelay(tick, () -> {
-            int refill = Math.min(5000, 16000 - (int) n.amount(a, Fluids.WATER));
-            if (refill > 0) n.fill(a, Fluids.WATER, refill);
             int lavaRefill = Math.min(5000, 16000 - (int)n.amount(b,Fluids.LAVA));
             if(lavaRefill>0) n.fill(b,Fluids.LAVA,lavaRefill);
         });
-        h.runAfterDelay(400, () -> {
-            before[0] = n.amount(x, Fluids.WATER); before[1] = n.amount(z, Fluids.LAVA);
-            n.expect(n.volume(p(7, 4, 7)) > 0 && n.volume(p(9, 4, 9)) > 0, "both actual line ends are wet before the bridge is built");
+        boolean[] joined = {false};
+        h.onEachTick(() -> {
+            if (joined[0] || h.getTick() < 80 || n.volume(p(7, 4, 7)) <= 0 || n.volume(p(9, 4, 9)) <= 0) return;
+            n.expect(n.amount(x, Fluids.WATER) > 0 && n.amount(x, Fluids.WATER) < 16000,
+                "the water receiver is occupied but still has capacity when unlike supplies meet: " + n.amount(x, Fluids.WATER));
+            joined[0] = true;
             n.route(p(7, 4, 7), p(9, 4, 7), p(9, 4, 9)); n.build();
-            // Equal reference-pressure reservoirs no longer provide a level
-            // imbalance. Change one real drive to exercise cross-identity flow.
-            n.speed(firstDrive, 8);
+            // Isolate the original water supply using actual casing ports.
+            // Competing live pumps can otherwise keep the incompatible front
+            // away from the receiver, depending on the realised flow split.
+            // Lava must now displace the remaining water in this outlet leg.
+            n.edge(p(7, 4, 6), p(7, 4, 7), false);
         });
         boolean[] rejectedHead = {false}, crossed = {false};
         h.onEachTick(() -> {
-            if(h.getTick()<400) return;
+            if (!joined[0]) return;
             // A fast front can traverse a whole cell in one ordinary tick.
             // Require actual cross-line delivery, not a sampled mixed cell.
             for (var entry : Map.of(p(7, 4, 7), Fluids.LAVA, p(9, 4, 9), Fluids.WATER).entrySet()) {
@@ -338,6 +341,7 @@ public final class FluidTopologyIntegrationTests {
             }
         });
         h.runAfterDelay(1600, () -> {
+            n.expect(joined[0], "both real line ends became wet and were joined");
             n.expect(rejectedHead[0], "joining unlike supplies can put an incompatible real FIFO head against an occupied native receiver");
             n.expect(n.amount(x,Fluids.LAVA)==0 && n.amount(z,Fluids.WATER)==0,
                 "blocked receivers cannot silently replace their originally accepted fluid");

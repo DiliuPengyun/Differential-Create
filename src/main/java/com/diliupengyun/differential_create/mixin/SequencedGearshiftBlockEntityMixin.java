@@ -85,7 +85,7 @@ public abstract class SequencedGearshiftBlockEntityMixin implements ISequencerDy
         var self = (SequencedGearshiftBlockEntity) (Object) this;
         if (self.isVirtual()) return;
         ci.cancel();
-        if (self.getLevel().isClientSide || self.getLevel().tickRateManager().isFrozen()) return;
+        if (self.getLevel().isClientSide || !self.getLevel().tickRateManager().runsNormally()) return;
         Instruction instruction = getInstruction(currentInstruction);
         if (!(instruction instanceof InstructionAccessor a)) return;
         switch (a.differentialcreate$type()) {

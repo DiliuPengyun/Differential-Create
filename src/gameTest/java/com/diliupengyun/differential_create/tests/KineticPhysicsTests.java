@@ -71,8 +71,42 @@ public final class KineticPhysicsTests {
 	public static void gravityPulley(GameTestHelper helper) { forceImpactChunks(helper); ContraptionGravityTests.pulley(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_gantry", timeoutTicks = 100)
 	public static void gravityGantry(GameTestHelper helper) { forceImpactChunks(helper); ContraptionGravityTests.gantry(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_gantry_startup", timeoutTicks = 100)
+	public static void gravityGantryStartup(GameTestHelper helper) { forceImpactChunks(helper); GantryStartupTests.run(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "motion_thread_isolation", timeoutTicks = 20)
+	public static void motionThreadIsolation(GameTestHelper helper) { MotionIsolationTests.run(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "kinetic_tick_step", timeoutTicks = 40)
+	public static void kineticTickStep(GameTestHelper helper) { TickStepTests.run(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_orientation", timeoutTicks = 100)
+	public static void clockOrientation(GameTestHelper helper) { forceImpactChunks(helper); ClockOrientationTests.run(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_hour_first", timeoutTicks = 220)
+	public static void clockHourFirst(GameTestHelper helper) { forceImpactChunks(helper); ClockHandsTests.run(helper, 0); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_minute_first", timeoutTicks = 220)
+	public static void clockMinuteFirst(GameTestHelper helper) { forceImpactChunks(helper); ClockHandsTests.run(helper, 1); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_24_hour", timeoutTicks = 220)
+	public static void clock24Hour(GameTestHelper helper) { forceImpactChunks(helper); ClockHandsTests.run(helper, 2); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_elevator", timeoutTicks = 240)
 	public static void gravityElevator(GameTestHelper helper) { forceImpactChunks(helper); ContraptionGravityTests.elevator(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_pulley_collision", timeoutTicks = 240)
+	public static void gravityPulleyCollision(GameTestHelper helper) { forceImpactChunks(helper); GravityCollisionTests.run(helper, false); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_piston_collision", timeoutTicks = 240)
+	public static void gravityPistonCollision(GameTestHelper helper) { forceImpactChunks(helper); GravityCollisionTests.run(helper, true); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_pulley_collision_reverse", timeoutTicks = 240)
+	public static void gravityPulleyCollisionReverse(GameTestHelper helper) { forceImpactChunks(helper); GravityCollisionTests.run(helper, false, GravityCollisionTests.Check.REVERSE); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_piston_collision_reverse", timeoutTicks = 240)
+	public static void gravityPistonCollisionReverse(GameTestHelper helper) { forceImpactChunks(helper); GravityCollisionTests.run(helper, true, GravityCollisionTests.Check.REVERSE); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_pulley_collision_reload", timeoutTicks = 240)
+	public static void gravityPulleyCollisionReload(GameTestHelper helper) { forceImpactChunks(helper); GravityCollisionTests.run(helper, false, GravityCollisionTests.Check.RELOAD); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_piston_collision_reload", timeoutTicks = 240)
+	public static void gravityPistonCollisionReload(GameTestHelper helper) { forceImpactChunks(helper); GravityCollisionTests.run(helper, true, GravityCollisionTests.Check.RELOAD); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_pulley_collision_place", timeoutTicks = 240)
+	public static void gravityPulleyCollisionPlace(GameTestHelper helper) { forceImpactChunks(helper); GravityCollisionTests.run(helper, false, GravityCollisionTests.Check.PLACE); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_piston_collision_place", timeoutTicks = 240)
+	public static void gravityPistonCollisionPlace(GameTestHelper helper) { forceImpactChunks(helper); GravityCollisionTests.run(helper, true, GravityCollisionTests.Check.PLACE); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_pulley_retracted_release", timeoutTicks = 240)
+	public static void gravityPulleyRetractedRelease(GameTestHelper helper) { forceImpactChunks(helper); GravityCollisionTests.run(helper, false, GravityCollisionTests.Check.RETRACT); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_piston_retracted_release", timeoutTicks = 240)
+	public static void gravityPistonRetractedRelease(GameTestHelper helper) { forceImpactChunks(helper); GravityCollisionTests.run(helper, true, GravityCollisionTests.Check.RETRACT); }
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "boundary_snapshot", timeoutTicks = 100)
 	public static void boundarySnapshotReuse(GameTestHelper helper) { forceImpactChunks(helper); BoundarySnapshotTests.capture(helper); }

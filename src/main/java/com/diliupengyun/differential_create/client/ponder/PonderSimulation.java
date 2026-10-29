@@ -107,6 +107,19 @@ public final class PonderSimulation {
         return pulleys.computeIfAbsent(be, PonderPulleyMotion::new);
     }
     public boolean pulleysArrived() { return pulleys.values().stream().allMatch(PonderPulleyMotion::arrived); }
+    public double couplingRatio(KineticBlockEntity be) {
+        return be instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity elevator
+            ? pulley(elevator).couplingRatio() : 1;
+    }
+    public void followPulley(com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity follower,
+        com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity leader) { pulley(follower).follow(pulley(leader)); }
+    /** Move the diagram's frame without prescribing any mechanical travel. */
+    public void translatePresentation(WorldSectionElement section, net.minecraft.world.phys.Vec3 delta, boolean immediate) {
+        var binding = attachments.get(section);
+        if (binding != null && !binding.rotation()) attachments.put(section, new Attachment(binding.actuator(), false,
+            binding.axis(), binding.sign(), binding.angle(), binding.start().add(delta)));
+        section.setAnimatedOffset(section.getAnimatedOffset().add(delta), immediate);
+    }
     public boolean stabilizeBearing(PonderLevel world, BlockPos pos) {
         if (!(world.getBlockEntity(pos) instanceof KineticBlockEntity be)) return false;
         for (var entry : attachments.entrySet()) if (entry.getValue().rotation() && entry.getKey().isVisible()
@@ -284,6 +297,7 @@ public final class PonderSimulation {
             ownCells.put(cursor.immutable(), new com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell((int) Math.round(position.x), (int) Math.round(position.y), (int) Math.round(position.z)));
         }
         mounting.bindSection(section, be, rotation, axis, ownCells, 1);
+        if (be instanceof com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity pulley) pulley(pulley).sampleAngle();
     }
     double motionRatio(WorldSectionElement section, double fallback) {
         var binding = attachments.get(section);
@@ -324,6 +338,7 @@ public final class PonderSimulation {
             hands.computeIfAbsent(hand, key -> new PonderDeployerProcessing()).tick(hand);
         pulleys.entrySet().removeIf(entry -> entry.getKey().isRemoved() || world.getBlockEntity(entry.getKey().getBlockPos()) != entry.getKey());
         pulleys.values().forEach(PonderPulleyMotion::tick);
+        pulleys.values().forEach(PonderPulleyMotion::tickFollower);
         var disassembling = new java.util.ArrayList<WorldSectionElement>();
         attachments.forEach((section, binding) -> {
             if (!section.isVisible() || binding.actuator().isRemoved()) return;

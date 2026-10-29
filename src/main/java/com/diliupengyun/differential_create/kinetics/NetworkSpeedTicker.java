@@ -32,11 +32,11 @@ public final class NetworkSpeedTicker {
 		// Enumerate server-owned worlds rather than iterating that shared mutable map.
 		for (var level : event.getServer().getAllLevels()) {
 			if (!TorquePropagatorAccessor.differentialcreate$getNetworks().containsKey(level)) continue;
-			if (!level.tickRateManager().isFrozen()) MachiningClock.advance(level);
+			if (level.tickRateManager().runsNormally()) MachiningClock.advance(level);
 			advanced.add(level);
 			live.addAll(MachiningClock.networks(level));
 		}
-		for (Level level : FluidKinetics.levels()) if (!advanced.contains(level) && !level.tickRateManager().isFrozen())
+		for (Level level : FluidKinetics.levels()) if (!advanced.contains(level) && level.tickRateManager().runsNormally())
 			MachiningClock.advance(level);
 		ClientSpeedSync.prune(live);
 		ClientSpeedSync.flush();

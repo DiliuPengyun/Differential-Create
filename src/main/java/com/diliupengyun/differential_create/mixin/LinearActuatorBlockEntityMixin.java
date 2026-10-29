@@ -19,8 +19,26 @@ import org.objectweb.asm.Opcodes;
 public abstract class LinearActuatorBlockEntityMixin {
 	@Shadow protected boolean assembleNextTick;
 	@Shadow protected abstract void resetContraptionToOffset();
+	@Unique private boolean differentialcreate$colliding;
+	@Unique private net.minecraft.world.phys.Vec3 differentialcreate$collisionMotion;
+	@Inject(method = "collided", at = @At("HEAD"))
+	private void differentialcreate$beginCollision(CallbackInfo ci) {
+		var self = (LinearActuatorBlockEntity) (Object) this;
+		differentialcreate$colliding = self.getLevel() != null && !self.getLevel().isClientSide
+			&& com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(self);
+		if (differentialcreate$colliding) differentialcreate$collisionMotion = self.getMotionVector();
+	}
+	@Inject(method = "collided", at = @At("RETURN"))
+	private void differentialcreate$retainCollisionSupport(CallbackInfo ci) {
+		if (differentialcreate$colliding)
+			com.diliupengyun.differential_create.kinetics.LinearActuatorContact.collided(
+				(LinearActuatorBlockEntity) (Object) this, differentialcreate$collisionMotion);
+		differentialcreate$colliding = false;
+	}
 	@Inject(method = "tryDisassemble", at = @At("HEAD"), cancellable = true)
 	private void differentialcreate$waitForPhysicalFeed(CallbackInfo ci) {
+		// A terrain collision must execute the configured native placement policy.
+		if (differentialcreate$colliding) return;
 		var self = (LinearActuatorBlockEntity) (Object) this;
 		if (self.getLevel() == null || self.getLevel().isClientSide
 			|| !com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(self)) return;
@@ -35,6 +53,10 @@ public abstract class LinearActuatorBlockEntityMixin {
 				ci.cancel(); return;
 			}
 		}
+	}
+	@Inject(method = "tryDisassemble", at = @At("RETURN"))
+	private void differentialcreate$retainUnilateralEndpoint(CallbackInfo ci) {
+		com.diliupengyun.differential_create.kinetics.ContraptionMotion.releaseEndpointWait((LinearActuatorBlockEntity) (Object) this);
 	}
 	@Inject(method = "attach", at = @At("RETURN"))
 	private void differentialcreate$recoverPaidTravel(com.simibubi.create.content.contraptions.ControlledContraptionEntity root, CallbackInfo ci) {

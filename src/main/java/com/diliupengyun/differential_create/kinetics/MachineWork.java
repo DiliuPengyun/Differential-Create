@@ -35,7 +35,7 @@ public final class MachineWork {
 	}
 	public static boolean deferred(KineticBlockEntity be) {
 		return be.getLevel() != null && !be.getLevel().isClientSide && be.hasNetwork()
-			&& !be.getLevel().tickRateManager().isFrozen();
+			&& be.getLevel().tickRateManager().runsNormally();
 	}
 	public static ShaftWork of(KineticBlockEntity be) {
 		if (be instanceof com.simibubi.create.content.kinetics.saw.SawBlockEntity

@@ -18,7 +18,7 @@ public final class MachiningClock {
     }
     public static void advance(Level level) {
         com.diliupengyun.differential_create.kinetics.portable.PortableDocking.time(level);
-        if (level.tickRateManager().isFrozen()) return;
+        if (!level.tickRateManager().runsNormally()) return;
         NetworkTopology.flush();
         for (var network : networks(level)) ClutchPhysics.prepare(network);
         ContraptionMotion.begin(level);

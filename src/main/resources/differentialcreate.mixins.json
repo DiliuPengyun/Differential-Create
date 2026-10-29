@@ -122,6 +122,8 @@
     "SteamSceneMixin",
     "PistonSceneMixin",
     "PulleySceneMixin",
+    "MultiPulleySceneMixin",
+    "ElevatorSceneMixin",
     "GantrySceneMixin",
     "GantryCarriageRendererMixin",
     "HosePulleySceneMixin",

@@ -123,13 +123,13 @@ public final class DockingState {
     /** Client prediction only advances head animation between authoritative phase packets. */
     public void clientTick() {
         var level = owner.getLevel();
-        if (level == null || !level.isClientSide || level.tickRateManager().isFrozen()) return;
+        if (level == null || !level.isClientSide || !level.tickRateManager().runsNormally()) return;
         if (phase == Phase.PREPARING || phase == Phase.RETRACTING) ticks = Math.min(ANIMATION, ticks + 1);
     }
     public void tick() {
         var level = owner.getLevel();
         if (level == null || level.isClientSide && !com.diliupengyun.differential_create.kinetics.PhysicsPreview.enabled(level)
-            || level.tickRateManager().isFrozen() || lastTick == PortableDocking.time(level)) return;
+            || !level.tickRateManager().runsNormally() || lastTick == PortableDocking.time(level)) return;
         lastTick = PortableDocking.time(level);
         if (!managed) return;
         if ((context != null || preview != null) && (!live() || !loaded())) { release("missing"); return; }

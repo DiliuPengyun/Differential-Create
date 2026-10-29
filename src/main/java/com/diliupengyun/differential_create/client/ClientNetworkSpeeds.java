@@ -210,12 +210,12 @@ public final class ClientNetworkSpeeds {
 			levelNetworks.forEach((id, entry) -> {
 				if (!entry.hasState) return;
 				entry.rotors.forEach((pos, rotor) -> {
-					boolean frozen = level.tickRateManager().isFrozen();
+					boolean frozen = !level.tickRateManager().runsNormally();
 					rotor.animation.advance(renderTick, partialRenderTick, frozen);
 					if (rotor.bearing != null) rotor.bearing.advance(renderTick, partialRenderTick, frozen);
 				});
 				if (!entry.rotors.isEmpty()) entry.rotationDirty = true;
-				if (level.tickRateManager().isFrozen())
+				if (!level.tickRateManager().runsNormally())
 					entry.freeze(renderTick);
 				else
 					entry.advance(renderTick);

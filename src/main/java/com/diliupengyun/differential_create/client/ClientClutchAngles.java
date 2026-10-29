@@ -28,7 +28,7 @@ public final class ClientClutchAngles {
 		Minecraft minecraft = Minecraft.getInstance();
 		int tick = minecraft.levelRenderer.getTicks();
 		double renderTick = ClientKineticAngles.renderTick();
-		boolean frozen = clutch.getLevel().tickRateManager().isFrozen();
+		boolean frozen = !clutch.getLevel().tickRateManager().runsNormally();
 		KineticBlockEntity member = ClutchPhysics.output(clutch);
 		if (member == null && ClutchPhysics.signal(clutch) < 15) member = clutch;
 		RotationFrame connected = member == null ? null : ClientNetworkSpeeds.rotationOf(member);

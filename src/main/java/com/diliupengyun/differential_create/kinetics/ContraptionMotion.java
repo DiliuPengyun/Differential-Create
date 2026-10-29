@@ -20,9 +20,14 @@ import net.minecraft.nbt.CompoundTag;
 /** Actor sweeps and the next native controller tick consume the same integrated output travel. */
 public final class ContraptionMotion {
 	private static final double MOTION_EPSILON = 1e-8;
-	private static final Map<AbstractContraptionEntity, Output> outputs = new WeakHashMap<>();
-	private static boolean sampling;
-	private static boolean advancing;
+	// Integrated-server entities and their client replicas are loaded/removed on
+	// different threads. Neither their pending travel nor their sampling flags
+	// may share a mutable table with the other logical side.
+	private static final class Frame {
+		final Map<AbstractContraptionEntity, Output> outputs = new WeakHashMap<>();
+		boolean sampling, advancing;
+	}
+	private static final ThreadLocal<Frame> frames = ThreadLocal.withInitial(Frame::new);
 	private ContraptionMotion() {}
 	private static final class Output {
 		final ContraptionPhysics.Drive drive;
@@ -34,14 +39,19 @@ public final class ContraptionMotion {
 			this.drive = drive; origin = drive.root().getAnchorVec().add(.5, .5, .5);
 			double speed = NetworkDynamics.preciseSpeed(drive.shaft());
 			double angular = .3 * drive.ratio(), limit = Double.POSITIVE_INFINITY, distanceLimit = Double.POSITIVE_INFINITY;
+			double clockTarget = Double.NaN;
 			Vec3 linear = Vec3.ZERO;
 			if (drive.shaft() instanceof com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity bearing) {
 				double sequence = ((com.diliupengyun.differential_create.mixin.MechanicalBearingAccessor) bearing).differentialcreate$angleLimit();
 				if (sequence >= 0) limit = sequence;
 			} else if (drive.shaft() instanceof ClockworkBearingBlockEntity clock) {
-				double nativeSpeed = drive.ratio() == .5 ? clock.getHourArmSpeed() : clock.getMinuteArmSpeed();
-				angular = speed == 0 ? 0 : nativeSpeed / speed;
-				limit = Math.abs(nativeSpeed);
+				clockTarget = clockTargetDifference(clock, drive.ratio() == .5);
+				// The native getter caps one predicted tick of movement. It is not
+				// a geometric endpoint: gravity can accelerate within this tick.
+				// Keep the gear ratio fixed and stop only at the actual hand target.
+				double direction = speed == 0 ? drive.preferredSpeed() : speed;
+				angular = clockTarget == 0 ? 0 : Math.copySign(.3 * drive.ratio(), clockTarget) * Math.copySign(1, direction);
+				limit = Math.abs(clockTarget);
 			} else if (drive.shaft() instanceof LinearActuatorBlockEntity actuator) {
 				// Native collision-safe speed is an output brake, not a new wall every tick.
 				double sequence = ((LinearActuatorAccessor) actuator).differentialcreate$offsetLimit();
@@ -67,10 +77,19 @@ public final class ContraptionMotion {
 				double coefficient = -1.0 / 512;
 				linear = Vec3.atLowerCornerOf(facing.getNormal()).scale(coefficient);
 			}
-			angularRate = angular; angularLimit = limit; translation = linear;
+			// Create intentionally holds a new gantry for its first two entity ticks.
+			// Integration runs after the entity tick and supplies the next one: do
+			// not release gravitational work until that next tick can consume it.
+			if (awaitingGantryStart(drive.root())) linear = Vec3.ZERO;
+			angularRate = angular; angularLimit = Double.isNaN(clockTarget) ? limit : Double.POSITIVE_INFINITY; translation = linear;
 			double bound = drive.rotation() ? (angular != 0 ? limit / Math.abs(angular) : Double.POSITIVE_INFINITY)
 				: linear.length() > 0 ? distanceLimit / linear.length() : Double.POSITIVE_INFINITY;
 			double low = -bound, high = bound;
+			if (!Double.isNaN(clockTarget) && angular != 0) {
+				double targetTravel = clockTarget / angular;
+				low = targetTravel < 0 ? targetTravel : Double.NEGATIVE_INFINITY;
+				high = targetTravel > 0 ? targetTravel : Double.POSITIVE_INFINITY;
+			}
 			if (drive.shaft() instanceof LinearActuatorBlockEntity actuator) {
 				double coefficient = linear.dot(((LinearActuatorAccessor) actuator).differentialcreate$toMotionVector(1));
 				if (coefficient != 0) {
@@ -78,6 +97,9 @@ public final class ContraptionMotion {
 					double b = (((LinearActuatorAccessor) actuator).differentialcreate$extensionRange() - actuator.offset) / coefficient;
 					low = Math.max(low, Math.min(a, b)); high = Math.min(high, Math.max(a, b));
 				}
+				int contact = LinearActuatorContact.stop(drive.root(), linear);
+				if (contact < 0) low = Math.max(low, 0);
+				if (contact > 0) high = Math.min(high, 0);
 			}
 			lowerTravel = low; upperTravel = high;
 		}
@@ -97,47 +119,73 @@ public final class ContraptionMotion {
 	private static boolean stalled(AbstractContraptionEntity root) {
 		return root != null && (root.isStalled() || root.getContraption() != null && root.getContraption().stalled);
 	}
-	public static boolean active() { return advancing; }
+	private static float clockTargetDifference(ClockworkBearingBlockEntity clock, boolean hourHand) {
+		var access = (com.diliupengyun.differential_create.mixin.ClockworkBearingAccessor) clock;
+		int mode = access.differentialcreate$operationMode().getValue();
+		float target = hourHand ? mode == 1 ? access.differentialcreate$minuteTarget() : access.differentialcreate$hourTarget(mode == 2)
+			: mode == 1 ? access.differentialcreate$hourTarget(false) : access.differentialcreate$minuteTarget();
+		return net.createmod.catnip.math.AngleHelper.getShortestAngleDiff(
+			hourHand ? access.differentialcreate$hourAngle() : access.differentialcreate$minuteAngle(), target);
+	}
+	private static boolean awaitingGantryStart(AbstractContraptionEntity root) {
+		return root instanceof com.simibubi.create.content.contraptions.gantry.GantryContraptionEntity && root.tickCount < 2;
+	}
+	public static boolean active() { return frames.get().advancing; }
 	public record Geometry(Vec3 translation, double angularRate, double angle) {}
 	public static Geometry geometry(ContraptionPhysics.Drive drive) {
-		var output = outputs.get(drive.root());
-		if (output != null && (advancing || output.ready && !output.consumed))
+		var output = frames.get().outputs.get(drive.root());
+		if (output != null && (frames.get().advancing || output.ready && !output.consumed))
 			return new Geometry(output.translation, output.angularRate, output.angle);
-		boolean previous = sampling;
+		boolean previous = frames.get().sampling;
 		try {
-			sampling = true; output = new Output(drive);
+			frames.get().sampling = true; output = new Output(drive);
 			return new Geometry(output.translation, output.angularRate, 0);
-		} finally { sampling = previous; }
+		} finally { frames.get().sampling = previous; }
 	}
-	public static boolean samplingGeometry() { return sampling; }
+	public static boolean samplingGeometry() { return frames.get().sampling; }
 	public static boolean managed(AbstractContraptionEntity entity) {
-		return entity != null && (outputs.containsKey(entity) || entity.getContraption() != null && entity.getContraption().getActors().stream()
+		return entity != null && (frames.get().outputs.containsKey(entity) || entity.getContraption() != null && entity.getContraption().getActors().stream()
 			.anyMatch(a -> a.getRight() != null && (ContraptionActorWork.of(a.getRight()).motionManaged()
 				|| com.diliupengyun.differential_create.kinetics.portable.PortableDocking.isPortable(a.getRight()))));
 	}
+	/** A retained endpoint is one-sided support, not Create's wait for another RPM command. */
+	public static void releaseEndpointWait(LinearActuatorBlockEntity actuator) {
+		var access = (LinearActuatorAccessor) actuator;
+		if (!access.differentialcreate$waiting() || !actuator.running || actuator.getLevel() == null
+			|| actuator.getLevel().isClientSide || actuator.movedContraption == null || actuator.movedContraption.isRemoved()
+			|| actuator instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity
+			|| access.differentialcreate$offsetLimit() == 0) return;
+		if ((actuator.offset <= 0 || actuator.offset >= access.differentialcreate$extensionRange()) && ActorFeed.enabled(actuator)) {
+			access.differentialcreate$setWaiting(false);
+			actuator.sendData();
+		}
+	}
 	public static void begin(Level level) {
-		advancing = true; sampling = true;
+		frames.get().advancing = true; frames.get().sampling = true;
 		try {
-			outputs.keySet().removeIf(AbstractContraptionEntity::isRemoved);
+			frames.get().outputs.keySet().removeIf(AbstractContraptionEntity::isRemoved);
 			var captured = new java.util.HashSet<AbstractContraptionEntity>();
 			for (var network : MachiningClock.networks(level)) for (var shaft : network.members.keySet()) {
 				var drives = ContraptionPhysics.drives(shaft);
 				for (var drive : drives) {
 					if (drive.stabilized()) continue;
-					outputs.put(drive.root(), new Output(drive));
+					// Also release endpoint waits restored from saves made before this fix.
+					if (shaft instanceof LinearActuatorBlockEntity actuator) releaseEndpointWait(actuator);
+					LinearActuatorContact.refresh(drive.root());
+					frames.get().outputs.put(drive.root(), new Output(drive));
 					captured.add(drive.root());
 				}
 			}
-			outputs.entrySet().removeIf(e -> e.getKey().level() == level && e.getValue().drive != null && !captured.contains(e.getKey()));
-		} finally { sampling = false; }
+			frames.get().outputs.entrySet().removeIf(e -> e.getKey().level() == level && e.getValue().drive != null && !captured.contains(e.getKey()));
+		} finally { frames.get().sampling = false; }
 	}
 	public static void advance(ElasticKinetics.Trial trial) {
-		for (var output : outputs.values()) if (!output.ready && !output.drive.shaft().isRemoved())
+		for (var output : frames.get().outputs.values()) if (!output.ready && !output.drive.shaft().isRemoved())
 			output.advance(ActorFeed.enabled(output.drive.shaft()) ? trial.outputTravel(output.drive.shaft()) : trial.signedTravel(output.drive.shaft()));
 	}
 	/** Geometric limits belong to every structure, including ones without tools. */
 	public static void boundaries(java.util.List<ElasticKinetics.WorkEvent> limits) {
-		for (var output : outputs.values()) if (!output.ready && output.drive != null && !output.drive.shaft().isRemoved()) {
+		for (var output : frames.get().outputs.values()) if (!output.ready && output.drive != null && !output.drive.shaft().isRemoved()) {
 			double positive = output.upperTravel - output.signedTravel, negative = output.signedTravel - output.lowerTravel;
 			// Already supported directions are handled by the unilateral reaction.
 			positive = positive <= MOTION_EPSILON ? Double.POSITIVE_INFINITY : positive;
@@ -151,7 +199,8 @@ public final class ContraptionMotion {
 	public static int stop(com.simibubi.create.content.kinetics.base.KineticBlockEntity shaft) {
 		if (!ContraptionPhysics.manages(shaft)) return 0;
 		boolean lower = false, upper = false;
-		for (var output : outputs.values()) if (!output.ready && output.drive != null && output.drive.shaft() == shaft) {
+		for (var output : frames.get().outputs.values()) if (!output.ready && output.drive != null && output.drive.shaft() == shaft) {
+			if (awaitingGantryStart(output.drive.root())) return 2;
 			if (shaft instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity
 				&& output.translation.lengthSqr() == 0) return 2;
 			if (stalled(output.drive.root()) || shaft instanceof LinearActuatorBlockEntity actuator
@@ -188,35 +237,37 @@ public final class ContraptionMotion {
 		}
 	}
 	public static void end(Level level) {
-		for (var output : outputs.values()) if (output.drive != null && output.drive.shaft().getLevel() == level) output.ready = true;
-		advancing = false;
+		for (var output : frames.get().outputs.values()) if (output.drive != null && output.drive.shaft().getLevel() == level) output.ready = true;
+		frames.get().advancing = false;
 	}
-	public static void consume(AbstractContraptionEntity root) { var o = outputs.get(root); if (o != null) o.consumed = true; }
+	public static void consume(AbstractContraptionEntity root) { var o = frames.get().outputs.get(root); if (o != null) o.consumed = true; }
 	public static boolean restored(AbstractContraptionEntity root) {
-		var o = outputs.get(root); return o != null && o.drive == null && o.ready && !o.consumed;
+		var o = frames.get().outputs.get(root); return o != null && o.drive == null && o.ready && !o.consumed;
 	}
-	public static void forget(AbstractContraptionEntity root) { outputs.remove(root); }
-	public static void clear() { outputs.clear(); advancing = sampling = false; }
+	public static void forget(AbstractContraptionEntity root) { frames.get().outputs.remove(root); LinearActuatorContact.forget(root); }
+	public static void clear() { frames.get().outputs.clear(); LinearActuatorContact.clear(); frames.get().advancing = frames.get().sampling = false; }
 	public static void save(AbstractContraptionEntity root, CompoundTag tag) {
-		var o = outputs.get(root);
+		LinearActuatorContact.save(root, tag);
+		var o = frames.get().outputs.get(root);
 		if (o == null || !o.ready || o.consumed) return;
 		var pending = new CompoundTag(); var v = linear(root);
 		pending.putDouble("Angle", angular(root)); pending.putDouble("X", v.x); pending.putDouble("Y", v.y); pending.putDouble("Z", v.z);
 		tag.put("DCOutputMotion", pending);
 	}
 	public static void load(AbstractContraptionEntity root, CompoundTag tag) {
-		if (tag.contains("DCOutputMotion")) outputs.put(root, new Output(tag.getCompound("DCOutputMotion")));
+		LinearActuatorContact.load(root, tag);
+		if (tag.contains("DCOutputMotion")) frames.get().outputs.put(root, new Output(tag.getCompound("DCOutputMotion")));
 	}
 	/** Null keeps native motion only when no physical output has been captured. */
 	public static Double angular(AbstractContraptionEntity root) {
-		var o = outputs.get(root); return sampling || o == null || !o.ready || o.consumed ? null : stalled(root) ? 0 : o.angle;
+		var o = frames.get().outputs.get(root); return frames.get().sampling || o == null || !o.ready || o.consumed ? null : stalled(root) ? 0 : o.angle;
 	}
 	/** Snapshots are queued after integration, just before end() marks the output ready. */
 	public static Double syncAngular(AbstractContraptionEntity root) {
-		var o = outputs.get(root); return sampling || o == null || o.consumed ? null : stalled(root) ? 0 : o.angle;
+		var o = frames.get().outputs.get(root); return frames.get().sampling || o == null || o.consumed ? null : stalled(root) ? 0 : o.angle;
 	}
 	public static Vec3 linear(AbstractContraptionEntity root) {
-		var o = outputs.get(root); return sampling || o == null || !o.ready || o.consumed ? null
+		var o = frames.get().outputs.get(root); return frames.get().sampling || o == null || !o.ready || o.consumed ? null
 			: stalled(root) ? Vec3.ZERO : o.translation.scale(Math.max(o.lowerTravel, Math.min(o.upperTravel, o.signedTravel)));
 	}
 	/** Entity actors tick before their block controller consumes this tick's accepted displacement. */
@@ -236,8 +287,8 @@ public final class ContraptionMotion {
 		return angle == null || !drive.rotation() || drive.stabilized() ? current : rotate(current, angle, drive.axis());
 	}
 	public static ActorContactPath path(ContraptionPhysics.Drive drive, MovementContext context) {
-		var o = outputs.get(drive.root());
-		if (!advancing || o == null || o.ready || drive.root().isStalled() || drive.root().getContraption().stalled
+		var o = frames.get().outputs.get(drive.root());
+		if (!frames.get().advancing || o == null || o.ready || drive.root().isStalled() || drive.root().getContraption().stalled
 			|| drive.entity().isStalled() || drive.entity().getContraption().stalled
 			|| allowance(drive) <= MOTION_EPSILON) return null;
 		if (drive.shaft() instanceof LinearActuatorBlockEntity actuator && ((LinearActuatorAccessor) actuator).differentialcreate$waiting()) return null;
@@ -259,17 +310,17 @@ public final class ContraptionMotion {
 	}
 	public static ActorContactPath directionPath(ContraptionPhysics.Drive drive, Vec3 local) {
 		Vec3 direction = drive.entity().applyRotation(local, 1);
-		var output = outputs.get(drive.root());
-		if (output == null || !advancing || output.ready || !drive.rotation() || drive.stabilized())
+		var output = frames.get().outputs.get(drive.root());
+		if (output == null || !frames.get().advancing || output.ready || !drive.rotation() || drive.stabilized())
 			return ActorContactPath.linear(point(direction), point(Vec3.ZERO));
 		double axial = drive.axis().choose(direction.x, direction.y, direction.z);
 		Vec3 along = new Vec3(drive.axis() == Direction.Axis.X ? axial : 0, drive.axis() == Direction.Axis.Y ? axial : 0, drive.axis() == Direction.Axis.Z ? axial : 0);
 		Vec3 radial = direction.subtract(along);
 		return ActorContactPath.circular(point(along), point(radial), point(rotate(radial, 90, drive.axis())), output.angularRate * Math.PI / 180);
 	}
-	public static double travel(ContraptionPhysics.Drive drive) { return outputs.get(drive.root()).signedTravel; }
-	public static double angle(ContraptionPhysics.Drive drive) { return outputs.get(drive.root()).angle; }
-	public static double angularRate(ContraptionPhysics.Drive drive) { return outputs.get(drive.root()).angularRate; }
+	public static double travel(ContraptionPhysics.Drive drive) { return frames.get().outputs.get(drive.root()).signedTravel; }
+	public static double angle(ContraptionPhysics.Drive drive) { return frames.get().outputs.get(drive.root()).angle; }
+	public static double angularRate(ContraptionPhysics.Drive drive) { return frames.get().outputs.get(drive.root()).angularRate; }
 	public static double allowance(ContraptionPhysics.Drive drive) {
 		double speed = drive.speed();
 		double direction = Math.signum(speed == 0 ? drive.preferredSpeed() : speed);
@@ -277,8 +328,8 @@ public final class ContraptionMotion {
 	}
 	/** A blocked feed must refresh its tool load as soon as the shaft turns back inward. */
 	public static int wakeDirection(ContraptionPhysics.Drive drive) {
-		var output = outputs.get(drive.root());
-		if (!advancing || sampling || output == null || output.ready || stalled(drive.root()) || stalled(drive.entity())) return 0;
+		var output = frames.get().outputs.get(drive.root());
+		if (!frames.get().advancing || frames.get().sampling || output == null || output.ready || stalled(drive.root()) || stalled(drive.entity())) return 0;
 		if (drive.shaft() instanceof LinearActuatorBlockEntity actuator && ((LinearActuatorAccessor) actuator).differentialcreate$waiting()) return 0;
 		double speed = drive.speed();
 		double direction = Math.signum(speed == 0 ? drive.preferredSpeed() : speed);
@@ -287,7 +338,7 @@ public final class ContraptionMotion {
 			? (int) -direction : 0;
 	}
 	public static double allowance(ContraptionPhysics.Drive drive, double direction) {
-		var o = outputs.get(drive.root());
+		var o = frames.get().outputs.get(drive.root());
 		return direction > 0 ? o.upperTravel - o.signedTravel : o.signedTravel - o.lowerTravel;
 	}
 	public static Vec3 rotate(Vec3 p, double degrees, Direction.Axis axis) { return VecHelper.rotate(p, (float) degrees, axis); }

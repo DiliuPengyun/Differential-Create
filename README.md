@@ -49,6 +49,8 @@ Linux 使用 `./gradlew build runGameTestServer runVirtualAirServer`，首次运
 
 结构与动力定向回归可运行 `.\gradlew.bat runGravityServer`，默认在独立测试世界运行全部动力 GameTest；追加 `'-PgravitySelect=gravity.*,nested.*'` 可选择重力和嵌套结构用例。
 
+真实客户端搭建、运动截图和子帧复查使用 `.\gradlew.bat runStructureClientAudit`；追加 `'-PstructureClientSelect=bearing_.*_2_[012]'` 可选择嵌套轴承，`-PstructureClientHold=true` 可保留测试世界供手动检查。覆盖矩阵与思索视频命令见[结构视觉验证](docs/STRUCTURE_VISUAL_QA.md)。
+
 专项性能命令为 `.\gradlew.bat runFluidBenchmarkServer`，可用 `-PfluidPerfCase=loops` 选择多泵回路；类别和测量范围见 [性能测试](docs/FLUID_PERFORMANCE.md)。
 
 列车专项验证使用 `.\gradlew.bat runTrainCoverageServer runTrainClientSmoke`，测试目录均位于 `build/`；客户端检查自动退出。搭建、刻度和覆盖范围见[列车说明](docs/TRAINS.md)。

@@ -78,7 +78,9 @@ public final class ActorFeed {
             }
             double sign = Math.signum(feed.speed == 0 ? drive.preferredSpeed() : feed.speed);
             if (sign != 0 && drive.allowance(sign) <= MachineWork.EPSILON) {
-                feed.coupling = 0; feed.brake = TORQUE;
+                // The unilateral stop already supports outward forces. An added
+                // friction brake would also block gravity pulling away from it.
+                feed.coupling = 0;
             }
         }
     }

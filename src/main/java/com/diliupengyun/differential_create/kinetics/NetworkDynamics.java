@@ -139,7 +139,7 @@ public final class NetworkDynamics {
 
 	public static void physicalSpeed(KineticBlockEntity be, CallbackInfoReturnable<Float> cir) {
 		Level level = be.getLevel();
-		if (level == null || level.tickRateManager().isFrozen()) return;
+		if (level == null || !level.tickRateManager().runsNormally()) return;
 		if (level.isClientSide) {
 			if (level instanceof net.createmod.ponder.api.level.PonderLevel) {
 				double local = ElasticKinetics.state(be).physicalSpeed;

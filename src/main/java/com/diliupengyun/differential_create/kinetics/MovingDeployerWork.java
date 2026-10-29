@@ -317,7 +317,7 @@ public final class MovingDeployerWork {
         return before.add(proposed.subtract(before).scale(1 - resisted / momentum));
     }
     public void cartTick() {
-        if (context.world.isClientSide || context.world.tickRateManager().isFrozen()) return;
+        if (context.world.isClientSide || !context.world.tickRateManager().runsNormally()) return;
         var d = data(); long tick = context.world.getGameTime(); if (d.getLong("Tick") == tick) return; d.putLong("Tick", tick);
         double time = RotationMath.TICK_MINUTES;
         for (int i = 0; i < 128 && time > 1e-14; i++) {
