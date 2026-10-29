@@ -16,6 +16,11 @@ public final class MachiningClock {
         var registry = TorquePropagatorAccessor.differentialcreate$getNetworks().get(level);
         return registry == null ? List.of() : new ArrayList<>(registry.values());
     }
+    public static boolean needsPositionControl(KineticBlockEntity be) {
+        if (ContraptionPhysics.incomplete(be)) return false;
+        return ClockworkMotion.manages(be) ? !ClockworkMotion.outputs(be).isEmpty()
+            : be instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity && ActorFeed.enabled(be);
+    }
     public static void advance(Level level) {
         com.diliupengyun.differential_create.kinetics.portable.PortableDocking.time(level);
         if (!level.tickRateManager().runsNormally()) return;
@@ -63,6 +68,10 @@ public final class MachiningClock {
             // A change of direction must be observed before a tool can leave its contact.
             double horizon = motionBounded ? Math.min(remaining, RotationMath.TICK_MINUTES / 8) : remaining;
             if (SequencerKinetics.needsControl(networks)) horizon = Math.min(horizon, SequencerMotion.CONTROL_INTERVAL);
+            // An unassembled controller has no position plant and must not force
+            // every unrelated network in this level onto its control interval.
+            if (networks.stream().anyMatch(n -> n.members.keySet().stream().anyMatch(MachiningClock::needsPositionControl)))
+                horizon = Math.min(horizon, PositionServo.CONTROL_INTERVAL);
             if (fluids != null && !fluids.valid()) fluids = FluidKinetics.capture(level);
             // Loads and limits stay fixed while accepted steps locate the next physical event.
             // The solver restarts from this capture if a shortened event step needs
@@ -73,9 +82,10 @@ public final class MachiningClock {
             var limits = new ArrayList<ElasticKinetics.WorkEvent>(phases.size());
             for (var phase : phases)
                 limits.add(new ElasticKinetics.WorkEvent(phase.binding.shaft(),
-                    phase.binding.work().differentialcreate$boundary(phase.remaining), phase.wakeDirection, feedPhase(phase.binding), phase.binding.pair()));
+                        phase.binding.work().differentialcreate$boundary(phase.remaining), phase.wakeDirection, feedPhase(phase.binding), phase.binding.pair())
+                        .withDrive(structureDrive(phase.binding)));
             for (var dock : docks) if (dock.drive() instanceof ContraptionPhysics.Drive drive)
-                limits.add(new ElasticKinetics.WorkEvent(drive.shaft(), new ShaftWork.Boundary(Double.POSITIVE_INFINITY, dock.boundary(1), dock.boundary(-1)), 0, ActorFeed.enabled(drive.shaft())));
+                limits.add(new ElasticKinetics.WorkEvent(drive.shaft(), new ShaftWork.Boundary(Double.POSITIVE_INFINITY, dock.boundary(1), dock.boundary(-1)), 0, ActorFeed.enabled(drive.shaft())).withDrive(drive));
             ActorFeed.boundaries(networks, limits);
             ContraptionMotion.boundaries(limits);
             var snapshot = ElasticKinetics.snapshot(networks, hydraulicTorques);
@@ -86,8 +96,9 @@ public final class MachiningClock {
             double[] trialSignedTravel = new double[phases.size()];
             for (int i = 0; i < phases.size(); i++) {
                 var phase = phases.get(i);
-                double travel = phase.binding.pair() != null ? trial.crushingTravel(phase.binding.pair()) : feedPhase(phase.binding) ? trial.outputAbsTravel(phase.binding.shaft()) : trial.travel(phase.binding.shaft());
-                double signed = phase.binding.pair() != null ? trial.crushingSignedTravel(phase.binding.pair()) : feedPhase(phase.binding) ? trial.outputTravel(phase.binding.shaft()) : trial.signedTravel(phase.binding.shaft());
+                var drive = structureDrive(phase.binding);
+                double travel = phase.binding.pair() != null ? trial.crushingTravel(phase.binding.pair()) : drive != null ? trial.structureAbsTravel(drive) : trial.travel(phase.binding.shaft());
+                double signed = phase.binding.pair() != null ? trial.crushingSignedTravel(phase.binding.pair()) : drive != null ? trial.structureTravel(drive) : trial.signedTravel(phase.binding.shaft());
                 advances[i] = phase.wakeDirection != 0 ? 0 : Math.min(travel,
                     phase.binding.work().differentialcreate$phaseLimit(travel,
                         signed, phase.remaining));
@@ -99,7 +110,7 @@ public final class MachiningClock {
             ContraptionMotion.advance(trial);
             ContraptionMotion.resolveStops(networks);
             for (var dock : docks) if (dock.drive() instanceof ContraptionPhysics.Drive drive)
-                com.diliupengyun.differential_create.kinetics.portable.PortableDocking.observe(List.of(dock), ActorFeed.enabled(drive.shaft()) ? trial.outputTravel(drive.shaft()) : trial.signedTravel(drive.shaft()));
+                com.diliupengyun.differential_create.kinetics.portable.PortableDocking.observe(List.of(dock), trial.structureTravel(drive));
             for (var network : networks) ElasticKinetics.publishReference(network);
             trial.fracture();
             MachineWork.batch(() -> {
@@ -124,5 +135,9 @@ public final class MachiningClock {
     private static boolean feedPhase(MachineWork.Binding binding) {
         return binding.work() instanceof ContraptionActorWork actor && !MovingDeployerWork.isHand(actor.context())
             && ActorFeed.enabled(binding.shaft());
+    }
+    private static ContraptionPhysics.Drive structureDrive(MachineWork.Binding binding) {
+        return binding.work() instanceof ContraptionActorWork actor && !MovingDeployerWork.isHand(actor.context())
+            ? ContraptionPhysics.drive(actor.context()) : null;
     }
 }

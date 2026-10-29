@@ -116,7 +116,12 @@ public final class LoadFactorTests {
                     new RotorStatePayload.Rotor(source.getBlockPos().above(), 512, 90.5, 0, .125f, 44.875,
                         new RotorStatePayload.BearingPose(127, 153.65735487858774)),
                     new RotorStatePayload.Rotor(source.getBlockPos().below(), 8192, -180.25, 0, 1, 0,
-                        new RotorStatePayload.BearingPose(16384, -3600000180.25))));
+                        new RotorStatePayload.BearingPose(16384, -3600000180.25)),
+                    new RotorStatePayload.Rotor(source.getBlockPos().east(), 64, 20, 1, 0, 0, null, null, null,
+                        List.of(new RotorStatePayload.ClockPose(128, 3600000180.25, -12.125, .625),
+                            new RotorStatePayload.ClockPose(129, -179.875, 0, .25)), null),
+                    new RotorStatePayload.Rotor(source.getBlockPos().west(), -64, -20, 1, 0, 0, null, null,
+                        new RotorStatePayload.FeedPose(-.25f, .1, 1024, 5), List.of(), new RotorStatePayload.LinearPose(130, 127.999998, true))));
             var buf = new FriendlyByteBuf(Unpooled.buffer());
             try {
                 RotorStatePayload.STREAM_CODEC.encode(buf, payload);

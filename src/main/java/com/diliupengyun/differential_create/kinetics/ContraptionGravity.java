@@ -10,9 +10,15 @@ public final class ContraptionGravity {
     private ContraptionGravity() {}
     public static ShaftPotential capture(KineticBlockEntity shaft) {
         if (!ContraptionPhysics.manages(shaft)) return ShaftPotential.NONE;
+        return capture(ContraptionPhysics.drives(shaft));
+    }
+    public static ShaftPotential capture(ContraptionPhysics.Drive root) {
+        return capture(ContraptionPhysics.drives(root.shaft()).stream().filter(d -> d.root() == root.root()).toList());
+    }
+    private static ShaftPotential capture(java.util.List<ContraptionPhysics.Drive> drives) {
         double linear = 0;
         var terms = new ArrayList<ShaftPotential.Harmonic>();
-        for (var drive : ContraptionPhysics.drives(shaft)) {
+        for (var drive : drives) {
             // Native pauses hold the body in the world. Its support carries gravity;
             // the separately spinning input does not change this body's height.
             if (drive.root().isStalled() || drive.root().getContraption().stalled) continue;

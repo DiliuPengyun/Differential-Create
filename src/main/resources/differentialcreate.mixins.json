@@ -6,6 +6,7 @@
   "refmap": "differentialcreate.refmap.json",
   "mixins": [
     "ElevatorPulleyAccessor",
+    "ElevatorPositionControlMixin",
     "PonderLootTableMixin",
     "SteamBogeyMixin",
     "SteamBogeyRestoreMixin",
@@ -108,6 +109,9 @@
     "WindmillBearingBlockEntityMixin"
   ],
   "client": [
+    "ClockworkBearingRendererMixin",
+    "LinearActuatorRendererMixin",
+    "LinearActuatorOffsetRendererMixin",
     "HosePulleyAnimationMixin",
     "PonderWorldSectionAccessor",
     "PonderTankAccessor",

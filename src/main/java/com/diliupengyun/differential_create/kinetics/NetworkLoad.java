@@ -53,12 +53,24 @@ public final class NetworkLoad {
             var feed = ActorFeed.of(be); double ratio = ratios.getOrDefault(be, 1f);
             members.add(new LoadFactor.Member(ratio, feed.speed, 0, feed.brake + ContraptionPhysics.feedLoad(be)
                 + ContraptionPhysics.airDrag(be) * feed.speed * feed.speed, false));
-            loss += LoadFactor.contactLoss(feed.stiffness(), feed.damping(), feed.coupling, feed.twist, NetworkDynamics.preciseSpeed(be) - feed.speed);
+            loss += LoadFactor.contactLoss(feed.stiffness(), feed.damping(), feed.coupling, feed.twist,
+                feed.gear * NetworkDynamics.preciseSpeed(be) - feed.speed);
+        }
+        for (var be : network.members.keySet()) for (var output : ClockworkMotion.outputs(be)) {
+            var drive = output.drive(); var hand = output.hand(); var command = hand.command;
+            double ratio = ratios.getOrDefault(be, 1f) * command.gear();
+            double drag = ContraptionPhysics.drives(be).stream().filter(d -> d.root() == drive.root())
+                .mapToDouble(ContraptionPhysics.Drive::drag).sum();
+            members.add(new LoadFactor.Member(ratio, hand.speed, 0,
+                command.brake() + ContraptionPhysics.feedLoad(drive) + drag * hand.speed * hand.speed, false));
+            members.add(new LoadFactor.Member(ratio, hand.speed, ContraptionGravity.capture(drive).torque(0, 0), 0, false));
+            loss += LoadFactor.contactLoss(0, PositionServo.DAMPING, command.coupling(), 0,
+                command.gear() * NetworkDynamics.preciseSpeed(be) - hand.speed);
         }
         // Gravitational power opposes lifting and supplies descent. Keep it
         // separate from source torque so opposing terms cannot cancel before
         // the readout totals demand and supply; stored energy is not a source.
-        for (var be : network.members.keySet()) if (ContraptionPhysics.manages(be))
+        for (var be : network.members.keySet()) if (ContraptionPhysics.manages(be) && !ClockworkMotion.manages(be))
             members.add(new LoadFactor.Member(ratios.getOrDefault(be, 1f), ActorFeed.speed(be),
                 ContraptionGravity.capture(be).torque(0, 0), 0, false));
         return LoadFactor.calculate(members, loss);

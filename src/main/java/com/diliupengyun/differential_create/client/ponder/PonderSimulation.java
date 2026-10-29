@@ -296,7 +296,8 @@ public final class PonderSimulation {
             var position = point(cursor).subtract(origin);
             ownCells.put(cursor.immutable(), new com.diliupengyun.differential_create.kinetics.ContraptionGeometry.Cell((int) Math.round(position.x), (int) Math.round(position.y), (int) Math.round(position.z)));
         }
-        mounting.bindSection(section, be, rotation, axis, ownCells, 1);
+        mounting.bindSection(section, be, rotation, axis, ownCells,
+            be instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity ? 2 : 1);
         if (be instanceof com.simibubi.create.content.contraptions.pulley.PulleyBlockEntity pulley) pulley(pulley).sampleAngle();
     }
     double motionRatio(WorldSectionElement section, double fallback) {
@@ -304,7 +305,7 @@ public final class PonderSimulation {
         if (binding == null) return clockwork.motionRatio(section, fallback);
         if (binding.rotation()) return binding.sign();
         var motion = linearMotions.get(section);
-        return motion == null ? fallback : motion.direction();
+        return motion == null ? fallback : motion.direction() * (binding.actuator() instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity ? 2 : 1);
     }
     public void finish(PonderLevel world) {
         var machines = java.util.stream.StreamSupport.stream(world.getBlockEntities().spliterator(), false).toList();

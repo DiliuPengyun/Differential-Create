@@ -44,13 +44,22 @@ public abstract class ClockworkBearingMotionMixin {
 		ContraptionMotion.consume(((ClockworkBearingAccessor) this).differentialcreate$hour());
 		ContraptionMotion.consume(((ClockworkBearingAccessor) this).differentialcreate$minute());
 	}
+
+	@Inject(method = "tick", at = @At("HEAD"))
+	private void differentialcreate$retainReloadedTravel(CallbackInfo ci) {
+		var self = (ClockworkBearingBlockEntity) (Object) this;
+		// The input network can notify speed before either saved entity attaches.
+		// Once attached, that assembly flag must not skip the first physical step.
+		if (self.isRunning() && self.getLevel() != null && !self.getLevel().isClientSide
+			&& ContraptionMotion.managed(((ClockworkBearingAccessor) this).differentialcreate$hour())) assembleNextTick = false;
+	}
 	@Inject(method = "getHourArmSpeed", at = @At("RETURN"), cancellable = true)
 	private void differentialcreate$hourTravel(CallbackInfoReturnable<Float> cir) {
 		var self = (ClockworkBearingBlockEntity) (Object) this;
 		if (self.getLevel() == null || self.getLevel().isClientSide) return;
 		Double angle = ContraptionMotion.angular(((ClockworkBearingAccessor) this).differentialcreate$hour());
 		if (angle != null) cir.setReturnValue(angle.floatValue());
-		else if (!ContraptionMotion.samplingGeometry() && com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(self)) cir.setReturnValue(0f);
+		else if (!ContraptionMotion.samplingGeometry()) cir.setReturnValue(0f);
 	}
 	@Inject(method = "getMinuteArmSpeed", at = @At("RETURN"), cancellable = true)
 	private void differentialcreate$minuteTravel(CallbackInfoReturnable<Float> cir) {
@@ -58,6 +67,6 @@ public abstract class ClockworkBearingMotionMixin {
 		if (self.getLevel() == null || self.getLevel().isClientSide) return;
 		Double angle = ContraptionMotion.angular(((ClockworkBearingAccessor) this).differentialcreate$minute());
 		if (angle != null) cir.setReturnValue(angle.floatValue());
-		else if (!ContraptionMotion.samplingGeometry() && com.diliupengyun.differential_create.kinetics.ActorFeed.enabled(self)) cir.setReturnValue(0f);
+		else if (!ContraptionMotion.samplingGeometry()) cir.setReturnValue(0f);
 	}
 }

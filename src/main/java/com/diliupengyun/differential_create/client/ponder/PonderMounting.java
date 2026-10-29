@@ -51,6 +51,8 @@ public final class PonderMounting {
                 && entry.getKey().isVisible() && !be.isRemoved() && world.getBlockEntity(be.getBlockPos()) == be
                 && !entry.getKey().isEmpty()).toList();
             if (visible.isEmpty()) {
+                if (be instanceof com.simibubi.create.content.contraptions.bearing.ClockworkBearingBlockEntity clock)
+                    PonderSimulation.of(world).clockwork().active(clock, false);
                 physics.setAttachmentActive(be, false); applied.remove(be); continue;
             }
             var groups = new HashMap<Double, Set<ContraptionGeometry.Cell>>();
@@ -64,6 +66,11 @@ public final class PonderMounting {
             if (groups.values().stream().allMatch(Set::isEmpty)) { physics.setAttachmentActive(be, false); applied.remove(be); continue; }
             var example = visible.getFirst().getValue();
             var plan = new Plan(example.rotation(), example.axis(), groups);
+            if (be instanceof com.simibubi.create.content.contraptions.bearing.ClockworkBearingBlockEntity clock) {
+                physics.setAttachmentActive(be, false);
+                PonderSimulation.of(world).clockwork().mass(clock, plan.axis(), groups);
+                applied.put(be, plan); continue;
+            }
             if (!plan.equals(applied.get(be))) {
                 double inertia = 0, drag = 0;
                 for (var group : groups.entrySet()) {

@@ -17,6 +17,7 @@ final class PonderMechanismAudit {
     private int forwardSamples, reverseSamples;
     private double firstPlankTravel, previousPlankAngle, previousOffset = Double.NaN, direction;
     private final PonderLiftAudit lifts = new PonderLiftAudit();
+    private int clockSamples;
 
     void sample(PonderScene scene) {
         lifts.sample(scene);
@@ -27,7 +28,29 @@ final class PonderMechanismAudit {
             case "stabilized_bearings" -> nested(scene);
             case "rope_pulley", "rope_pulley_modes" -> pulley(scene);
             case "gantry_redstone" -> gantry(scene);
+            case "clockwork_bearing" -> clock(scene);
         }
+    }
+    private void clock(PonderScene scene) {
+        var world = scene.getWorld(); var sim = PonderSimulation.of(world);
+        world.getBlockEntities().forEach(be -> {
+            if (!(be instanceof com.simibubi.create.content.contraptions.bearing.ClockworkBearingBlockEntity clock)
+                || sim.clockwork().topAngle(clock, 1) == null) return;
+            var facing = clock.getBlockState().getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.FACING);
+            scene.forEachVisible(WorldSectionElement.class, section -> {
+                var access = (PonderWorldSectionAccessor) section;
+                int nearest = Integer.MAX_VALUE;
+                for (var pos : access.differentialcreate$selection()) if (!world.getBlockState(pos).isAir())
+                    nearest = Math.min(nearest, pos.subtract(clock.getBlockPos()).get(facing.getAxis()) * facing.getAxisDirection().getStep());
+                if (nearest <= 0 || nearest >= 3) return;
+                for (float partial : new float[]{0, .25f, .5f, .75f, 1}) {
+                    double angle = access.differentialcreate$previousRotation().lerp(section.getAnimatedRotation(), partial).get(facing.getAxis());
+                    require(Math.abs(clock.getInterpolatedAngle(partial - 1) - angle) < .001,
+                        "clock top and hour hand have different subframe phases: " + scene.getCurrentTime());
+                }
+                clockSamples++;
+            });
+        });
     }
     private void bearing(PonderScene scene, BlockPos bearingPos, BlockPos plank, boolean firstOnly) {
         var world = scene.getWorld();
@@ -135,6 +158,7 @@ final class PonderMechanismAudit {
             case "rope_pulley", "rope_pulley_modes" -> require(pulleySamples > 30 && reversals >= 2
                 && Math.abs(previousOffset - 2) < 1e-4, "pulley strokes did not finish with synchronized cargo: " + scene.getId());
             case "gantry_redstone" -> require(gantrySamples > 30, "gantry disassembly was not exercised");
+            case "clockwork_bearing" -> require(clockSamples > 30, "clock top and hand were not rendered together");
         }
     }
     private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }

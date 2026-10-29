@@ -42,9 +42,14 @@ public final class KineticGoggleInfo {
 	}
 
 	private static void appendDynamics(KineticBlockEntity kbe, List<Component> tooltip) {
-		tooltip.add(Component.translatable("gui.differentialcreate.goggles.inertia", fmt(InertiaRegistry.getInertia(kbe)
+		Double clockInertia = 0d;
+		if (ClockworkMotion.manages(kbe)) {
+			if (usesClientMirror(kbe)) clockInertia = ClientNetworkSpeeds.clockInertiaOf(kbe);
+			else clockInertia = ClockworkMotion.inertia(kbe);
+		}
+		tooltip.add(Component.translatable("gui.differentialcreate.goggles.inertia", clockInertia == null ? "—" : fmt(InertiaRegistry.getInertia(kbe)
 			+ (kbe instanceof ISequencerDynamics ? SequencerMotion.OUTPUT_INERTIA : 0)
-			+ (ActorFeed.of(kbe).active ? ActorFeed.of(kbe).inertia : 0))));
+			+ (ActorFeed.of(kbe).active ? ActorFeed.of(kbe).inertia : 0) + clockInertia)));
 		double strength = ElasticKinetics.strengthOf(kbe);
 		tooltip.add(Component.translatable("gui.differentialcreate.goggles.strength",
 			Double.isInfinite(strength) ? "∞" : fmt(strength)));
@@ -190,7 +195,12 @@ public final class KineticGoggleInfo {
 		double energy = 0.5 * InertiaRegistry.getInertia(kbe) * local * local;
 		if (kbe instanceof ISequencerDynamics servo) energy += .5 * SequencerMotion.OUTPUT_INERTIA * Math.pow(servo.differentialcreate$motion().speed, 2);
 		if (ActorFeed.of(kbe).active) energy += .5 * ActorFeed.of(kbe).inertia * Math.pow(ActorFeed.of(kbe).speed, 2);
-		tooltip.add(Component.translatable("gui.differentialcreate.goggles.local_energy", fmt(energy)));
+		Double clockEnergy = 0d;
+		if (ClockworkMotion.manages(kbe)) {
+			if (usesClientMirror(kbe)) clockEnergy = ClientNetworkSpeeds.clockEnergyOf(kbe);
+			else clockEnergy = ClockworkMotion.kineticEnergy(kbe);
+		}
+		tooltip.add(Component.translatable("gui.differentialcreate.goggles.local_energy", clockEnergy == null ? "—" : fmt(energy + clockEnergy)));
 		if (kbe instanceof ISequencerDynamics servo)
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.servo_brake_heat", fmt(servo.differentialcreate$motion().brakeHeat)));
 		Double networkEnergy = null;
@@ -254,6 +264,11 @@ public final class KineticGoggleInfo {
 		if (impact > 0 || MachineActivity.manages(kbe))
 			tooltip.add(Component.translatable("gui.differentialcreate.goggles.consumed_power",
 					fmt(MachineActivity.loadTorque(kbe, local) * Math.abs(local))));
+	}
+
+	private static boolean usesClientMirror(KineticBlockEntity be) {
+		return be.getLevel() != null && be.getLevel().isClientSide
+			&& !(be.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel);
 	}
 
 	private static void appendLoadFactor(KineticBlockEntity be, List<Component> tooltip) {

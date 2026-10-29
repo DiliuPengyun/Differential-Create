@@ -40,7 +40,7 @@ public abstract class MultiPulleySceneMixin {
             if (ticks > 0) {
                 strokeCount.set(strokeCount.get() + 1);
                 boolean rope = builder.getScene().getId().getPath().equals("rope_pulley_multi_rope");
-                extraTicks.set(!rope ? 35 : distance < 0 ? 200 : strokeCount.get() == 1 ? 90 : 35);
+                extraTicks.set(!rope ? 70 : distance < 0 ? 200 : strokeCount.get() == 1 ? 90 : 35);
             }
         }
         original.call(world, pos, distance, ticks);

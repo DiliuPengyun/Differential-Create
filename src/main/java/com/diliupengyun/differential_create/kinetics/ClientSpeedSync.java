@@ -118,9 +118,23 @@ public final class ClientSpeedSync {
 		RotorStatePayload.OutputPose output = be instanceof ISequencerDynamics servo
 			? new RotorStatePayload.OutputPose(servo.differentialcreate$motion().shaftAngle() * 360) : null;
 		var feed = ActorFeed.enabled(be) ? ActorFeed.of(be) : null;
+		var clock = ClockworkMotion.outputs(be).stream().map(o -> new RotorStatePayload.ClockPose(o.drive().root().getId(),
+			o.hand().angle * 360 * o.drive().ratio(), o.hand().speed, o.hand().inertia)).toList();
+		RotorStatePayload.LinearPose linear = null;
+		if (be instanceof com.simibubi.create.content.contraptions.piston.LinearActuatorBlockEntity actuator
+			&& actuator.running && actuator.movedContraption != null) {
+			var drive = ContraptionPhysics.drives(be).stream().filter(d -> !d.stabilized()).findFirst().orElse(null);
+			if (drive != null) {
+				var geometry = ContraptionMotion.geometry(drive);
+				double offset = actuator.offset + geometry.translation().scale(ContraptionMotion.pendingTravel(drive))
+					.dot(((com.diliupengyun.differential_create.mixin.LinearActuatorAccessor) actuator).differentialcreate$toMotionVector(1));
+				linear = new RotorStatePayload.LinearPose(actuator.movedContraption.getId(), offset,
+					be instanceof com.diliupengyun.differential_create.mixin.ElevatorPulleyAccessor elevator && elevator.differentialcreate$arrived());
+			}
+		}
 		return new RotorStatePayload.Rotor(be.getBlockPos(), (float) member.physicalSpeed,
 			member.angle * 360, (float) member.transmittedTorque, steamIntake, elasticEnergy, pose, output,
-			feed == null ? null : new RotorStatePayload.FeedPose((float) feed.speed, feed.inertia, feed.brake, feed.brakeHeat));
+			feed == null ? null : new RotorStatePayload.FeedPose((float) feed.speed, feed.inertia, feed.brake, feed.brakeHeat), clock, linear);
 	}
 
 	private static void queue(ServerPlayer player, CustomPacketPayload payload) {

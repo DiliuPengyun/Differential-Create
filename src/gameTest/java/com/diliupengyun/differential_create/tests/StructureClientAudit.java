@@ -44,6 +44,9 @@ public final class StructureClientAudit {
     private static final List<String> rows = new ArrayList<>(), failures = new ArrayList<>();
     private static final Map<Integer, Vec3[]> childFrames = new HashMap<>();
     private static final Set<String> checkedNested = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final Set<String> checkedClocks = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final Map<String, Integer> clockReadouts = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, Integer> clearViews = new java.util.concurrent.ConcurrentHashMap<>();
     private static boolean requested, initialized; private static volatile boolean done;
     private static int index = -1, age, frames, captured = -1;
     private static CompletableFuture<?> setup;
@@ -105,11 +108,51 @@ public final class StructureClientAudit {
             var current = view;
             if (current == null || current.tick == captured || current.tick < 5) return;
             boolean boundary = current.tick <= 25 || current.tick >= 174 || Math.abs(current.tick - 45) <= 4
-                || Math.abs(current.tick - 95) <= 4 || Math.abs(current.tick - 140) <= 4;
+                || Math.abs(current.tick - 95) <= 4 || Math.abs(current.tick - 140) <= 4
+                || Math.abs(current.tick - 30) <= 4 || Math.abs(current.tick - 100) <= 4;
             if (!boundary && current.tick % 10 != 0) return;
             captured = current.tick;
             var folder = directory.resolve(current.name); Files.createDirectories(folder);
             var replica = mc.level.getEntity(current.entity);
+            if (current.name.startsWith("clock_") && current.tick > 35
+                && mc.level.getBlockEntity(current.controller) instanceof ClockworkBearingBlockEntity clock) {
+                var access = (ClockworkBearingAccessor) clock;
+                var hour = access.differentialcreate$hour(); var minute = access.differentialcreate$minute();
+                if (hour != null && minute != null) {
+                    var first = com.diliupengyun.differential_create.client.ClientNetworkSpeeds.clockRotationOf(clock, hour.getId());
+                    var second = com.diliupengyun.differential_create.client.ClientNetworkSpeeds.clockRotationOf(clock, minute.getId());
+                    if (first != null && second != null) {
+                        if (!checkedClocks.contains(current.name)) {
+                            var pending = new ClockworkBearingBlockEntity(clock.getType(), clock.getBlockPos().above(100), clock.getBlockState());
+                            pending.setLevel(mc.level);
+                            PositionControlTests.assertGoggleValue(pending, false, "inertia", null);
+                            PositionControlTests.assertGoggleValue(pending, true, "local_energy", null);
+                        }
+                        checkedClocks.add(current.name);
+                        var inertia = com.diliupengyun.differential_create.client.ClientNetworkSpeeds.clockInertiaOf(clock);
+                        var energy = com.diliupengyun.differential_create.client.ClientNetworkSpeeds.clockEnergyOf(clock);
+                        double measured = ContraptionPhysics.drives(clock).stream().mapToDouble(ContraptionPhysics.Drive::inertia).sum();
+                        if (inertia == null || energy == null || inertia <= 0 || Math.abs(inertia - measured) > 1e-8)
+                            throw new AssertionError("Client clock readout omitted its mounted inertia: " + current.name);
+                        double inputInertia = InertiaRegistry.getInertia(clock), inputSpeed = NetworkDynamics.preciseSpeed(clock);
+                        PositionControlTests.assertGoggleValue(clock, false, "inertia", inputInertia + inertia);
+                        PositionControlTests.assertGoggleValue(clock, true, "local_energy", .5 * inputInertia * inputSpeed * inputSpeed + energy);
+                        clockReadouts.merge(current.name, energy > 1e-6 ? 1 : current.tick >= 140 ? 2 : 0, (a, b) -> a | b);
+                        var clockRows = folder.resolve("clock-readout.csv");
+                        if (!Files.exists(clockRows)) Files.writeString(clockRows, "tick,hand_inertia,hand_energy,input_rpm,local_energy\n");
+                        Files.writeString(clockRows, current.tick + "," + inertia + "," + energy + "," + inputSpeed + ","
+                            + (.5 * inputInertia * inputSpeed * inputSpeed + energy) + "\n", StandardOpenOption.APPEND);
+                        for (float partial : new float[]{0, .25f, .5f, .75f, 1}) {
+                            float expected = com.diliupengyun.differential_create.client.BearingAnimation.angleAt(first, partial);
+                            float minuteExpected = com.diliupengyun.differential_create.client.BearingAnimation.angleAt(second, partial);
+                            if (Math.abs(net.createmod.catnip.math.AngleHelper.getShortestAngleDiff(hour.getAngle(partial), expected)) > 1e-4
+                                || Math.abs(net.createmod.catnip.math.AngleHelper.getShortestAngleDiff(minute.getAngle(partial), minuteExpected)) > 1e-4
+                                || Math.abs(net.createmod.catnip.math.AngleHelper.getShortestAngleDiff(clock.getInterpolatedAngle(partial - 1), expected)) > 1e-4)
+                                throw new AssertionError("Clock hand or top plate differs from accepted subframe: " + current.name + " tick=" + current.tick);
+                        }
+                    }
+                }
+            }
             if (current.name.startsWith("bearing_") && current.name.matches("bearing_.*_2_[012]")
                 && current.tick > 30 && replica instanceof AbstractContraptionEntity parent) {
                 for (var passenger : parent.getPassengers()) if (passenger instanceof AbstractContraptionEntity child) {
@@ -145,8 +188,11 @@ public final class StructureClientAudit {
                 + (replica == null ? ",0,0,0,0,0,0" : "," + replica.getBoundingBox().minX + "," + replica.getBoundingBox().minY + "," + replica.getBoundingBox().minZ
                     + "," + replica.getBoundingBox().maxX + "," + replica.getBoundingBox().maxY + "," + replica.getBoundingBox().maxZ)
                 + "\n", StandardOpenOption.APPEND);
-            try (var image = Screenshot.takeScreenshot(mc.getMainRenderTarget())) {
-                image.writeToFile(folder.resolve(String.format(Locale.ROOT, "%03d.png", current.tick)));
+            if (mc.screen == null) {
+                try (var image = Screenshot.takeScreenshot(mc.getMainRenderTarget())) {
+                    image.writeToFile(folder.resolve(String.format(Locale.ROOT, "%03d.png", current.tick)));
+                }
+                clearViews.merge(current.name, current.tick < 95 ? 1 : current.tick >= 140 ? 2 : 0, (a, b) -> a | b);
             }
         } catch (Throwable failure) {
             DifferentialCreate.LOGGER.error("DC_STRUCTURE_CLIENT_FAIL", failure); done = true; mc.stop();
@@ -165,7 +211,7 @@ public final class StructureClientAudit {
             // Starting the motor during the first loading frame hides assembly.
             if (age < 0) return;
             if (age == 0) power(command);
-            if (spec.kind.equals("clock") && age == 30) world.setDayTime(12000);
+            if (spec.kind.equals("clock") && age == 30) world.setDayTime(12500);
             if (spec.kind.equals("clock") && age == 100) world.setDayTime(18000);
             if (age == 20) {
                 var be = world.getBlockEntity(base);
@@ -223,6 +269,10 @@ public final class StructureClientAudit {
                 if (!assembled || !moved) failures.add(spec.name + ": assembled=" + assembled + ", moved=" + moved);
                 if (spec.kind.equals("bearing") && spec.variant == 2 && !checkedNested.contains(spec.name))
                     failures.add(spec.name + ": no rendered stabilized child was checked");
+                if (spec.kind.equals("clock") && !checkedClocks.contains(spec.name)) failures.add(spec.name + ": both rendered hand frames were not checked");
+                if (spec.kind.equals("clock") && clockReadouts.getOrDefault(spec.name, 0) != 3)
+                    failures.add(spec.name + ": moving and parked independent hand energy readouts were not both checked");
+                if (clearViews.getOrDefault(spec.name, 0) != 3) failures.add(spec.name + ": unobstructed early and late screenshots are missing");
                 finish(); next();
             }
         } catch (Throwable failure) {
@@ -266,6 +316,10 @@ public final class StructureClientAudit {
                 put(anchor.relative(radial, 2), Blocks.RED_CONCRETE.defaultBlockState());
                 put(anchor.relative(radial, -2), Blocks.YELLOW_CONCRETE.defaultBlockState());
             } else put(anchor.relative(radial, 3), Blocks.RED_CONCRETE.defaultBlockState());
+            if (s.kind.equals("clock")) {
+                for (int n = 0; n < 3; n++) put(base.relative(s.facing, 2).relative(radial, n), Blocks.HONEY_BLOCK.defaultBlockState());
+                put(base.relative(s.facing, 2).relative(radial, 3), Blocks.BLUE_CONCRETE.defaultBlockState());
+            }
             if (s.variant == 2) {
                 put(anchor.relative(radial, 3), AllBlocks.MECHANICAL_BEARING.getDefaultState().setValue(BlockStateProperties.FACING, s.facing));
                 for (int n = 0; n < 3; n++) put(anchor.relative(radial, 3).relative(s.facing).relative(radial, n), Blocks.SLIME_BLOCK.defaultBlockState());

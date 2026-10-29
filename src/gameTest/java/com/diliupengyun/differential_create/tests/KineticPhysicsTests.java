@@ -85,6 +85,10 @@ public final class KineticPhysicsTests {
 	public static void clockMinuteFirst(GameTestHelper helper) { forceImpactChunks(helper); ClockHandsTests.run(helper, 1); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_24_hour", timeoutTicks = 220)
 	public static void clock24Hour(GameTestHelper helper) { forceImpactChunks(helper); ClockHandsTests.run(helper, 2); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_control", timeoutTicks = 320)
+	public static void clockContinuousControl(GameTestHelper helper) { forceImpactChunks(helper); PositionControlTests.clock(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "elevator_control", timeoutTicks = 400)
+	public static void elevatorContinuousControl(GameTestHelper helper) { forceImpactChunks(helper); PositionControlTests.elevator(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_elevator", timeoutTicks = 240)
 	public static void gravityElevator(GameTestHelper helper) { forceImpactChunks(helper); ContraptionGravityTests.elevator(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_pulley_collision", timeoutTicks = 240)

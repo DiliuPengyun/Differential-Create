@@ -67,6 +67,7 @@ public final class ElasticKinetics {
             total += .5 * InertiaRegistry.getInertia(be) * speed * speed;
             if (be instanceof ISequencerDynamics servo) total += .5 * SequencerMotion.OUTPUT_INERTIA * Math.pow(servo.differentialcreate$motion().speed, 2);
             if (ActorFeed.enabled(be)) total += .5 * ActorFeed.of(be).inertia * Math.pow(ActorFeed.of(be).speed, 2);
+            total += ClockworkMotion.kineticEnergy(be);
         }
         return total;
     }
@@ -182,10 +183,15 @@ public final class ElasticKinetics {
         double travel(KineticBlockEntity be);
         double signedTravel(KineticBlockEntity be);
     }
-    public record WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary, int enteringDirection, boolean output, CrushingKinetics.Pair pair) {
+    public record WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary, int enteringDirection, boolean output, CrushingKinetics.Pair pair, ClockworkMotion.Hand hand) {
+        public WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary, int enteringDirection, boolean output, CrushingKinetics.Pair pair) { this(shaft,boundary,enteringDirection,output,pair,null); }
         public WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary, int enteringDirection, boolean output) { this(shaft,boundary,enteringDirection,output,null); }
         public WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary, int enteringDirection) { this(shaft, boundary, enteringDirection, false); }
         public WorkEvent(KineticBlockEntity shaft, ShaftWork.Boundary boundary) { this(shaft, boundary, 0, false); }
+        public WorkEvent withDrive(ContraptionPhysics.Drive drive) {
+            return drive != null && ClockworkMotion.manages(drive.shaft())
+                ? new WorkEvent(shaft, boundary, enteringDirection, output, pair, ClockworkMotion.hand(drive)) : this;
+        }
     }
     public static final class Trial implements Travel {
         public final List<KineticBlockEntity> members;
@@ -193,13 +199,15 @@ public final class ElasticKinetics {
         public final TorsionSolver.Result result;
         private final Map<KineticBlockEntity, Integer> indices;
         private final Map<KineticBlockEntity, Integer> outputs;
+        private final Map<ClockworkMotion.Hand, Integer> hands;
         private final Map<KineticBlockEntity, Double> brakes;
         private final Map<CrushingKinetics.Pair, Integer> crushing;
         private final List<KineticNetwork> networks;
         Trial(List<KineticBlockEntity> members, List<Connection> connections, Map<KineticBlockEntity, Integer> indices,
               TorsionSolver.Result result, Map<KineticBlockEntity, Integer> outputs, Map<KineticBlockEntity, Double> brakes,
-              Map<CrushingKinetics.Pair, Integer> crushing, List<KineticNetwork> networks) {
+              Map<CrushingKinetics.Pair, Integer> crushing, List<KineticNetwork> networks, Map<ClockworkMotion.Hand, Integer> hands) {
             this.members = members; this.connections = connections; this.indices = indices; this.result = result; this.outputs = outputs; this.brakes = brakes; this.crushing = crushing; this.networks = networks;
+            this.hands = hands;
         }
         /**
          * A network made only of inertialess transmission members has no physical
@@ -302,6 +310,11 @@ public final class ElasticKinetics {
                 }
                 entry.getKey().setChanged();
             }
+            hands.forEach((hand, at) -> {
+                hand.speed = applied.speed()[at]; hand.angle += applied.angle()[at];
+                hand.brakeHeat += hand.command.brake() * applied.travel()[at];
+            });
+            for (var be : members) if (ClockworkMotion.manages(be)) be.setChanged();
             for (int e = 0; e < connections.size(); e++) {
                 Connection edge = connections.get(e);
                 edge.twist = applied.twist()[e]; edge.torque = applied.torque()[e]; edge.slipping = applied.slipping()[e];
@@ -323,6 +336,18 @@ public final class ElasticKinetics {
         public double outputAbsTravel(KineticBlockEntity be) {
             Integer i = outputs.get(be);
             return i == null ? 0 : result.travel()[i] / RotationMath.TICK_MINUTES;
+        }
+        public double structureTravel(ContraptionPhysics.Drive drive) {
+            if (!ClockworkMotion.manages(drive.shaft())) return ActorFeed.enabled(drive.shaft())
+                ? outputTravel(drive.shaft()) : signedTravel(drive.shaft());
+            Integer at = hands.get(ClockworkMotion.hand(drive));
+            return at == null ? 0 : result.angle()[at] / RotationMath.TICK_MINUTES;
+        }
+        public double structureAbsTravel(ContraptionPhysics.Drive drive) {
+            if (!ClockworkMotion.manages(drive.shaft())) return ActorFeed.enabled(drive.shaft())
+                ? outputAbsTravel(drive.shaft()) : travel(drive.shaft());
+            Integer at = hands.get(ClockworkMotion.hand(drive));
+            return at == null ? 0 : result.travel()[at] / RotationMath.TICK_MINUTES;
         }
         public void fracture() {
             if (result.broken() < 0 || result.broken() >= connections.size()) return;
@@ -352,6 +377,7 @@ public final class ElasticKinetics {
         private final List<Connection> connections;
         private final Map<KineticBlockEntity, Integer> indices;
         private final Map<KineticBlockEntity, Integer> outputs;
+        private final Map<ClockworkMotion.Hand, Integer> hands;
         private final Map<KineticBlockEntity, Double> brakes;
         private final TorsionSolver.Prepared solver;
         private final double[] sourceDrives;
@@ -360,10 +386,11 @@ public final class ElasticKinetics {
         private Snapshot(List<KineticBlockEntity> members, List<Connection> connections,
                          Map<KineticBlockEntity, Integer> indices, Map<KineticBlockEntity, Integer> outputs, List<TorsionSolver.Body> bodies,
                          List<TorsionSolver.Link> links, double[] speeds, double[] twists, double[] sourceDrives,
-                         Map<CrushingKinetics.Pair, Integer> crushing, List<KineticNetwork> networks) {
+                         Map<CrushingKinetics.Pair, Integer> crushing, List<KineticNetwork> networks, Map<ClockworkMotion.Hand, Integer> hands) {
             this.members = List.copyOf(members); this.connections = List.copyOf(connections);
             this.indices = Map.copyOf(indices);
             this.outputs = Map.copyOf(outputs);
+            this.hands = Map.copyOf(hands);
             var ratings = new HashMap<KineticBlockEntity, Double>();
             outputs.forEach((be, at) -> ratings.put(be, bodies.get(at).load()));
             this.brakes = Map.copyOf(ratings);
@@ -382,7 +409,7 @@ public final class ElasticKinetics {
             solver.updateDrives(drives);
         }
         public Trial sample(double minutes) {
-            return new Trial(members, connections, indices, solver.advance(minutes, PhysicsTuning.TORSION_MAX_STEP), outputs, brakes, crushing, networks);
+            return new Trial(members, connections, indices, solver.advance(minutes, PhysicsTuning.TORSION_MAX_STEP), outputs, brakes, crushing, networks, hands);
         }
         public Travel motion(double minutes) {
             return new MotionTrial(indices, solver.motion(minutes, PhysicsTuning.TORSION_MAX_STEP));
@@ -396,7 +423,7 @@ public final class ElasticKinetics {
                         event.boundary().travel() * RotationMath.TICK_MINUTES));
                     continue;
                 }
-                Integer shaft = (event.output() ? outputs : indices).get(event.shaft());
+                Integer shaft = event.hand() != null ? hands.get(event.hand()) : (event.output() ? outputs : indices).get(event.shaft());
                 if (shaft == null) continue;
                 var boundary = event.boundary();
                 limits.add(new TorsionSolver.EventLimit(shaft, boundary.travel() * RotationMath.TICK_MINUTES,
@@ -404,7 +431,7 @@ public final class ElasticKinetics {
                     event.enteringDirection()));
             }
             var result = solver.advanceToEvent(minutes, PhysicsTuning.TORSION_MAX_STEP, limits);
-            return new Trial(members, connections, indices, result, outputs, brakes, crushing, networks);
+            return new Trial(members, connections, indices, result, outputs, brakes, crushing, networks, hands);
         }
     }
     public static Trial sample(List<KineticNetwork> networks, double minutes) {
@@ -441,9 +468,11 @@ public final class ElasticKinetics {
         List<TorsionSolver.Body> bodies = new ArrayList<>();
         var servos = members.stream().filter(ISequencerDynamics.class::isInstance).toList();
         var feeds = members.stream().filter(ActorFeed::enabled).toList();
+        var clockOutputs = members.stream().flatMap(be -> ClockworkMotion.outputs(be).stream()).toList();
         feeds.forEach(ActorFeed::prepare);
         var outputs = new HashMap<KineticBlockEntity, Integer>();
-        double[] speeds = new double[members.size() + servos.size() + feeds.size()], sourceDrives = new double[speeds.length];
+        var hands = new HashMap<ClockworkMotion.Hand, Integer>();
+        double[] speeds = new double[members.size() + servos.size() + feeds.size() + clockOutputs.size()], sourceDrives = new double[speeds.length];
         for (int i = 0; i < members.size(); i++) {
             var be = members.get(i);
             indices.put(be, i);
@@ -452,7 +481,7 @@ public final class ElasticKinetics {
             double load = be instanceof IPumpDynamics pump ? Math.abs(pump.differentialcreate$torque())
                 : ContraptionPhysics.manages(be) ? ContraptionPhysics.workTorque(be) : MachineActivity.impact(be);
             double drag = MachineActivity.quadraticDrag(be);
-            if (ActorFeed.enabled(be)) drag = 0;
+            if (ActorFeed.enabled(be) || ClockworkMotion.manages(be)) drag = 0;
             if (be instanceof EncasedFanBlockEntity) load = 0;
             if (be instanceof com.simibubi.create.content.kinetics.crusher.CrushingWheelBlockEntity) load = 0;
             sourceDrives[i] = be.isSource() ? curve.stallTorque() : 0;
@@ -461,7 +490,7 @@ public final class ElasticKinetics {
                 be.isSource() ? curve.damping() : 0, load, drag,
                 be.isSource() ? curve.powerLimit() : Double.POSITIVE_INFINITY,
                 be.isSource() ? curve.governorSpeed() : Double.POSITIVE_INFINITY, curve.governorRange())
-                .withPotential(ActorFeed.enabled(be) ? ShaftPotential.NONE : ContraptionGravity.capture(be))
+                .withPotential(ActorFeed.enabled(be) || ClockworkMotion.manages(be) ? ShaftPotential.NONE : ContraptionGravity.capture(be))
                 .withStop(ActorFeed.enabled(be) ? 0 : ContraptionMotion.stop(be)));
         }
         for (var be : servos) {
@@ -480,6 +509,17 @@ public final class ElasticKinetics {
                 .withPotential(ContraptionGravity.capture(be)).withStop(ContraptionMotion.stop(be))
                 .withSpeedLimit(ContraptionMotion.speedLimit(be)));
         }
+        for (var output : clockOutputs) {
+            var drive = output.drive(); var hand = output.hand();
+            int at = bodies.size(); hands.put(hand, at); speeds[at] = hand.speed;
+            var gravity = ContraptionGravity.capture(drive);
+            double load = ContraptionPhysics.feedLoad(drive);
+            double drag = ContraptionPhysics.drives(drive.shaft()).stream().filter(d -> d.root() == drive.root())
+                .mapToDouble(ContraptionPhysics.Drive::drag).sum();
+            ClockworkMotion.prepare(output, gravity, load);
+            bodies.add(new TorsionSolver.Body(hand.inertia, 0, 0, hand.command.brake() + load, drag)
+                .withPotential(gravity).withStop(drive.root().isStalled() || drive.root().getContraption().stalled ? 2 : 0));
+        }
         connections.removeIf(edge -> !indices.containsKey(edge.a) || !indices.containsKey(edge.b));
         List<TorsionSolver.Link> links = new ArrayList<>();
         double[] twists = new double[connections.size()];
@@ -489,7 +529,7 @@ public final class ElasticKinetics {
                 SequencerKinetics.portIndex(edge.b, edge.a, indices, outputs), edge.ratio,
                 edge.stiffness(), edge.damping(), edge.strength(), edge.friction()));
         }
-        double[] allTwists = java.util.Arrays.copyOf(twists, twists.length + servos.size() + feeds.size());
+        double[] allTwists = java.util.Arrays.copyOf(twists, twists.length + servos.size() + feeds.size() + clockOutputs.size());
         for (var be : servos) {
             var command = ((ISequencerDynamics) be).differentialcreate$motion().command;
             links.add(new TorsionSolver.Link(indices.get(be), outputs.get(be), command.gear(),
@@ -498,9 +538,14 @@ public final class ElasticKinetics {
         for (var be : feeds) {
             var feed = ActorFeed.of(be);
             allTwists[links.size()] = feed.twist;
-            links.add(new TorsionSolver.Link(indices.get(be), outputs.get(be), 1,
+            links.add(new TorsionSolver.Link(indices.get(be), outputs.get(be), feed.gear,
                 feed.stiffness(), feed.damping(),
                 Double.POSITIVE_INFINITY, feed.coupling));
+        }
+        for (var output : clockOutputs) {
+            var command = output.hand().command;
+            links.add(new TorsionSolver.Link(indices.get(output.drive().shaft()), hands.get(output.hand()), command.gear(),
+                0, PositionServo.DAMPING, Double.POSITIVE_INFINITY, command.coupling()));
         }
         var crushing = new HashMap<CrushingKinetics.Pair, Integer>();
         for (var pair : CrushingKinetics.pairs(networks)) if (pair.active() && indices.containsKey(pair.a()) && indices.containsKey(pair.b())) {
@@ -509,6 +554,6 @@ public final class ElasticKinetics {
         }
         allTwists = java.util.Arrays.copyOf(allTwists, links.size());
         return new Snapshot(members, connections, indices, outputs, bodies, links, speeds, allTwists, sourceDrives, crushing,
-            new ArrayList<>(networks));
+            new ArrayList<>(networks), hands);
     }
 }

@@ -18,10 +18,19 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
     LoadFactor.Reading loadFactor, List<Rotor> rotors)
     implements CustomPacketPayload {
     public record BearingPose(int entityId, double angle) {}
+    /** Angle is the rendered hand angle; speed and inertia use its fixed input-equivalent coordinate. */
+    public record ClockPose(int entityId, double angle, double speed, double inertia) {
+        public double kineticEnergy() { return .5 * inertia * speed * speed; }
+    }
     public record OutputPose(double angle) {}
     public record FeedPose(float speed, double inertia, double brake, double heat) {}
+    public record LinearPose(int entityId, double offset, boolean arrived) {}
     public record Rotor(BlockPos pos, float speed, double angle, float torque, float steamIntake, double elasticEnergy,
-        BearingPose bearing, OutputPose output, FeedPose feed) {
+        BearingPose bearing, OutputPose output, FeedPose feed, List<ClockPose> clock, LinearPose linear) {
+        public Rotor(BlockPos pos, float speed, double angle, float torque, float steamIntake, double elasticEnergy,
+                     BearingPose bearing, OutputPose output, FeedPose feed) {
+            this(pos, speed, angle, torque, steamIntake, elasticEnergy, bearing, output, feed, List.of(), null);
+        }
         public Rotor(BlockPos pos, float speed, double angle, float torque, float steamIntake, double elasticEnergy, BearingPose bearing, OutputPose output) {
             this(pos, speed, angle, torque, steamIntake, elasticEnergy, bearing, output, null);
         }
@@ -48,6 +57,13 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
             if (r.output != null) buf.writeDouble(r.output.angle);
             buf.writeBoolean(r.feed != null);
             if (r.feed != null) { buf.writeFloat(r.feed.speed); buf.writeDouble(r.feed.inertia); buf.writeDouble(r.feed.brake); buf.writeDouble(r.feed.heat); }
+            buf.writeVarInt(r.clock.size());
+            for (var hand : r.clock) {
+                buf.writeVarInt(hand.entityId()); buf.writeDouble(hand.angle());
+                buf.writeDouble(hand.speed()); buf.writeDouble(hand.inertia());
+            }
+            buf.writeBoolean(r.linear != null);
+            if (r.linear != null) { buf.writeVarInt(r.linear.entityId()); buf.writeDouble(r.linear.offset()); buf.writeBoolean(r.linear.arrived()); }
         }
     }, buf -> {
         var dimension = buf.readResourceLocation(); long id = buf.readVarLong(); double energy = buf.readDouble();
@@ -68,7 +84,19 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
             FeedPose feed = buf.readBoolean() ? new FeedPose(buf.readFloat(), buf.readDouble(), buf.readDouble(), buf.readDouble()) : null;
             if (feed != null && (!Float.isFinite(feed.speed) || !Double.isFinite(feed.inertia) || !Double.isFinite(feed.brake) || !Double.isFinite(feed.heat)))
                 throw new IllegalArgumentException("Invalid feed rotor state");
-            rotors.add(new Rotor(pos, speed, angle, torque, steamIntake, localEnergy, bearing, output, feed));
+            int hands = buf.readVarInt();
+            if (hands < 0 || hands > 2) throw new IllegalArgumentException("Invalid clock hand count");
+            var clock = new ArrayList<ClockPose>(hands);
+            for (int h = 0; h < hands; h++) {
+                int handId = buf.readVarInt(); double handAngle = buf.readDouble();
+                double handSpeed = buf.readDouble(), handInertia = buf.readDouble();
+                if (handId < 0 || !Double.isFinite(handAngle) || !Double.isFinite(handSpeed)
+                    || !Double.isFinite(handInertia) || handInertia < 0) throw new IllegalArgumentException("Invalid clock pose");
+                clock.add(new ClockPose(handId, handAngle, handSpeed, handInertia));
+            }
+            LinearPose linear = buf.readBoolean() ? new LinearPose(buf.readVarInt(), buf.readDouble(), buf.readBoolean()) : null;
+            if (linear != null && (linear.entityId() < 0 || !Double.isFinite(linear.offset()))) throw new IllegalArgumentException("Invalid linear pose");
+            rotors.add(new Rotor(pos, speed, angle, torque, steamIntake, localEnergy, bearing, output, feed, List.copyOf(clock), linear));
         }
         return new RotorStatePayload(dimension, id, energy, elasticEnergy, load, rotors);
     });

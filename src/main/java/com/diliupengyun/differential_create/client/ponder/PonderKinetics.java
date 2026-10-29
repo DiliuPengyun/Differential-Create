@@ -397,8 +397,9 @@ public final class PonderKinetics {
         var bodies = new ArrayList<TorsionSolver.Body>();
         var attachments = members.stream().filter(r -> r.attachment != null && r.attachment.active).toList();
         var servos = members.stream().filter(r -> r.be instanceof ISequencerDynamics).toList();
+        var clocks = PonderSimulation.of(level).clockwork().outputs().stream().filter(o -> indices.containsKey(o.bearing())).toList();
         var outputs = new HashMap<KineticBlockEntity, Integer>();
-        double[] speed = new double[members.size() + servos.size() + attachments.size()], angles = new double[speed.length];
+        double[] speed = new double[members.size() + servos.size() + attachments.size() + clocks.size()], angles = new double[speed.length];
         for (int i = 0; i < members.size(); i++) {
             Rotor rotor = members.get(i); var be = rotor.be;
             speed[i] = rotor.speed;
@@ -475,6 +476,12 @@ public final class PonderKinetics {
         int couplingStart = links.size();
         for (var rotor : servos) links.add(new TorsionSolver.Link(indices.get(rotor.be), outputs.get(rotor.be),
             1, 0, SequencerMotion.COUPLING_DAMPING, Double.POSITIVE_INFINITY, 0));
+        for (var clock : clocks) {
+            int at = bodies.size(); var motion = clock.motion(); speed[at] = motion.speed;
+            bodies.add(new TorsionSolver.Body(motion.inertia, 0, 0, 0, motion.drag).withPotential(clock.gravity()));
+            links.add(new TorsionSolver.Link(indices.get(clock.bearing()), at, 1, 0,
+                com.diliupengyun.differential_create.kinetics.PositionServo.DAMPING, Double.POSITIVE_INFINITY, 0));
+        }
         var crushers = new ArrayList<CrushingKinetics.Pair>();
         for (var be : level.getBlockEntities())
             if (be instanceof com.simibubi.create.content.kinetics.crusher.CrushingWheelControllerBlockEntity controller) {
@@ -486,12 +493,12 @@ public final class PonderKinetics {
         for (var pair : crushers)
             links.add(TorsionSolver.Link.work(indices.get(pair.a()), indices.get(pair.b()), pair.torque()));
         twist = Arrays.copyOf(twist, links.size());
-        var result = servos.isEmpty() && attachments.isEmpty()
+        var result = servos.isEmpty() && attachments.isEmpty() && clocks.isEmpty()
             ? TorsionSolver.advance(bodies, links, speed, twist, RotationMath.TICK_MINUTES, PhysicsTuning.TORSION_MAX_STEP)
-            : advanceMotion(level, members, servos, attachments, connections, indices, outputs, bodies, links, speed, twist, couplingStart, explicitSources);
+            : advanceMotion(level, members, servos, attachments, connections, indices, outputs, bodies, links, speed, twist, couplingStart, explicitSources, clocks);
         for (int i = 0; i < crushers.size(); i++)
             ((ICrushingDynamics) crushers.get(i).controller()).differentialcreate$reaction(result.torque()[crushingStart + i]);
-        sampleLoads(members, servos, attachments, outputs, bodies, links, result);
+        sampleLoads(members, servos, attachments, outputs, bodies, links, result, clocks);
         for (int i = 0; i < members.size(); i++) {
             Rotor rotor = members.get(i);
             // Assembly phase may be recalibrated when a ratio or neighbour changes.
@@ -524,6 +531,11 @@ public final class PonderKinetics {
             mounted.angle += result.angle()[members.size() + servos.size() + i];
             mounted.speed = result.speed()[members.size() + servos.size() + i];
             mounted.twist = result.twist()[connections.size() + i];
+        }
+        for (int i = 0; i < clocks.size(); i++) {
+            var motion = clocks.get(i).motion(); int at = members.size() + servos.size() + attachments.size() + i;
+            motion.previousAngle = motion.angle;
+            motion.angle += result.angle()[at]; motion.speed = result.speed()[at];
         }
         for (int i = 0; i < connections.size(); i++) {
             var edge = connections.get(i);
@@ -719,7 +731,7 @@ public final class PonderKinetics {
     /** Sample the same bodies and contacts that just supplied the accepted motion. */
     private void sampleLoads(List<Rotor> members, List<Rotor> servos, List<Rotor> attachments,
         Map<KineticBlockEntity, Integer> outputs,
-        List<TorsionSolver.Body> bodies, List<TorsionSolver.Link> links, TorsionSolver.Result result) {
+        List<TorsionSolver.Body> bodies, List<TorsionSolver.Link> links, TorsionSolver.Result result, List<PonderClockwork.Output> clocks) {
         long[] groups = new long[bodies.size()];
         double[] ratios = new double[bodies.size()];
         for (int i = 0; i < members.size(); i++) {
@@ -734,6 +746,11 @@ public final class PonderKinetics {
         for (int i = 0; i < attachments.size(); i++) {
             groups[members.size() + servos.size() + i] = attachments.get(i).componentId;
             ratios[members.size() + servos.size() + i] = attachments.get(i).componentRatio * attachments.get(i).attachment.ratio;
+        }
+        for (int i = 0; i < clocks.size(); i++) {
+            var rotor = rotors.get(clocks.get(i).bearing().getBlockPos());
+            int at = members.size() + servos.size() + attachments.size() + i;
+            groups[at] = rotor.componentId; ratios[at] = rotor.componentRatio;
         }
         var samples = new HashMap<Long, List<LoadFactor.Member>>();
         var losses = new HashMap<Long, Double>();
@@ -851,7 +868,7 @@ public final class PonderKinetics {
     private static TorsionSolver.Result advanceMotion(PonderLevel level, List<Rotor> members, List<Rotor> servos, List<Rotor> attachments,
         List<ElasticKinetics.Connection> connections, Map<KineticBlockEntity, Integer> indices,
         Map<KineticBlockEntity, Integer> outputs, List<TorsionSolver.Body> bodies, List<TorsionSolver.Link> links,
-        double[] speed, double[] twist, int couplingStart, boolean updateDisplay) {
+        double[] speed, double[] twist, int couplingStart, boolean updateDisplay, List<PonderClockwork.Output> clocks) {
         double remaining = RotationMath.TICK_MINUTES;
         double[] angles = new double[speed.length], travel = new double[speed.length];
         var initialBodies = List.copyOf(bodies);
@@ -878,6 +895,16 @@ public final class PonderKinetics {
                 double input = speed[link.a()] * link.ratio();
                 boolean open = stop == 2 || atLower && input < 0 || atUpper && input > 0;
                 links.set(edge, open ? new TorsionSolver.Link(link.a(), out, 1, 0, 0, Double.POSITIVE_INFINITY, 0) : link);
+                if (attachments.get(i).be instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity elevator) {
+                    var potential = body.potential().shifted(angles[out]);
+                    var command = com.diliupengyun.differential_create.kinetics.PositionServo.plan(
+                        PonderSimulation.of(level).pulley(elevator).errorTurns() - angles[out], speed[out], speed[link.a()],
+                        body.inertia(), body.load(), potential.torque(0, 0), stop == 2);
+                    bodies.set(out, new TorsionSolver.Body(body.inertia(), 0, 0, body.load() + command.brake(), body.drag())
+                        .withPotential(potential).withStop(stop).withSpeedLimit(body.speedLimit()));
+                    links.set(edge, new TorsionSolver.Link(link.a(), out, command.gear(), 0,
+                        com.diliupengyun.differential_create.kinetics.PositionServo.DAMPING, Double.POSITIVE_INFINITY, command.coupling()));
+                }
                 if (open) twist[edge] = 0;
                 if (!atUpper && Double.isFinite(upper) || !atLower && Double.isFinite(lower))
                     limits.add(new TorsionSolver.EventLimit(out, Double.POSITIVE_INFINITY,
@@ -897,7 +924,17 @@ public final class PonderKinetics {
                         motion.direction > 0 ? distance : Double.POSITIVE_INFINITY,
                         motion.direction < 0 ? distance : Double.POSITIVE_INFINITY));
             }
-            double duration = servos.isEmpty() ? remaining : Math.min(remaining, SequencerMotion.CONTROL_INTERVAL);
+            for (int i = 0; i < clocks.size(); i++) {
+                var clock = clocks.get(i); int out = members.size() + servos.size() + attachments.size() + i;
+                var body = initialBodies.get(out); var potential = body.potential().shifted(angles[out]);
+                var command = com.diliupengyun.differential_create.kinetics.PositionServo.plan(clock.error(angles[out]), speed[out],
+                    speed[indices.get(clock.bearing())], body.inertia(), body.load(), potential.torque(0, 0), false);
+                bodies.set(out, new TorsionSolver.Body(body.inertia(), 0, 0, command.brake(), body.drag()).withPotential(potential));
+                links.set(couplingStart + servos.size() + i, new TorsionSolver.Link(indices.get(clock.bearing()), out, command.gear(),
+                    0, com.diliupengyun.differential_create.kinetics.PositionServo.DAMPING, Double.POSITIVE_INFINITY, command.coupling()));
+            }
+            boolean controlled = !servos.isEmpty() || !clocks.isEmpty() || attachments.stream().anyMatch(r -> r.be instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity);
+            double duration = controlled ? Math.min(remaining, SequencerMotion.CONTROL_INTERVAL) : remaining;
             double step = Math.min(duration, PhysicsTuning.TORSION_MAX_STEP);
             var captured = TorsionSolver.prepare(bodies, links, speed, twist);
             result = limits.isEmpty() ? captured.advance(duration, step)

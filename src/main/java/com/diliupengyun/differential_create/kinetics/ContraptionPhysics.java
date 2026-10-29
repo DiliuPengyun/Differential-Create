@@ -41,8 +41,11 @@ public final class ContraptionPhysics {
 
 	public record Drive(KineticBlockEntity shaft, AbstractContraptionEntity entity, Direction.Axis axis,
 		boolean rotation, double ratio, AbstractContraptionEntity root, BlockPos mount) implements ActorDrive {
-		@Override public double speed() { return ActorFeed.speed(shaft); }
+		@Override public double speed() { return ClockworkMotion.manages(shaft) ? ClockworkMotion.hand(this).speed : ActorFeed.speed(shaft); }
 		@Override public double preferredSpeed() {
+			if (ClockworkMotion.manages(shaft)) return ClockworkMotion.hand(this).command.velocity();
+			if (shaft instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity elevator)
+				return ((com.diliupengyun.differential_create.mixin.ElevatorPulleyAccessor) elevator).differentialcreate$targetOffset() - elevator.offset;
 			double input = NetworkDynamics.preciseSpeed(shaft);
 			return input != 0 ? input : shaft.getTheoreticalSpeed();
 		}
@@ -72,8 +75,6 @@ public final class ContraptionPhysics {
 			if (root.isStalled() || root.getContraption().stalled || entity.isStalled() || entity.getContraption().stalled) return 0;
 			double motionRatio = ratio;
 			double speed = Math.abs(ActorFeed.speed(shaft));
-			if (shaft instanceof ClockworkBearingBlockEntity clock && speed > 0)
-				motionRatio = Math.abs((ratio == .5 ? clock.getHourArmSpeed() : clock.getMinuteArmSpeed()) / (.3 * speed));
 			if (shaft instanceof LinearActuatorBlockEntity linear) {
 				if (((LinearActuatorAccessor) linear).differentialcreate$waiting()) return 0;
 				if (ActorFeed.enabled(shaft)) {
@@ -223,7 +224,7 @@ public final class ContraptionPhysics {
 		double torque = 0;
 		for (var drive : drives(be)) for (var pair : drive.entity.getContraption().getActors()) {
 			var context = pair.getRight();
-			if (context != null && (!ActorFeed.enabled(be) || MovingDeployerWork.isHand(context)))
+			if (context != null && ((!ActorFeed.enabled(be) && !ClockworkMotion.manages(be)) || MovingDeployerWork.isHand(context)))
 				torque += ContraptionActorWork.of(context).torque(drive)
 					+ com.diliupengyun.differential_create.kinetics.portable.PortableDocking.torque(context);
 		}
@@ -236,6 +237,16 @@ public final class ContraptionPhysics {
 			if (ctx != null && !MovingDeployerWork.isHand(ctx)) torque += ContraptionActorWork.of(ctx).torque(drive)
 				+ com.diliupengyun.differential_create.kinetics.portable.PortableDocking.torque(ctx);
 		}
+		return torque;
+	}
+	public static double feedLoad(Drive root) {
+		double torque = 0;
+		for (var drive : drives(root.shaft())) if (drive.root() == root.root())
+			for (var pair : drive.entity().getContraption().getActors()) {
+				var ctx = pair.getRight();
+				if (ctx != null && !MovingDeployerWork.isHand(ctx)) torque += ContraptionActorWork.of(ctx).torque(drive)
+					+ com.diliupengyun.differential_create.kinetics.portable.PortableDocking.torque(ctx);
+			}
 		return torque;
 	}
 	public static boolean awaitingEntity(KineticBlockEntity be) {
@@ -320,7 +331,7 @@ public final class ContraptionPhysics {
 		var shaft = owner == null ? null : owner.shaft.get();
 		if (shaft == null || shaft.isRemoved()) return;
 		var state = ElasticKinetics.state(shaft);
-		double inertia = InertiaRegistry.getInertia(shaft) + (ActorFeed.enabled(shaft) ? ActorFeed.of(shaft).inertia : 0), drag = airDrag(shaft);
+		double inertia = InertiaRegistry.totalInertia(shaft), drag = airDrag(shaft);
 		int count = expectedCount(shaft, drives(shaft));
 		state.pendingStructureInertia = (float) inertia;
 		state.pendingStructureDrag = drag;
@@ -353,8 +364,11 @@ public final class ContraptionPhysics {
 	}
 	public static void write(KineticBlockEntity be, CompoundTag tag) {
 		if (!manages(be)) return;
-		tag.putFloat("DCStructureInertia", (float) (InertiaRegistry.getInertia(be) + (ActorFeed.enabled(be) ? ActorFeed.of(be).inertia : 0)));
+		tag.putFloat("DCStructureInertia", (float) InertiaRegistry.totalInertia(be));
 		var feed = new CompoundTag(); ActorFeed.of(be).write(feed); tag.put("DCActorFeedDrive", feed);
+		if (ClockworkMotion.manages(be)) {
+			var clock = new CompoundTag(); ClockworkMotion.of(be).write(clock); tag.put("DCClockHands", clock);
+		}
 		tag.putInt("DCStructureCount", expectedCount(be, drives(be)));
 		tag.putDouble("DCStructureDrag", airDrag(be));
 		tag.putDouble("DCStructureLoad", workTorque(be));
@@ -369,6 +383,7 @@ public final class ContraptionPhysics {
 		var state = ElasticKinetics.state(be);
 		state.pendingStructureInertia = readSavedInertia(tag, "DCStructureInertia");
 		if (tag.contains("DCActorFeedDrive")) state.actorFeed.read(tag.getCompound("DCActorFeedDrive"));
+		if (tag.contains("DCClockHands")) state.clockwork.read(tag.getCompound("DCClockHands"));
 		state.pendingStructureCount = Math.max(0, tag.getInt("DCStructureCount"));
 		double drag = tag.getDouble("DCStructureDrag"), load = tag.getDouble("DCStructureLoad");
 		state.structureDrag = Double.isFinite(drag) && drag >= 0 ? drag : 0;

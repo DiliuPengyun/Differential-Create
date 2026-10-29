@@ -19,7 +19,14 @@ public abstract class ControlledContraptionRendererMixin {
 	@Inject(method = "getAngle", at = @At("HEAD"), cancellable = true)
 	private void differentialcreate$physicalPose(float partialTicks, CallbackInfoReturnable<Float> cir) {
 		var self = (ControlledContraptionEntity) (Object) this;
-		if (!self.level().isClientSide || !(self.getContraption() instanceof BearingContraption)) return;
+		if (!self.level().isClientSide) return;
+		if (((ControlledContraptionAccessor) self).differentialcreate$controller()
+			instanceof com.simibubi.create.content.contraptions.bearing.ClockworkBearingBlockEntity clock) {
+			var frame = ClientNetworkSpeeds.clockRotationOf(clock, self.getId());
+			if (frame != null) cir.setReturnValue(BearingAnimation.angleAt(frame, partialTicks));
+			return;
+		}
+		if (!(self.getContraption() instanceof BearingContraption)) return;
 		var bearing = differentialcreate$controller;
 		if (bearing == null || bearing.isRemoved()) {
 			differentialcreate$controller = bearing = ((ControlledContraptionAccessor) self).differentialcreate$controller()

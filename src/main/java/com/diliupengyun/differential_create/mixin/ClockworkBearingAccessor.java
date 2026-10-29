@@ -18,4 +18,5 @@ public interface ClockworkBearingAccessor {
 	@Accessor("operationMode") ScrollOptionBehaviour<?> differentialcreate$operationMode();
 	@Invoker("getHourTarget") float differentialcreate$hourTarget(boolean cycle24);
 	@Invoker("getMinuteTarget") float differentialcreate$minuteTarget();
+	@Invoker("applyRotations") void differentialcreate$applyRotations();
 }

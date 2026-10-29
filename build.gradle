@@ -316,6 +316,16 @@ neoForge.runs.ponderClientSmoke { logLevel = org.slf4j.event.Level.INFO }
 neoForge.runs.structureClientAudit { logLevel = org.slf4j.event.Level.INFO }
 neoForge.runs.selectedRegressionServer { logLevel = org.slf4j.event.Level.INFO }
 
+tasks.named('runGravityServer') {
+    notCompatibleWithConfigurationCache('Controller integration requires a fresh disposable world and a completed test run.')
+    doLast {
+        def directory = neoForge.runs.getByName('gravityServer').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !(log.text =~ /All [1-9][0-9]* required tests passed/).find())
+            throw new GradleException('Controller integration did not report a completed successful test run; inspect its latest.log.')
+    }
+}
+
 tasks.named('runSelectedRegressionServer') {
     notCompatibleWithConfigurationCache('Selected regressions use fresh owned test worlds.')
     doLast {

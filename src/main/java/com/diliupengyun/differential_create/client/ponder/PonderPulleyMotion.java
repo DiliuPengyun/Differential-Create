@@ -37,16 +37,19 @@ public final class PonderPulleyMotion {
         pulley.animateOffset((float) position);
     }
     double couplingRatio() {
-        if (!(pulley instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity)) return 1;
-        // Elevator floor selection reverses its internal transmission, while
-        // its powered input shaft keeps turning in the same direction.
-        double input = PonderKinetics.of((PonderLevel) pulley.getLevel()).commandedSpeed(pulley);
-        if (input == 0) input = pulley.getSpeed();
-        return 2 * Math.copySign(1, target - position) * Math.copySign(1, input);
+        return 1;
     }
+    private boolean elevator() { return pulley instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity; }
+    double errorTurns() { return (target - position) * 256 / 1200; }
     void limit(double maximum) { floor = Math.min(floor, maximum); }
-    public boolean arrived() { return leader != null ? leader.arrived() : Math.abs(position - Math.min(target, floor)) < 1e-5; }
+    public boolean arrived() {
+        if (leader != null) return leader.arrived();
+        return Math.abs(position - Math.min(target, floor)) < (elevator() ? 1e-4 : 1e-5)
+            && (!elevator() || !mounted || Math.abs(PonderKinetics.of((PonderLevel) pulley.getLevel()).outputSpeed(pulley.getBlockPos())) < .01);
+    }
     PonderSimulation.TravelBounds bounds() {
+        if (elevator()) return new PonderSimulation.TravelBounds(-position * 256 / 1200,
+            (Math.min(floor, ((LinearActuatorAccessor) pulley).differentialcreate$extensionRange()) - position) * 256 / 1200);
         double remaining = (Math.min(target, floor) - position) * 512 / 1200;
         return new PonderSimulation.TravelBounds(Math.min(0, remaining), Math.max(0, remaining));
     }
@@ -68,12 +71,15 @@ public final class PonderPulleyMotion {
         if (mounted != attached) { sampleAngle(); return; }
         double limit = pulley instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity ? 1.99 : .49;
         double delta = Math.clamp(Math.toRadians(angle - previousAngle) * ContraptionGeometry.LINEAR_RADIUS
-            * (attached ? 1 : couplingRatio()), -limit, limit);
+            * (elevator() ? 2 : attached ? 1 : couplingRatio()), -limit, limit);
         previousAngle = angle;
         double end = Math.min(target, floor);
         // A new command may still encounter the old shaft direction during reversal.
         // Do not turn that coasting work into movement in the requested direction.
-        if (delta * (end - position) > 0)
+        // Before payload assembly only the unloaded rope deployment is shown.
+        // Its storyboard stroke must not keep extending while the input spins.
+        if (elevator() && attached) position = Math.clamp(position + delta, 0, Math.min(floor, ((LinearActuatorAccessor) pulley).differentialcreate$extensionRange()));
+        else if (delta * (end - position) > 0)
             position += Math.copySign(Math.min(Math.abs(end - position), Math.abs(delta)), delta);
         pulley.animateOffset((float) position);
     }

@@ -94,6 +94,9 @@ public final class ClientNetworkSpeeds {
 		double elasticEnergy = Double.NaN;
 		final RotorPoseAnimation animation = new RotorPoseAnimation();
 		BearingAnimation bearing;
+		final Map<Integer, BearingAnimation> clock = new HashMap<>();
+		double clockInertia, clockEnergy;
+		BearingAnimation linear;
 	}
 
 	public static void applyRotors(ResourceKey<Level> dimension, RotorStatePayload payload) {
@@ -112,6 +115,8 @@ public final class ClientNetworkSpeeds {
 					feed.initialized = true; feed.speed = update.feed().speed(); feed.inertia = update.feed().inertia();
 					feed.brake = update.feed().brake(); feed.brakeHeat = update.feed().heat();
 				}
+				if (update.linear() != null && be instanceof com.diliupengyun.differential_create.mixin.ElevatorPulleyAccessor elevator)
+					elevator.differentialcreate$arrived(update.linear().arrived());
 			}
 			Rotor rotor = entry.rotors.computeIfAbsent(update.pos(), $ -> new Rotor());
 			rotor.speed = update.speed(); rotor.torque = update.torque();
@@ -122,6 +127,15 @@ public final class ClientNetworkSpeeds {
 			else {
 				if (rotor.bearing == null) rotor.bearing = new BearingAnimation();
 				rotor.bearing.receive(update.bearing().entityId(), update.bearing().angle());
+			}
+			rotor.clockInertia = update.clock().stream().mapToDouble(RotorStatePayload.ClockPose::inertia).sum();
+			rotor.clockEnergy = update.clock().stream().mapToDouble(RotorStatePayload.ClockPose::kineticEnergy).sum();
+			rotor.clock.keySet().retainAll(update.clock().stream().map(RotorStatePayload.ClockPose::entityId).toList());
+			for (var hand : update.clock()) rotor.clock.computeIfAbsent(hand.entityId(), id -> new BearingAnimation()).receive(hand.entityId(), hand.angle());
+			if (update.linear() == null) rotor.linear = null;
+			else {
+				if (rotor.linear == null) rotor.linear = new BearingAnimation();
+				rotor.linear.receive(update.linear().entityId(), update.linear().offset());
 			}
 		}
 	}
@@ -213,6 +227,8 @@ public final class ClientNetworkSpeeds {
 					boolean frozen = !level.tickRateManager().runsNormally();
 					rotor.animation.advance(renderTick, partialRenderTick, frozen);
 					if (rotor.bearing != null) rotor.bearing.advance(renderTick, partialRenderTick, frozen);
+					rotor.clock.values().forEach(hand -> hand.advance(renderTick, partialRenderTick, frozen));
+					if (rotor.linear != null) rotor.linear.advance(renderTick, partialRenderTick, frozen);
 				});
 				if (!entry.rotors.isEmpty()) entry.rotationDirty = true;
 				if (!level.tickRateManager().runsNormally())
@@ -231,6 +247,26 @@ public final class ClientNetworkSpeeds {
 								if (frame != null) {
 									bearing.setAngle(BearingAnimation.angleAt(frame, 1));
 									((MechanicalBearingAccessor) bearing).differentialcreate$applyRotation();
+								}
+							}
+							if (be instanceof com.simibubi.create.content.contraptions.bearing.ClockworkBearingBlockEntity) {
+								var clock = (com.diliupengyun.differential_create.mixin.ClockworkBearingAccessor) be;
+								if (clock.differentialcreate$hour() != null) {
+									var frame = clockRotationOf(be, clock.differentialcreate$hour().getId());
+									if (frame != null) clock.differentialcreate$hourAngle(BearingAnimation.angleAt(frame, 1));
+								}
+								if (clock.differentialcreate$minute() != null) {
+									var frame = clockRotationOf(be, clock.differentialcreate$minute().getId());
+									if (frame != null) clock.differentialcreate$minuteAngle(BearingAnimation.angleAt(frame, 1));
+								}
+								clock.differentialcreate$applyRotations();
+							}
+							if (be instanceof com.simibubi.create.content.contraptions.piston.LinearActuatorBlockEntity actuator
+								&& actuator.movedContraption != null) {
+								var frame = linearMotionOf(be, actuator.movedContraption.getId());
+								if (frame != null) {
+									actuator.offset = (float) frame.angleAt(frame.tick() + 1);
+									((com.diliupengyun.differential_create.mixin.LinearActuatorAccessor) actuator).differentialcreate$resetToOffset();
 								}
 							}
 							VisualizationHelper.queueUpdate(be);
@@ -299,6 +335,15 @@ public final class ClientNetworkSpeeds {
 		Rotor rotor = entry == null ? null : entry.rotors.get(bearing.getBlockPos());
 		return rotor == null || rotor.bearing == null ? null : rotor.bearing.frame(entityId);
 	}
+	public static RotationFrame clockRotationOf(KineticBlockEntity be, int entityId) {
+		Entry entry = entryOf(be); Rotor rotor = entry == null ? null : entry.rotors.get(be.getBlockPos());
+		var animation = rotor == null ? null : rotor.clock.get(entityId);
+		return animation == null ? null : animation.frame(entityId);
+	}
+	public static RotationFrame linearMotionOf(KineticBlockEntity be, int entityId) {
+		Entry entry = entryOf(be); Rotor rotor = entry == null ? null : entry.rotors.get(be.getBlockPos());
+		return rotor == null || rotor.linear == null ? null : rotor.linear.frame(entityId);
+	}
 
 	private static Entry entryOf(KineticBlockEntity kbe) {
 		if (kbe.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel) return null;
@@ -331,6 +376,19 @@ public final class ClientNetworkSpeeds {
 		Entry entry = entryOf(be);
 		Rotor rotor = entry == null ? null : entry.rotors.get(be.getBlockPos());
 		return rotor == null || !Double.isFinite(rotor.elasticEnergy) ? null : rotor.elasticEnergy;
+	}
+
+	/** Independent hand readouts come from accepted physical states, not rendered angle differences. */
+	public static Double clockInertiaOf(KineticBlockEntity be) {
+		Entry entry = entryOf(be);
+		Rotor rotor = entry == null ? null : entry.rotors.get(be.getBlockPos());
+		return rotor == null ? null : rotor.clockInertia;
+	}
+
+	public static Double clockEnergyOf(KineticBlockEntity be) {
+		Entry entry = entryOf(be);
+		Rotor rotor = entry == null ? null : entry.rotors.get(be.getBlockPos());
+		return rotor == null ? null : rotor.clockEnergy;
 	}
 
 	public static Float transmittedTorqueOf(KineticBlockEntity be) {

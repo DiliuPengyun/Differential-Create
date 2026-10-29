@@ -4,7 +4,6 @@ import java.util.Map;
 import java.util.WeakHashMap;
 import com.diliupengyun.differential_create.mixin.LinearActuatorAccessor;
 import com.simibubi.create.content.contraptions.AbstractContraptionEntity;
-import com.simibubi.create.content.contraptions.bearing.ClockworkBearingBlockEntity;
 import com.simibubi.create.content.contraptions.behaviour.MovementContext;
 import com.simibubi.create.content.contraptions.piston.LinearActuatorBlockEntity;
 import com.simibubi.create.content.contraptions.piston.MechanicalPistonBlockEntity;
@@ -37,31 +36,20 @@ public final class ContraptionMotion {
 		boolean ready, consumed;
 		Output(ContraptionPhysics.Drive drive) {
 			this.drive = drive; origin = drive.root().getAnchorVec().add(.5, .5, .5);
-			double speed = NetworkDynamics.preciseSpeed(drive.shaft());
 			double angular = .3 * drive.ratio(), limit = Double.POSITIVE_INFINITY, distanceLimit = Double.POSITIVE_INFINITY;
-			double clockTarget = Double.NaN;
 			Vec3 linear = Vec3.ZERO;
 			if (drive.shaft() instanceof com.simibubi.create.content.contraptions.bearing.MechanicalBearingBlockEntity bearing) {
 				double sequence = ((com.diliupengyun.differential_create.mixin.MechanicalBearingAccessor) bearing).differentialcreate$angleLimit();
 				if (sequence >= 0) limit = sequence;
-			} else if (drive.shaft() instanceof ClockworkBearingBlockEntity clock) {
-				clockTarget = clockTargetDifference(clock, drive.ratio() == .5);
-				// The native getter caps one predicted tick of movement. It is not
-				// a geometric endpoint: gravity can accelerate within this tick.
-				// Keep the gear ratio fixed and stop only at the actual hand target.
-				double direction = speed == 0 ? drive.preferredSpeed() : speed;
-				angular = clockTarget == 0 ? 0 : Math.copySign(.3 * drive.ratio(), clockTarget) * Math.copySign(1, direction);
-				limit = Math.abs(clockTarget);
 			} else if (drive.shaft() instanceof LinearActuatorBlockEntity actuator) {
 				// Native collision-safe speed is an output brake, not a new wall every tick.
 				double sequence = ((LinearActuatorAccessor) actuator).differentialcreate$offsetLimit();
 				if (sequence >= 0) distanceLimit = Math.min(distanceLimit, sequence);
 				if (!((LinearActuatorAccessor) actuator).differentialcreate$waiting()) {
 					if (actuator instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity) {
-						linear = ((LinearActuatorAccessor) actuator).differentialcreate$toMotionVector(1)
-							.scale(ElasticKinetics.state(actuator).elevatorMotionPerRpm);
-						int target = ((com.diliupengyun.differential_create.mixin.ElevatorPulleyAccessor) actuator).differentialcreate$targetOffset();
-						distanceLimit = Math.min(distanceLimit, Math.abs(target - actuator.offset));
+						// The controller changes clutch torque, never the sign or scale
+						// of an already-moving cabin's physical coordinate.
+						linear = new Vec3(0, -1.0 / 256, 0);
 					}
 					if (actuator instanceof MechanicalPistonBlockEntity) {
 						var facing = actuator.getBlockState().getValue(BlockStateProperties.FACING);
@@ -81,15 +69,10 @@ public final class ContraptionMotion {
 			// Integration runs after the entity tick and supplies the next one: do
 			// not release gravitational work until that next tick can consume it.
 			if (awaitingGantryStart(drive.root())) linear = Vec3.ZERO;
-			angularRate = angular; angularLimit = Double.isNaN(clockTarget) ? limit : Double.POSITIVE_INFINITY; translation = linear;
+			angularRate = angular; angularLimit = limit; translation = linear;
 			double bound = drive.rotation() ? (angular != 0 ? limit / Math.abs(angular) : Double.POSITIVE_INFINITY)
 				: linear.length() > 0 ? distanceLimit / linear.length() : Double.POSITIVE_INFINITY;
 			double low = -bound, high = bound;
-			if (!Double.isNaN(clockTarget) && angular != 0) {
-				double targetTravel = clockTarget / angular;
-				low = targetTravel < 0 ? targetTravel : Double.NEGATIVE_INFINITY;
-				high = targetTravel > 0 ? targetTravel : Double.POSITIVE_INFINITY;
-			}
 			if (drive.shaft() instanceof LinearActuatorBlockEntity actuator) {
 				double coefficient = linear.dot(((LinearActuatorAccessor) actuator).differentialcreate$toMotionVector(1));
 				if (coefficient != 0) {
@@ -118,14 +101,6 @@ public final class ContraptionMotion {
 	}
 	private static boolean stalled(AbstractContraptionEntity root) {
 		return root != null && (root.isStalled() || root.getContraption() != null && root.getContraption().stalled);
-	}
-	private static float clockTargetDifference(ClockworkBearingBlockEntity clock, boolean hourHand) {
-		var access = (com.diliupengyun.differential_create.mixin.ClockworkBearingAccessor) clock;
-		int mode = access.differentialcreate$operationMode().getValue();
-		float target = hourHand ? mode == 1 ? access.differentialcreate$minuteTarget() : access.differentialcreate$hourTarget(mode == 2)
-			: mode == 1 ? access.differentialcreate$hourTarget(false) : access.differentialcreate$minuteTarget();
-		return net.createmod.catnip.math.AngleHelper.getShortestAngleDiff(
-			hourHand ? access.differentialcreate$hourAngle() : access.differentialcreate$minuteAngle(), target);
 	}
 	private static boolean awaitingGantryStart(AbstractContraptionEntity root) {
 		return root instanceof com.simibubi.create.content.contraptions.gantry.GantryContraptionEntity && root.tickCount < 2;
@@ -181,7 +156,7 @@ public final class ContraptionMotion {
 	}
 	public static void advance(ElasticKinetics.Trial trial) {
 		for (var output : frames.get().outputs.values()) if (!output.ready && !output.drive.shaft().isRemoved())
-			output.advance(ActorFeed.enabled(output.drive.shaft()) ? trial.outputTravel(output.drive.shaft()) : trial.signedTravel(output.drive.shaft()));
+			output.advance(trial.structureTravel(output.drive));
 	}
 	/** Geometric limits belong to every structure, including ones without tools. */
 	public static void boundaries(java.util.List<ElasticKinetics.WorkEvent> limits) {
@@ -192,12 +167,12 @@ public final class ContraptionMotion {
 			negative = negative <= MOTION_EPSILON ? Double.POSITIVE_INFINITY : negative;
 			if (Double.isFinite(positive) || Double.isFinite(negative))
 				limits.add(new ElasticKinetics.WorkEvent(output.drive.shaft(),
-					new ShaftWork.Boundary(Double.POSITIVE_INFINITY, positive, negative), 0, ActorFeed.enabled(output.drive.shaft())));
+					new ShaftWork.Boundary(Double.POSITIVE_INFINITY, positive, negative), 0, ActorFeed.enabled(output.drive.shaft())).withDrive(output.drive));
 		}
 	}
 	/** A native pause is a fixed geometric constraint; an endpoint supports only outward forces. */
 	public static int stop(com.simibubi.create.content.kinetics.base.KineticBlockEntity shaft) {
-		if (!ContraptionPhysics.manages(shaft)) return 0;
+		if (!ContraptionPhysics.manages(shaft) || ClockworkMotion.manages(shaft)) return 0;
 		boolean lower = false, upper = false;
 		for (var output : frames.get().outputs.values()) if (!output.ready && output.drive != null && output.drive.shaft() == shaft) {
 			if (awaitingGantryStart(output.drive.root())) return 2;
@@ -319,6 +294,10 @@ public final class ContraptionMotion {
 		return ActorContactPath.circular(point(along), point(radial), point(rotate(radial, 90, drive.axis())), output.angularRate * Math.PI / 180);
 	}
 	public static double travel(ContraptionPhysics.Drive drive) { return frames.get().outputs.get(drive.root()).signedTravel; }
+	public static double pendingTravel(ContraptionPhysics.Drive drive) {
+		var output = frames.get().outputs.get(drive.root());
+		return output == null || output.consumed ? 0 : output.signedTravel;
+	}
 	public static double angle(ContraptionPhysics.Drive drive) { return frames.get().outputs.get(drive.root()).angle; }
 	public static double angularRate(ContraptionPhysics.Drive drive) { return frames.get().outputs.get(drive.root()).angularRate; }
 	public static double allowance(ContraptionPhysics.Drive drive) {

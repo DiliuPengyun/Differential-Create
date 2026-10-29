@@ -7,6 +7,7 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Mixin(LinearActuatorBlockEntity.class)
 public interface LinearActuatorAccessor {
+	@org.spongepowered.asm.mixin.gen.Invoker("resetContraptionToOffset") void differentialcreate$resetToOffset();
 	@Accessor("sequencedOffsetLimit") double differentialcreate$offsetLimit();
 	@Accessor("sequencedOffsetLimit") void differentialcreate$setOffsetLimit(double limit);
 	@Accessor("waitingForSpeedChange") boolean differentialcreate$waiting();

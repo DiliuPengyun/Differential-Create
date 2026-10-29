@@ -12,14 +12,16 @@ public final class ActorFeed {
     public static final float INPUT_INERTIA = .01f;
     public double speed, angle, inertia, brakeHeat, twist;
     public boolean active, initialized, toolTakeoff;
-    public double brake, coupling;
-    public double stiffness() { return toolTakeoff ? 0 : PhysicsTuning.TORSIONAL_STIFFNESS; }
-    public double damping() { return toolTakeoff ? DAMPING : PhysicsTuning.TORSIONAL_DAMPING; }
+    public double brake, coupling, gear = 1;
+    public boolean positionControlled;
+    private boolean legacyPositionCoordinate;
+    public double stiffness() { return toolTakeoff || positionControlled ? 0 : PhysicsTuning.TORSIONAL_STIFFNESS; }
+    public double damping() { return toolTakeoff || positionControlled ? DAMPING : PhysicsTuning.TORSIONAL_DAMPING; }
     public double elasticEnergy() { return active ? .5 * stiffness() * twist * twist : 0; }
 
     public static ActorFeed of(KineticBlockEntity be) { return ElasticKinetics.state(be).actorFeed; }
     public static boolean enabled(KineticBlockEntity be) {
-        if (!ContraptionPhysics.manages(be)) return false;
+        if (!ContraptionPhysics.manages(be) || ClockworkMotion.manages(be)) return false;
         var feed = of(be);
         var drives = ContraptionPhysics.drives(be);
         boolean present = drives.stream().anyMatch(d -> d.entity().getContraption().getActors().stream()
@@ -31,6 +33,19 @@ public final class ActorFeed {
             feed.active = false; feed.initialized = false; feed.twist = 0; return false;
         }
         feed.toolTakeoff = present;
+        feed.positionControlled = be instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity;
+        if (feed.positionControlled && feed.legacyPositionCoordinate && !drives.isEmpty()) {
+            var root = drives.getFirst().root();
+            var motion = ContraptionMotion.linear(root);
+            if (motion == null) motion = root.getDeltaMovement();
+            double previous = feed.speed;
+            // Older saves used a target-dependent sign/scale. Keep the saved
+            // body's actual direction, bounded by its recorded kinetic energy.
+            feed.speed = Math.clamp(-motion.y * 256, -Math.abs(previous), Math.abs(previous));
+            feed.brakeHeat += .5 * feed.inertia * (previous * previous - feed.speed * feed.speed)
+                + .5 * PhysicsTuning.TORSIONAL_STIFFNESS * feed.twist * feed.twist;
+            feed.twist = 0; feed.legacyPositionCoordinate = false;
+        }
         feed.active = true;
         double rotors = present ? .01 * drives.stream().map(ContraptionPhysics.Drive::root).distinct().count() : 0;
         double next = rotors + drives.stream().mapToDouble(ContraptionPhysics.Drive::inertia).sum();
@@ -58,7 +73,9 @@ public final class ActorFeed {
         return enabled(be) ? of(be).speed : NetworkDynamics.preciseSpeed(be);
     }
     public static void prepare(KineticBlockEntity be) {
-        if (!enabled(be)) return;
+        // The solver also suspends this network until every saved body returns.
+        // Do not construct a target controller from missing or partial geometry.
+        if (!enabled(be) || ContraptionPhysics.incomplete(be)) return;
         var feed = of(be); boolean hold = false;
         for (var drive : ContraptionPhysics.drives(be)) for (var pair : drive.entity().getContraption().getActors()) {
             MovementContext ctx = pair.getRight();
@@ -67,6 +84,18 @@ public final class ActorFeed {
         }
         feed.coupling = hold ? 0 : feed.toolTakeoff ? TORQUE : StrengthRegistry.of(be);
         feed.brake = hold ? TORQUE : 0;
+        feed.gear = 1;
+        if (feed.positionControlled) {
+            var elevator = (com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity) be;
+            var drive = ContraptionPhysics.drives(be).stream().filter(d -> !d.stabilized()).findFirst().orElseThrow();
+            double pending = ContraptionMotion.geometry(drive).translation().y * ContraptionMotion.pendingTravel(drive);
+            double error = PositionServo.offsetError(((com.diliupengyun.differential_create.mixin.ElevatorPulleyAccessor) elevator).differentialcreate$targetOffset(),
+                elevator.offset - pending, 1200d / 256);
+            var gravity = ContraptionGravity.capture(be);
+            var command = PositionServo.plan(error, feed.speed, NetworkDynamics.preciseSpeed(be), feed.inertia,
+                ContraptionPhysics.feedLoad(be), gravity.torque(0, 0), hold);
+            feed.gear = command.gear(); feed.coupling = command.coupling(); feed.brake = command.brake();
+        }
         if (ContraptionMotion.stop(be) == 2) feed.coupling = 0;
         // Native geometric endpoints constrain the output, not the spinning
         // input. A stopped feed at its endpoint must still finish tool work.
@@ -86,16 +115,17 @@ public final class ActorFeed {
     }
     public static void boundaries(List<com.simibubi.create.content.kinetics.KineticNetwork> networks,
                                   List<ElasticKinetics.WorkEvent> limits) {
-        for (var network : networks) for (var be : network.members.keySet()) if (enabled(be))
+        for (var network : networks) for (var be : network.members.keySet()) if (enabled(be) || ClockworkMotion.manages(be))
             for (var drive : ContraptionPhysics.drives(be)) for (var actor : drive.entity().getContraption().getActors()) {
                 var ctx = actor.getRight(); if (ctx == null || !MovingDeployerWork.isHand(ctx)) continue;
                 var path = drive.path(ctx); if (path == null) continue;
                 limits.add(new ElasticKinetics.WorkEvent(be, new ShaftWork.Boundary(Double.POSITIVE_INFINITY,
                     Math.min(drive.allowance(1), path.exit(drive.travel(), 1)),
-                    Math.min(drive.allowance(-1), path.exit(drive.travel(), -1))), 0, true));
+                    Math.min(drive.allowance(-1), path.exit(drive.travel(), -1))), 0, true).withDrive(drive));
             }
     }
     public void write(CompoundTag tag) {
+        if (!legacyPositionCoordinate) tag.putInt("CoordinateVersion", 1);
         tag.putBoolean("Active", active); tag.putBoolean("Initialized", initialized);
         tag.putDouble("Speed", speed); tag.putDouble("Angle", angle); tag.putDouble("Inertia", inertia);
         tag.putDouble("BrakeHeat", brakeHeat);
@@ -103,6 +133,7 @@ public final class ActorFeed {
     }
     public void read(CompoundTag tag) {
         active = tag.getBoolean("Active"); initialized = tag.getBoolean("Initialized");
+        legacyPositionCoordinate = tag.getInt("CoordinateVersion") < 1;
         speed = finite(tag.getDouble("Speed")); angle = finite(tag.getDouble("Angle"));
         inertia = Math.max(0, finite(tag.getDouble("Inertia"))); brakeHeat = Math.max(0, finite(tag.getDouble("BrakeHeat")));
         twist = finite(tag.getDouble("Twist")); toolTakeoff = !tag.contains("ToolTakeoff") || tag.getBoolean("ToolTakeoff");

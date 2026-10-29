@@ -30,6 +30,7 @@ public final class NetworkPhysics {
 				j += r * r * InertiaRegistry.getInertia(be);
 				if (be instanceof ISequencerDynamics) j += r * r * SequencerMotion.OUTPUT_INERTIA;
 				if (ActorFeed.enabled(be)) j += r * r * ActorFeed.of(be).inertia;
+				j += r * r * ClockworkMotion.inertia(be);
 				c += Math.pow(Math.abs(r), 3) * MachineActivity.quadraticDrag(be);
 				if (!(be instanceof EncasedFanBlockEntity)) l += Math.abs(r) * impact;
 			}
