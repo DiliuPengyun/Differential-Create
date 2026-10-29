@@ -119,14 +119,16 @@ public final class SequencerKinetics {
         return m.plan(servo.differentialcreate$program(), new SequencerMotion.Plant(inertia, load, drive, NetworkDynamics.preciseSpeed(be), momentum / inertia, settling), SequencerMotion.CONTROL_INTERVAL);
     }
     public static boolean needsControl(List<KineticNetwork> networks) {
-        for (var n : networks) for (var be : n.members.keySet()) if (be instanceof ISequencerDynamics servo) {
+        for (var entry : KineticReadCache.members(networks).sequencers) {
+            var servo = (ISequencerDynamics) entry.shaft();
             var m = servo.differentialcreate$motion(); var program = servo.differentialcreate$program();
             if (!m.parked() || m.inputDirection != 0 && m.index >= 0 && m.index < program.size() && program.get(m.index).moving()) return true;
         }
         return false;
     }
     public static void boundaries(List<KineticNetwork> networks, List<ElasticKinetics.WorkEvent> limits) {
-        for (var n : networks) for (var be : n.members.keySet()) if (be instanceof ISequencerDynamics servo) {
+        for (var entry : KineticReadCache.members(networks).sequencers) {
+            var be = entry.shaft(); var servo = (ISequencerDynamics) be;
             var m = servo.differentialcreate$motion();
             double distance = m.direction * (m.target - m.angle);
             if (m.index < 0 || m.command.exitSpeed() <= SequencerMotion.SPEED_EPSILON || distance <= SequencerMotion.POSITION_EPSILON) continue;
@@ -137,7 +139,9 @@ public final class SequencerKinetics {
     }
     public static boolean finishReady(List<KineticNetwork> networks) {
         boolean advanced = false;
-        for (var n : networks) for (var be : List.copyOf(n.members.keySet())) if (be instanceof ISequencerDynamics servo && !be.isRemoved()) {
+        for (var entry : KineticReadCache.members(networks).sequencers) {
+            var be = entry.shaft(); if (be.isRemoved()) continue;
+            var servo = (ISequencerDynamics) be;
             var m = servo.differentialcreate$motion(); var program = servo.differentialcreate$program();
             if (m.index >= 0 && m.index < program.size() && program.get(m.index).moving() && m.complete()) {
                 MachineWork.event(servo::differentialcreate$finishMotion); advanced = true;
@@ -146,12 +150,14 @@ public final class SequencerKinetics {
         return advanced;
     }
     public static void observe(List<KineticNetwork> networks, double duration, Map<KineticBlockEntity, Double> externalTorques) {
-        for (var n : networks) for (var be : n.members.keySet()) if (be instanceof ISequencerDynamics servo && !be.isRemoved()) {
-            prepare(be, ((INetworkDynamics) n).differentialcreate$data().connections, externalTorques);
+        for (var entry : KineticReadCache.members(networks).sequencers) {
+            var be = entry.shaft(); if (be.isRemoved()) continue;
+            var servo = (ISequencerDynamics) be;
+            prepare(be, ((INetworkDynamics) entry.network()).differentialcreate$data().connections, externalTorques);
             servo.differentialcreate$motion().observe(duration);
         }
     }
     public static void sync(List<KineticNetwork> networks) {
-        for (var n : networks) for (var be : n.members.keySet()) if (be instanceof ISequencerDynamics) be.sendData();
+        for (var entry : KineticReadCache.members(networks).sequencers) entry.shaft().sendData();
     }
 }

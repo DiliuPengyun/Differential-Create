@@ -21,11 +21,17 @@ public final class MachineWork {
 		List<Runnable> pending;
 		try { advance.run(); pending = events.get(); }
 		finally { events.remove(); }
-		pending.forEach(Runnable::run);
+		pending.forEach(callback -> {
+			KineticReadCache.clear();
+			try { callback.run(); } finally { KineticReadCache.clear(); }
+		});
 	}
 	public static void event(Runnable callback) {
 		var pending = events.get();
-		if (pending == null) callback.run();
+		if (pending == null) {
+			KineticReadCache.clear();
+			try { callback.run(); } finally { KineticReadCache.clear(); }
+		}
 		else pending.add(callback);
 	}
 	public record Binding(ShaftWork work, KineticBlockEntity shaft, CrushingKinetics.Pair pair) {
@@ -50,6 +56,13 @@ public final class MachineWork {
 		return be instanceof ShaftWork work ? work : null;
 	}
 	public static List<Binding> collect(List<KineticNetwork> networks) {
+		var cache = KineticReadCache.current();
+		if (cache != null && cache.work != null && networks.equals(cache.workNetworks)) return cache.work;
+		var bindings = collectUncached(networks);
+		if (cache != null) { cache.workNetworks = List.copyOf(networks); cache.work = bindings; }
+		return bindings;
+	}
+	private static List<Binding> collectUncached(List<KineticNetwork> networks) {
 		var result = new LinkedHashMap<ShaftWork, Binding>();
 		for (var network : networks)
 			for (var be : network.members.keySet()) {

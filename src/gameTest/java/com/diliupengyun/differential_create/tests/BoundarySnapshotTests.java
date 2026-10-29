@@ -19,7 +19,8 @@ final class BoundarySnapshotTests {
     private static final BlockPos POS = new BlockPos(6, 8, 12);
     private static final double DT = RotationMath.TICK_MINUTES;
     private BoundarySnapshotTests() {}
-    static void capture(GameTestHelper h) {
+    static void capture(GameTestHelper h) { capture(h, false); }
+    static void capture(GameTestHelper h, boolean cacheReads) {
         h.setBlock(POS, AllBlocks.MECHANICAL_BEARING.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST));
         for (int y = 0; y <= 7; y++) h.setBlock(POS.east().above(y), Blocks.SLIME_BLOCK);
         for (int z = -4; z <= 4; z++) {
@@ -34,7 +35,7 @@ final class BoundarySnapshotTests {
             var networks = List.of(be.getOrCreateNetwork());
             ElasticKinetics.state(be).physicalSpeed = 128;
             root.tickActors(); ContraptionMotion.begin(h.getLevel());
-            try {
+            try (var reads = new ReadCacheTestScope(cacheReads)) {
                 h.assertTrue(root.getContraption().getActors().size() == 9, "all nine moving drills assembled");
                 var context = root.getContraption().getActors().getFirst().getRight();
                 var work = ContraptionActorWork.of(context);
@@ -106,9 +107,21 @@ final class BoundarySnapshotTests {
                 double accelerated = acceleratedSearch(networks, be, tools);
                 h.assertTrue(Math.abs(accelerated - boundary) <= 1e-12,
                     "production event limits locate the same monotone contact as the analytical rotor trajectory");
-                benchmark(networks, be, tools);
+                if (!cacheReads) benchmark(networks, be, tools);
+                if (cacheReads) {
+                    root.setAngle(0);
+                    MachineWork.event(be::disassemble);
+                    h.assertTrue(ContraptionPhysics.drives(be).isEmpty(), "same-tick disassembly releases cached structure ownership");
+                    MachineWork.event(be::assemble);
+                    h.assertTrue(!ContraptionPhysics.drives(be).isEmpty()
+                        && ContraptionPhysics.drives(be).getFirst().root() != root,
+                        "same-tick reassembly acquires the replacement entity");
+                    NetworkTopology.flush();
+                    h.assertTrue(!MachineWork.collect(List.of(be.getOrCreateNetwork())).isEmpty(),
+                        "reassembly refreshes moving tool bindings in the same tick");
+                }
             } finally { ContraptionMotion.end(h.getLevel()); }
-            root.setAngle(0); be.disassemble(); h.succeed();
+            be.getMovedContraption().setAngle(0); be.disassemble(); h.succeed();
         });
     }
     private static void same(GameTestHelper h, TorsionSolver.Result expected, TorsionSolver.Result actual) {

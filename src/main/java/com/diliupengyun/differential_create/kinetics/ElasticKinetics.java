@@ -450,32 +450,72 @@ public final class ElasticKinetics {
         }
         return level.getBlockEntity(be.getBlockPos()) == be;
     }
-    public static Snapshot snapshot(List<KineticNetwork> networks, Map<KineticBlockEntity, Double> externalTorques) {
-        List<KineticBlockEntity> members = new ArrayList<>();
-        List<Connection> connections = new ArrayList<>();
-        for (var network : networks) {
-            // Preserve both velocity and pose while saved child entities are still
-            // loading. A partial mass/centre capture cannot represent this network.
-            if (network.members.keySet().stream().anyMatch(ContraptionPhysics::incomplete)) continue;
-            members.addAll(network.members.keySet());
-            connections.addAll(((INetworkDynamics) network).differentialcreate$data().connections);
+    /** Immutable indexing and passive connections; forces and motion are captured
+     * afresh below. Its owner expires at world events and at the end of the tick. */
+    static final class Layout {
+        final List<KineticNetwork> networks;
+        final List<KineticBlockEntity> members, servos, feeds;
+        final List<Connection> connections;
+        final List<ClockworkMotion.Output> clockOutputs;
+        final Map<KineticBlockEntity, Integer> indices, outputs;
+        final Map<ClockworkMotion.Hand, Integer> hands;
+        final List<TorsionSolver.Link> links;
+
+        Layout(List<KineticNetwork> networks) {
+            this.networks = List.copyOf(networks);
+            var members = new ArrayList<KineticBlockEntity>();
+            var connections = new ArrayList<Connection>();
+            for (var network : networks) {
+                // Preserve both velocity and pose while saved child entities are still
+                // loading. A partial mass/centre capture cannot represent this network.
+                if (network.members.keySet().stream().anyMatch(ContraptionPhysics::incomplete)) continue;
+                members.addAll(network.members.keySet());
+                connections.addAll(((INetworkDynamics) network).differentialcreate$data().connections);
+            }
+            members.removeIf(be -> !currentMember(be));
+            members.sort(java.util.Comparator.comparing(KineticBlockEntity::getBlockPos));
+            this.members = List.copyOf(members);
+            var indices = new HashMap<KineticBlockEntity, Integer>();
+            for (int i = 0; i < members.size(); i++) indices.put(members.get(i), i);
+            this.indices = Map.copyOf(indices);
+            servos = members.stream().filter(ISequencerDynamics.class::isInstance).toList();
+            feeds = members.stream().filter(ActorFeed::enabled).toList();
+            clockOutputs = members.stream().flatMap(be -> ClockworkMotion.outputs(be).stream()).toList();
+            var outputs = new HashMap<KineticBlockEntity, Integer>();
+            int at = members.size();
+            for (var be : servos) outputs.put(be, at++);
+            for (var be : feeds) outputs.put(be, at++);
+            this.outputs = Map.copyOf(outputs);
+            var hands = new HashMap<ClockworkMotion.Hand, Integer>();
+            for (var output : clockOutputs) hands.put(output.hand(), at++);
+            this.hands = Map.copyOf(hands);
+            connections.removeIf(edge -> !indices.containsKey(edge.a) || !indices.containsKey(edge.b));
+            this.connections = List.copyOf(connections);
+            var links = new ArrayList<TorsionSolver.Link>();
+            for (var edge : connections)
+                links.add(new TorsionSolver.Link(SequencerKinetics.portIndex(edge.a, edge.b, indices, outputs),
+                    SequencerKinetics.portIndex(edge.b, edge.a, indices, outputs), edge.ratio,
+                    edge.stiffness(), edge.damping(), edge.strength(), edge.friction()));
+            this.links = List.copyOf(links);
         }
-        // An entity lookup can create a loading ticket. Do not keep a leaving
-        // chunk alive merely to check whether an old member still exists.
-        members.removeIf(be -> !currentMember(be));
-        members.sort(java.util.Comparator.comparing(KineticBlockEntity::getBlockPos));
-        Map<KineticBlockEntity, Integer> indices = new HashMap<>();
+    }
+    private static Layout layout(List<KineticNetwork> networks) {
+        var cache = KineticReadCache.current();
+        if (cache != null && cache.layout != null && networks.equals(cache.layout.networks)) return cache.layout;
+        var layout = new Layout(networks);
+        if (cache != null) cache.layout = layout;
+        return layout;
+    }
+    public static Snapshot snapshot(List<KineticNetwork> networks, Map<KineticBlockEntity, Double> externalTorques) {
+        var layout = layout(networks);
+        var members = layout.members; var connections = layout.connections;
+        var indices = layout.indices; var outputs = layout.outputs; var hands = layout.hands;
+        var servos = layout.servos; var feeds = layout.feeds; var clockOutputs = layout.clockOutputs;
         List<TorsionSolver.Body> bodies = new ArrayList<>();
-        var servos = members.stream().filter(ISequencerDynamics.class::isInstance).toList();
-        var feeds = members.stream().filter(ActorFeed::enabled).toList();
-        var clockOutputs = members.stream().flatMap(be -> ClockworkMotion.outputs(be).stream()).toList();
         feeds.forEach(ActorFeed::prepare);
-        var outputs = new HashMap<KineticBlockEntity, Integer>();
-        var hands = new HashMap<ClockworkMotion.Hand, Integer>();
         double[] speeds = new double[members.size() + servos.size() + feeds.size() + clockOutputs.size()], sourceDrives = new double[speeds.length];
         for (int i = 0; i < members.size(); i++) {
             var be = members.get(i);
-            indices.put(be, i);
             speeds[i] = NetworkDynamics.preciseSpeed(be);
             var curve = SourcePhysics.curve(be);
             double load = be instanceof IPumpDynamics pump ? Math.abs(pump.differentialcreate$torque())
@@ -495,14 +535,13 @@ public final class ElasticKinetics {
         }
         for (var be : servos) {
             int at = bodies.size();
-            outputs.put(be, at);
             var motion = ((ISequencerDynamics) be).differentialcreate$motion();
             var command = SequencerKinetics.prepare(be, connections, externalTorques);
             speeds[at] = motion.speed;
             bodies.add(new TorsionSolver.Body(SequencerMotion.OUTPUT_INERTIA, 0, 0, command.brake(), 0));
         }
         for (var be : feeds) {
-            int at = bodies.size(); outputs.put(be, at);
+            int at = bodies.size();
             var feed = ActorFeed.of(be); speeds[at] = feed.speed;
             bodies.add(new TorsionSolver.Body(feed.inertia, 0, 0,
                 feed.brake + ContraptionPhysics.feedLoad(be), ContraptionPhysics.airDrag(be))
@@ -511,7 +550,7 @@ public final class ElasticKinetics {
         }
         for (var output : clockOutputs) {
             var drive = output.drive(); var hand = output.hand();
-            int at = bodies.size(); hands.put(hand, at); speeds[at] = hand.speed;
+            int at = bodies.size(); speeds[at] = hand.speed;
             var gravity = ContraptionGravity.capture(drive);
             double load = ContraptionPhysics.feedLoad(drive);
             double drag = ContraptionPhysics.drives(drive.shaft()).stream().filter(d -> d.root() == drive.root())
@@ -520,14 +559,17 @@ public final class ElasticKinetics {
             bodies.add(new TorsionSolver.Body(hand.inertia, 0, 0, hand.command.brake() + load, drag)
                 .withPotential(gravity).withStop(drive.root().isStalled() || drive.root().getContraption().stalled ? 2 : 0));
         }
-        connections.removeIf(edge -> !indices.containsKey(edge.a) || !indices.containsKey(edge.b));
-        List<TorsionSolver.Link> links = new ArrayList<>();
+        List<TorsionSolver.Link> links = new ArrayList<>(layout.links);
         double[] twists = new double[connections.size()];
         for (int i = 0; i < connections.size(); i++) {
             Connection edge = connections.get(i); twists[i] = edge.twist;
-            links.add(new TorsionSolver.Link(SequencerKinetics.portIndex(edge.a, edge.b, indices, outputs),
-                SequencerKinetics.portIndex(edge.b, edge.a, indices, outputs), edge.ratio,
-                edge.stiffness(), edge.damping(), edge.strength(), edge.friction()));
+            // Redstone can change while a work counter advances, without changing
+            // graph membership. Always read the live friction limit of a clutch.
+            if (edge.clutch != null) {
+                var link = links.get(i);
+                links.set(i, new TorsionSolver.Link(link.a(), link.b(), link.ratio(),
+                    link.stiffness(), link.damping(), link.strength(), edge.friction()));
+            }
         }
         double[] allTwists = java.util.Arrays.copyOf(twists, twists.length + servos.size() + feeds.size() + clockOutputs.size());
         for (var be : servos) {

@@ -192,9 +192,10 @@ public final class ContraptionMotion {
 	}
 	/** Resolve an inelastic endpoint impact once, before the resting contact solve. */
 	public static void resolveStops(java.util.List<com.simibubi.create.content.kinetics.KineticNetwork> networks) {
-		for (var network : networks) {
+		for (var network : KineticReadCache.members(networks).structureNetworks) {
 			if (network.members.keySet().stream().anyMatch(ContraptionPhysics::incomplete)) continue;
 			for (var shaft : network.members.keySet()) {
+				if (!ContraptionPhysics.manages(shaft) || ClockworkMotion.manages(shaft)) continue;
 				boolean feed = ActorFeed.enabled(shaft);
 				double speed = feed ? ActorFeed.of(shaft).speed : NetworkDynamics.preciseSpeed(shaft);
 				double limit = feed ? speedLimit(shaft) : Double.POSITIVE_INFINITY;
@@ -219,7 +220,7 @@ public final class ContraptionMotion {
 	public static boolean restored(AbstractContraptionEntity root) {
 		var o = frames.get().outputs.get(root); return o != null && o.drive == null && o.ready && !o.consumed;
 	}
-	public static void forget(AbstractContraptionEntity root) { frames.get().outputs.remove(root); LinearActuatorContact.forget(root); }
+	public static void forget(AbstractContraptionEntity root) { KineticReadCache.clear(); frames.get().outputs.remove(root); LinearActuatorContact.forget(root); }
 	public static void clear() { frames.get().outputs.clear(); LinearActuatorContact.clear(); frames.get().advancing = frames.get().sampling = false; }
 	public static void save(AbstractContraptionEntity root, CompoundTag tag) {
 		LinearActuatorContact.save(root, tag);

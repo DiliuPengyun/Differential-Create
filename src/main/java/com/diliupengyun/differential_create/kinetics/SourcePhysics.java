@@ -10,6 +10,7 @@ import com.simibubi.create.content.fluids.tank.BoilerData;
 
 /** Shared source characteristics for simulation and goggles. */
 public final class SourcePhysics {
+	private static final Curve STOPPED = new Curve(0, 0);
 	private static final Curve INACTIVE = new Curve(0, 0, 0, PhysicsTuning.STEAM_GOVERNOR_RPM, PhysicsTuning.STEAM_GOVERNOR_RANGE);
 	public record Curve(double stallTorque, double damping, double powerLimit, double governorSpeed, double governorRange) {
 		public Curve(double stallTorque, double damping, double powerLimit) {
@@ -48,8 +49,21 @@ public final class SourcePhysics {
 
 	public static Curve curve(KineticBlockEntity source) {
 		if (source instanceof PoweredShaftBlockEntity shaft) return steamCurve(shaft);
+		// Only these source ratings are fixed between world events. Other mods
+		// may compute their generated speed from the live physical state.
+		if (!(source instanceof com.simibubi.create.content.kinetics.motor.CreativeMotorBlockEntity)
+			&& !(source instanceof com.simibubi.create.content.kinetics.waterwheel.WaterWheelBlockEntity)
+			&& !(source instanceof com.simibubi.create.content.kinetics.waterwheel.LargeWaterWheelBlockEntity)
+			&& !(source instanceof WindmillBearingBlockEntity)) return captureCurve(source);
+		var cached = KineticReadCache.of(source);
+		if (cached != null && cached.source != null) return cached.source;
+		var curve = captureCurve(source);
+		if (cached != null) cached.source = curve;
+		return curve;
+	}
+	private static Curve captureCurve(KineticBlockEntity source) {
 		double generated = source.getGeneratedSpeed();
-		if (generated == 0) return new Curve(0, 0);
+		if (generated == 0) return STOPPED;
 		double capacity = source.calculateAddedStressCapacity();
 		if (source instanceof WindmillBearingBlockEntity windmill) {
 			return windCurve(generated, capacity, InertiaRegistry.getSailCount(windmill));
@@ -59,7 +73,7 @@ public final class SourcePhysics {
 
     /** Shared linear source law, also used for a declared drive boundary in Ponder. */
     public static Curve linearCurve(double generated, double capacity) {
-        return generated == 0 ? new Curve(0, 0) : new Curve(2 * generated, capacity / Math.abs(generated));
+        return generated == 0 ? STOPPED : new Curve(2 * generated, capacity / Math.abs(generated));
     }
 
 	public static Curve steamCurve(PoweredShaftBlockEntity shaft) {

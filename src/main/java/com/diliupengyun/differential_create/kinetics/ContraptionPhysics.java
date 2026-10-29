@@ -117,6 +117,13 @@ public final class ContraptionPhysics {
 	}
 	public static List<Drive> drives(KineticBlockEntity be) {
 		if (!manages(be)) return List.of();
+		var cached = KineticReadCache.of(be);
+		if (cached != null && cached.drives != null) return cached.drives;
+		var result = collectDrives(be);
+		if (cached != null) cached.drives = result;
+		return result;
+	}
+	private static List<Drive> collectDrives(KineticBlockEntity be) {
 		var result = new ArrayList<Drive>(2);
 		if (be instanceof MechanicalBearingBlockEntity bearing)
 			add(result, be, bearing.getMovedContraption(), be.getBlockState().getValue(BlockStateProperties.FACING).getAxis(), true, 1);
@@ -196,6 +203,7 @@ public final class ContraptionPhysics {
 		if (owner != null) invalidate(owner.shaft.get());
 	}
 	private static void invalidate(KineticBlockEntity be) {
+		KineticReadCache.invalidate(be);
 		if (be != null && be.hasNetwork()) ((INetworkDynamics) be.getOrCreateNetwork()).differentialcreate$data().invalidate();
 	}
 	public static double inertia(KineticBlockEntity be) { return manages(be) ? drives(be).stream().mapToDouble(Drive::inertia).sum() : 0; }

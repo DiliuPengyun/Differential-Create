@@ -37,6 +37,7 @@ public final class InertiaRegistry {
 		if (!Float.isFinite(inertia) || inertia < 0) throw new IllegalArgumentException("Inertia must be finite and nonnegative");
 		ensureInitialized();
 		overrides.put(block, inertia);
+		KineticReadCache.clear();
 		for (var level : com.diliupengyun.differential_create.mixin.TorquePropagatorAccessor.differentialcreate$getNetworks().values())
 			for (var network : level.values()) ((INetworkDynamics) network).differentialcreate$data().invalidate();
 	}
@@ -53,6 +54,13 @@ public final class InertiaRegistry {
 	}
 
 	public static float getInertia(KineticBlockEntity kbe) {
+		var cached = KineticReadCache.of(kbe);
+		if (cached != null && !Float.isNaN(cached.inertia)) return cached.inertia;
+		float inertia = measureInertia(kbe);
+		if (cached != null) cached.inertia = inertia;
+		return inertia;
+	}
+	private static float measureInertia(KineticBlockEntity kbe) {
 		double inertia = getBaseInertia(kbe);
 		if (ClockworkMotion.manages(kbe)) return (float) inertia;
 		if (ActorFeed.enabled(kbe)) return (float) inertia + (ActorFeed.of(kbe).toolTakeoff ? ActorFeed.INPUT_INERTIA : 0);

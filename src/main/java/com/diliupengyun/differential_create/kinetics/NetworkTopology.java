@@ -47,6 +47,7 @@ public final class NetworkTopology {
 	public static boolean probingClutches() { return probeClutches; }
 
 	public static void mark(KineticBlockEntity be) {
+		KineticReadCache.clear();
 		Level level = be.getLevel();
 		if (installing || level == null || level.isClientSide)
 			return;
@@ -67,6 +68,7 @@ public final class NetworkTopology {
 		for (int pass = 0; pass < 32 && !pending.isEmpty(); pass++) {
 			Map<Level, Set<KineticBlockEntity>> changes = new LinkedHashMap<>(pending);
 			if (changes.keySet().stream().allMatch(level -> !level.tickRateManager().runsNormally())) break;
+			KineticReadCache.clear();
 			pending.clear();
 			changes.forEach((level, seeds) -> {
 				if (level.tickRateManager().runsNormally())
@@ -74,6 +76,7 @@ public final class NetworkTopology {
 				else
 					pending.computeIfAbsent(level, $ -> new LinkedHashSet<>()).addAll(seeds);
 			});
+			KineticReadCache.clear();
 		}
 	}
 

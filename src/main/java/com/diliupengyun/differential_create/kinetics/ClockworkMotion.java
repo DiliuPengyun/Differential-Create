@@ -37,6 +37,13 @@ public final class ClockworkMotion {
 
     public static List<Output> outputs(KineticBlockEntity be) {
         if (!manages(be)) return List.of();
+        var cached = KineticReadCache.of(be);
+        if (cached != null && cached.clockOutputs != null) return cached.clockOutputs;
+        var outputs = collectOutputs(be);
+        if (cached != null) cached.clockOutputs = outputs;
+        return outputs;
+    }
+    private static List<Output> collectOutputs(KineticBlockEntity be) {
         var drives = ContraptionPhysics.drives(be);
         boolean incomplete = ContraptionPhysics.incomplete(be);
         var outputs = new ArrayList<Output>(2);

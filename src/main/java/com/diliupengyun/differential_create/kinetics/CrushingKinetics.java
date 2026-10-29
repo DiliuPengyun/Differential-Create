@@ -54,13 +54,22 @@ public final class CrushingKinetics {
         return null;
     }
     public static List<Pair> pairs(List<KineticNetwork> networks) {
+        var members = KineticReadCache.members(networks);
+        if (members.crushers != null) return members.crushers;
         var result = new LinkedHashMap<BlockPos, Pair>();
         for (var network : networks) for (var be : network.members.keySet())
             if (be instanceof CrushingWheelBlockEntity wheel && !be.isRemoved())
                 for (var pair : pairs(wheel)) result.put(pair.controller.getBlockPos(), pair);
-        return new ArrayList<>(result.values());
+        return members.crushers = List.copyOf(result.values());
     }
     public static List<Pair> pairs(CrushingWheelBlockEntity wheel) {
+        var cache = KineticReadCache.of(wheel);
+        if (cache != null && cache.crusherPairs != null) return cache.crusherPairs;
+        var pairs = findPairs(wheel);
+        if (cache != null) cache.crusherPairs = pairs;
+        return pairs;
+    }
+    private static List<Pair> findPairs(CrushingWheelBlockEntity wheel) {
         var result = new ArrayList<Pair>();
         if (wheel.getLevel() == null) return result;
         for (Direction side : Direction.values()) {

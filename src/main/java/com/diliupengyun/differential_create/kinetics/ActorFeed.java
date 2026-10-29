@@ -22,6 +22,13 @@ public final class ActorFeed {
     public static ActorFeed of(KineticBlockEntity be) { return ElasticKinetics.state(be).actorFeed; }
     public static boolean enabled(KineticBlockEntity be) {
         if (!ContraptionPhysics.manages(be) || ClockworkMotion.manages(be)) return false;
+        var cached = KineticReadCache.of(be);
+        if (cached != null && cached.feedKnown) return cached.feedEnabled;
+        boolean enabled = refresh(be);
+        if (cached != null) { cached.feedEnabled = enabled; cached.feedKnown = true; }
+        return enabled;
+    }
+    private static boolean refresh(KineticBlockEntity be) {
         var feed = of(be);
         var drives = ContraptionPhysics.drives(be);
         boolean present = drives.stream().anyMatch(d -> d.entity().getContraption().getActors().stream()
@@ -115,7 +122,7 @@ public final class ActorFeed {
     }
     public static void boundaries(List<com.simibubi.create.content.kinetics.KineticNetwork> networks,
                                   List<ElasticKinetics.WorkEvent> limits) {
-        for (var network : networks) for (var be : network.members.keySet()) if (enabled(be) || ClockworkMotion.manages(be))
+        for (var be : KineticReadCache.members(networks).structures) if (enabled(be) || ClockworkMotion.manages(be))
             for (var drive : ContraptionPhysics.drives(be)) for (var actor : drive.entity().getContraption().getActors()) {
                 var ctx = actor.getRight(); if (ctx == null || !MovingDeployerWork.isHand(ctx)) continue;
                 var path = drive.path(ctx); if (path == null) continue;

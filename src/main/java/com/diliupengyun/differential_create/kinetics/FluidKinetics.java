@@ -58,7 +58,7 @@ public final class FluidKinetics {
         double air = saved.airVolume(); saved.prepareQueue(Math.max(25, (pump ? 50 : 0) + arms.size() * (pump ? 25 : 50)), pump, arms);
         double change = saved.airVolume() - air; var audit = budgets.computeIfAbsent(level, key -> new WorkBudget());
         if (change > 0) audit.airInitialised += change; else audit.airOut -= change;
-        registry.put(pipe.getPos(), new WeakReference<>(pipe)); frames.remove(level);
+        registry.put(pipe.getPos(), new WeakReference<>(pipe)); invalidate(level);
     }
     public static boolean manages(Level level, BlockPos pos) { return (!level.isClientSide || PhysicsPreview.enabled(level)) && pipes.getOrDefault(level, Map.of()).containsKey(pos); }
     public static boolean hasPipes(Level level) { return !pipes.getOrDefault(level, Map.of()).isEmpty(); }
@@ -67,7 +67,7 @@ public final class FluidKinetics {
             var result = new HashSet<>(pipes.keySet()); result.removeIf(PhysicsPreview::enabled); return result;
         }
     }
-    public static void invalidate(Level level) { frames.remove(level); }
+    public static void invalidate(Level level) { frames.remove(level); KineticReadCache.invalidateFluids(); }
     public static void clear() { pipes.clear(); replacements.clear(); frames.clear(); budgets.clear(); }
     public static void resetPreview(Level level) {
         if (!PhysicsPreview.enabled(level)) throw new IllegalArgumentException("Not a physics preview");
@@ -813,6 +813,10 @@ public final class FluidKinetics {
         public long pressureSolves() { return pressureSolves; }
         public double completedFraction() { return scheduledMinutes == 0 ? 1 : advancedMinutes / scheduledMinutes; }
         boolean valid() {
+            // The synchronous rotor loop cannot load chunks or alter this graph
+            // between world callbacks. Invalidation and callbacks clear this read.
+            var reads = KineticReadCache.current();
+            if (reads != null && reads.validFluids == this) return true;
             for (var inlet : retainedInlets) if (retainedIntake(inlet.pipe, inlet.side) == null && !bufferedInput(inlet.pipe, inlet.side)) return false;
             for (var pos : inactive) if (ticking(level, pos)) return false;
             for (var entry : captured.entrySet()) {
@@ -824,6 +828,7 @@ public final class FluidKinetics {
                 || loadedEntity(level, e.getKey()) != adjacentEntities.get(e.getKey())) return false;
             for (var c : components) for (var e : c.endpoints)
                 if (!e.retained && ((IPipePressure)e.pipe.getConnection(e.side)).differentialcreate$source() != e.source) return false;
+            if (reads != null) reads.validFluids = this;
             return true;
         }
         void beginTick() {

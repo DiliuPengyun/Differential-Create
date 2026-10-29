@@ -114,6 +114,8 @@ public final class KineticPhysicsTests {
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "boundary_snapshot", timeoutTicks = 100)
 	public static void boundarySnapshotReuse(GameTestHelper helper) { forceImpactChunks(helper); BoundarySnapshotTests.capture(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "boundary_read_cache", timeoutTicks = 100)
+	public static void boundaryReadCache(GameTestHelper helper) { forceImpactChunks(helper); BoundarySnapshotTests.capture(helper, true); }
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "nested_geometry", timeoutTicks = 100)
 	public static void nestedContraptionGeometry(GameTestHelper helper) { forceImpactChunks(helper); NestedContraptionTests.geometry(helper); }

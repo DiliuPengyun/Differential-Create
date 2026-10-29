@@ -26,9 +26,11 @@ public final class MachiningClock {
         if (!level.tickRateManager().runsNormally()) return;
         NetworkTopology.flush();
         for (var network : networks(level)) ClutchPhysics.prepare(network);
-        ContraptionMotion.begin(level);
-        try { advanceRotors(level); }
-        finally { ContraptionMotion.end(level); }
+        try (var reads = KineticReadCache.open()) {
+            ContraptionMotion.begin(level);
+            try { advanceRotors(level); }
+            finally { ContraptionMotion.end(level); }
+        }
     }
     private static void advanceRotors(Level level) {
         FluidKinetics.beginTick(level);
@@ -39,12 +41,13 @@ public final class MachiningClock {
         FluidKinetics.Frame fluids = FluidKinetics.hasPipes(level) ? FluidKinetics.capture(level) : null;
         Map<KineticBlockEntity, Double> hydraulicTorques = fluids == null ? Map.of()
             : FluidKinetics.advance(fluids, RotationMath.TICK_MINUTES);
+        KineticReadCache.clear();
         while (remaining > 1e-14) {
             NetworkTopology.flush();
             var networks = networks(level);
             ContraptionMotion.resolveStops(networks);
             if (SequencerKinetics.finishReady(networks)) continue;
-            for (var network : networks) for (var shaft : network.members.keySet()) ActorFeed.prepare(shaft);
+            for (var shaft : KineticReadCache.members(networks).structures) ActorFeed.prepare(shaft);
             var phases = new ArrayList<Phase>();
             boolean immediate = false, motionBounded = false;
             for (var binding : MachineWork.collect(networks)) {
@@ -63,14 +66,14 @@ public final class MachiningClock {
             if (immediate) continue;
             var docks = com.diliupengyun.differential_create.kinetics.portable.PortableDocking.prepare(networks);
             motionBounded |= !docks.isEmpty();
-            motionBounded |= networks.stream().anyMatch(n -> n.members.keySet().stream().anyMatch(ActorFeed::enabled));
+            motionBounded |= KineticReadCache.members(networks).structures.stream().anyMatch(ActorFeed::enabled);
             for (var network : networks) ElasticKinetics.refresh(network);
             // A change of direction must be observed before a tool can leave its contact.
             double horizon = motionBounded ? Math.min(remaining, RotationMath.TICK_MINUTES / 8) : remaining;
             if (SequencerKinetics.needsControl(networks)) horizon = Math.min(horizon, SequencerMotion.CONTROL_INTERVAL);
             // An unassembled controller has no position plant and must not force
             // every unrelated network in this level onto its control interval.
-            if (networks.stream().anyMatch(n -> n.members.keySet().stream().anyMatch(MachiningClock::needsPositionControl)))
+            if (KineticReadCache.members(networks).structures.stream().anyMatch(MachiningClock::needsPositionControl))
                 horizon = Math.min(horizon, PositionServo.CONTROL_INTERVAL);
             if (fluids != null && !fluids.valid()) fluids = FluidKinetics.capture(level);
             // Loads and limits stay fixed while accepted steps locate the next physical event.
@@ -89,7 +92,6 @@ public final class MachiningClock {
             ActorFeed.boundaries(networks, limits);
             ContraptionMotion.boundaries(limits);
             var snapshot = ElasticKinetics.snapshot(networks, hydraulicTorques);
-            snapshot.setExternalTorques(hydraulicTorques);
             SequencerKinetics.boundaries(networks, limits);
             trial = limits.isEmpty() ? snapshot.sample(horizon) : snapshot.advanceToEvent(horizon, limits);
             double[] advances = new double[phases.size()];
