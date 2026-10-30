@@ -137,13 +137,34 @@ public final class SequencerKinetics {
                 m.direction > 0 ? budget : Double.POSITIVE_INFINITY, m.direction < 0 ? budget : Double.POSITIVE_INFINITY), 0, true));
         }
     }
+    private static boolean ready(KineticBlockEntity be) {
+        if (be.isRemoved()) return false;
+        var servo = (ISequencerDynamics) be;
+        var m = servo.differentialcreate$motion(); var program = servo.differentialcreate$program();
+        return m.index >= 0 && m.index < program.size() && program.get(m.index).moving() && m.complete();
+    }
+    static boolean hasReady(List<KineticNetwork> networks) {
+        return KineticReadCache.members(networks).sequencers.stream().anyMatch(entry -> ready(entry.shaft()));
+    }
+    /** Completion requires reaching the target even if the post-step load changes
+     * the exit-speed plan. An unstarted direction may acquire a new target. */
+    static boolean mayFinish(List<KineticNetwork> networks, ElasticKinetics.Trial trial) {
+        for (var entry : KineticReadCache.members(networks).sequencers) {
+            var be = entry.shaft(); if (be.isRemoved()) continue;
+            var servo = (ISequencerDynamics) be;
+            var m = servo.differentialcreate$motion(); var program = servo.differentialcreate$program();
+            if (m.index < 0 || m.index >= program.size() || !program.get(m.index).moving()) continue;
+            double end = m.angle + trial.outputTravel(be) * RotationMath.TICK_MINUTES;
+            if (m.inputDirection == 0 || m.direction * (m.target - end) <= SequencerMotion.POSITION_EPSILON + 1e-12) return true;
+        }
+        return false;
+    }
     public static boolean finishReady(List<KineticNetwork> networks) {
         boolean advanced = false;
         for (var entry : KineticReadCache.members(networks).sequencers) {
             var be = entry.shaft(); if (be.isRemoved()) continue;
             var servo = (ISequencerDynamics) be;
-            var m = servo.differentialcreate$motion(); var program = servo.differentialcreate$program();
-            if (m.index >= 0 && m.index < program.size() && program.get(m.index).moving() && m.complete()) {
+            if (ready(be)) {
                 MachineWork.event(servo::differentialcreate$finishMotion); advanced = true;
             }
         }

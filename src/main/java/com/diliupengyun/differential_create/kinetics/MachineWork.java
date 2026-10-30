@@ -56,10 +56,10 @@ public final class MachineWork {
 		return be instanceof ShaftWork work ? work : null;
 	}
 	public static List<Binding> collect(List<KineticNetwork> networks) {
-		var cache = KineticReadCache.current();
-		if (cache != null && cache.work != null && networks.equals(cache.workNetworks)) return cache.work;
+		var cache = KineticReadCache.group(networks);
+		if (cache != null && cache.work != null) return cache.work;
 		var bindings = collectUncached(networks);
-		if (cache != null) { cache.workNetworks = List.copyOf(networks); cache.work = bindings; }
+		if (cache != null) cache.work = bindings;
 		return bindings;
 	}
 	private static List<Binding> collectUncached(List<KineticNetwork> networks) {

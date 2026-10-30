@@ -81,6 +81,8 @@ public final class PhysicsPerformanceAudit {
             String json = new GsonBuilder().setPrettyPrinting().create().toJson(report);
             Files.writeString(folder.resolve("summary.json"), json);
             System.out.println("[DC performance] complete " + json);
+            if (Boolean.getBoolean("differentialcreate.performanceExit") && net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
+                net.minecraft.client.Minecraft.getInstance().execute(() -> net.minecraft.client.Minecraft.getInstance().stop());
         } catch (Exception failure) {
             throw new IllegalStateException("Cannot save physics performance audit", failure);
         }

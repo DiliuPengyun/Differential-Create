@@ -155,12 +155,18 @@ public final class ContraptionMotion {
 		} finally { frames.get().sampling = false; }
 	}
 	public static void advance(ElasticKinetics.Trial trial) {
-		for (var output : frames.get().outputs.values()) if (!output.ready && !output.drive.shaft().isRemoved())
+		for (var output : frames.get().outputs.values()) if (!output.ready && output.drive != null
+			&& trial.contains(output.drive.shaft()) && !output.drive.shaft().isRemoved())
 			output.advance(trial.structureTravel(output.drive));
 	}
 	/** Geometric limits belong to every structure, including ones without tools. */
 	public static void boundaries(java.util.List<ElasticKinetics.WorkEvent> limits) {
+		boundaries(null, limits);
+	}
+	public static void boundaries(java.util.List<com.simibubi.create.content.kinetics.KineticNetwork> networks,
+		java.util.List<ElasticKinetics.WorkEvent> limits) {
 		for (var output : frames.get().outputs.values()) if (!output.ready && output.drive != null && !output.drive.shaft().isRemoved()) {
+			if (networks != null && networks.stream().noneMatch(n -> n.members.containsKey(output.drive.shaft()))) continue;
 			double positive = output.upperTravel - output.signedTravel, negative = output.signedTravel - output.lowerTravel;
 			// Already supported directions are handled by the unilateral reaction.
 			positive = positive <= MOTION_EPSILON ? Double.POSITIVE_INFINITY : positive;

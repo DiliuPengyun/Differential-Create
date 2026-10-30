@@ -1,6 +1,7 @@
 package com.diliupengyun.differential_create.kinetics;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import com.simibubi.create.content.kinetics.KineticNetwork;
@@ -40,16 +41,21 @@ final class KineticReadCache implements AutoCloseable {
 
     private static final ThreadLocal<KineticReadCache> current = new ThreadLocal<>();
     private final IdentityHashMap<KineticBlockEntity, Entry> entries = new IdentityHashMap<>();
+    static final class Group {
+        final Members members;
+        ElasticKinetics.Layout layout;
+        List<MachineWork.Binding> work;
+        Group(List<KineticNetwork> networks) { members = new Members(networks); }
+    }
+    private final HashMap<List<KineticNetwork>, Group> groups = new HashMap<>();
     private final KineticReadCache previous;
-    ElasticKinetics.Layout layout;
-    private Members members;
+    private long revision;
     FluidKinetics.Frame validFluids;
-    List<KineticNetwork> workNetworks;
-    List<MachineWork.Binding> work;
 
     private KineticReadCache() { previous = current.get(); current.set(this); }
     static KineticReadCache open() { return new KineticReadCache(); }
     static KineticReadCache current() { return current.get(); }
+    static long revision() { var cache = current.get(); return cache == null ? 0 : cache.revision; }
     static Entry of(KineticBlockEntity be) {
         var cache = current.get();
         if (cache == null) return null;
@@ -58,11 +64,15 @@ final class KineticReadCache implements AutoCloseable {
         return entry;
     }
     static Members members(List<KineticNetwork> networks) {
+        var group = group(networks);
+        return group == null ? new Members(networks) : group.members;
+    }
+    static Group group(List<KineticNetwork> networks) {
         var cache = current.get();
-        if (cache != null && cache.members != null && networks.equals(cache.members.networks)) return cache.members;
-        var members = new Members(networks);
-        if (cache != null) cache.members = members;
-        return members;
+        if (cache == null) return null;
+        var group = cache.groups.get(networks);
+        if (group == null) { group = new Group(networks); cache.groups.put(List.copyOf(networks), group); }
+        return group;
     }
     static void invalidateFluids() {
         var cache = current.get();
@@ -76,7 +86,7 @@ final class KineticReadCache implements AutoCloseable {
         var cache = current.get();
         if (cache != null) { cache.entries.clear(); cache.invalidateStructure(); }
     }
-    private void invalidateStructure() { layout = null; work = null; members = null; validFluids = null; }
+    private void invalidateStructure() { revision++; groups.clear(); validFluids = null; }
     @Override public void close() {
         if (previous == null) current.remove(); else current.set(previous);
     }

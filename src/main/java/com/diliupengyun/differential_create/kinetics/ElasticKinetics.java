@@ -268,6 +268,7 @@ public final class ElasticKinetics {
             return changed ? new TorsionSolver.Result(result.duration(), speed, result.twist(), angle,
                 result.travel(), result.torque(), result.slipping(), result.broken(), result.workTravel()) : result;
         }
+        public boolean contains(KineticBlockEntity be) { return indices.containsKey(be); }
         public double crushingTravel(CrushingKinetics.Pair pair) {
             Integer at = crushing.get(pair);
             return at == null ? 0 : result.workTravel()[at] / (2 * RotationMath.TICK_MINUTES);
@@ -500,8 +501,8 @@ public final class ElasticKinetics {
         }
     }
     private static Layout layout(List<KineticNetwork> networks) {
-        var cache = KineticReadCache.current();
-        if (cache != null && cache.layout != null && networks.equals(cache.layout.networks)) return cache.layout;
+        var cache = KineticReadCache.group(networks);
+        if (cache != null && cache.layout != null) return cache.layout;
         var layout = new Layout(networks);
         if (cache != null) cache.layout = layout;
         return layout;

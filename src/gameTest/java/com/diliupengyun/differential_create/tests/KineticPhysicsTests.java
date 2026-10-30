@@ -64,6 +64,16 @@ public final class KineticPhysicsTests {
 
 	private static final String TEMPLATE = "physics_test";
 	private static final int TOTAL_CHECKS = 14;
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "island_clock", timeoutTicks = 80)
+	public static void islandClockIsolation(GameTestHelper h) { forceImpactChunks(h); KineticIslandTests.isolation(h, false); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "island_sequencer", timeoutTicks = 80)
+	public static void islandSequencerIsolation(GameTestHelper h) { forceImpactChunks(h); KineticIslandTests.isolation(h, true); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "island_recipe", timeoutTicks = 80)
+	public static void islandRecipeBarrier(GameTestHelper h) { forceImpactChunks(h); KineticIslandTests.recipeBarrier(h); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "island_fracture", timeoutTicks = 80)
+	public static void islandFractureBarrier(GameTestHelper h) { forceImpactChunks(h); KineticIslandTests.recipeBarrier(h, true); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "island_unknown", timeoutTicks = 80)
+	public static void islandUnknownMachine(GameTestHelper h) { forceImpactChunks(h); KineticIslandTests.unknownMachine(h); }
 
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "gravity_bearing", timeoutTicks = 100)
 	public static void gravityBearings(GameTestHelper helper) { forceImpactChunks(helper); ContraptionGravityTests.bearings(helper); }

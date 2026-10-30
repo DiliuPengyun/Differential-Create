@@ -38,7 +38,39 @@ final class BoundarySearchRegression {
         typedFractureClock();
         directionWakeups();
         absoluteOnlyFullProof();
+        alignedIslandPrefixes();
         System.out.println("Boundary search regression: " + checks + " checks passed");
+    }
+
+    private static void alignedIslandPrefixes() {
+        var random = new java.util.Random(3298107);
+        int corrected = 0;
+        for (int n = 0; n < 1000; n++) {
+            var bodies = List.of(new Body(.1 + random.nextDouble(), 64 * random.nextDouble(), 0, 0, 0),
+                new Body(.1 + random.nextDouble(), -32 * random.nextDouble(), 0, 8, 0));
+            double stiffness = Math.pow(10, 5 + random.nextDouble() * 4);
+            var links = List.of(new Link(0, 1, 1, stiffness, .01, n % 2 == 0 ? 8192 : INF, n % 3 == 0 ? 32 : INF));
+            double[] speed = {256 * (random.nextDouble() - .5), 256 * (random.nextDouble() - .5)};
+            double[] twist = {(random.nextDouble() - .5) * 1e-5};
+            double budget = random.nextDouble() * .01;
+            var limits = n % 2 == 0 ? List.<EventLimit>of() : List.of(new EventLimit(0, budget, INF, INF));
+            var snapshot = TorsionSolver.prepare(bodies, links, speed, twist);
+            var free = TorsionSolver.prepare(List.of(new Body(1, 0, 0, 0, 0)), List.of(), new double[]{40}, new double[0]);
+            Result full = limits.isEmpty() ? snapshot.advance(DT, H) : snapshot.advanceToEvent(DT / 8, H, limits);
+            for (double fraction : new double[]{.1, .3, .5, .9, .999, .99999}) {
+                double requested = full.duration() * fraction;
+                var aligned = ShaftClock.<Result>align(0, requested, 1e-14, List.of(at -> {
+                    var prefix = limits.isEmpty() ? snapshot.advance(at, H) : snapshot.advanceToEvent(at, H, limits);
+                    return new ShaftClock.Prefix<>(prefix.duration(), prefix);
+                }, at -> new ShaftClock.Prefix<>(at, free.advance(at, H))));
+                if (aligned.time() < requested - 1e-14) corrected++;
+                check(aligned.time() <= requested && Math.abs(aligned.states().getFirst().duration() - aligned.time()) <= 1e-14,
+                    "shortened island events align before either numerical state is committed");
+                check(Math.abs(aligned.states().getLast().angle()[0] - 40 * aligned.time()) <= 1e-14,
+                    "an unrelated rotor reaches the refined event time, without losing or inventing motion");
+            }
+        }
+        check(corrected > 0, "the fixture exercises a shortened implicit step that moves the event earlier");
     }
 
     private static void absoluteOnlyFullProof() {
