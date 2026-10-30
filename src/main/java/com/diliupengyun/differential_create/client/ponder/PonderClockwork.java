@@ -17,10 +17,13 @@ import net.minecraft.world.phys.Vec3;
 /** Clock changes are targets; finite passive couplings move each physical hand. */
 public final class PonderClockwork {
     private static final class Clock {
-        double hours, minutes;
+        double hours, minutes, minuteOrigin;
         boolean running, active;
         final Motion hour = new Motion(), minute = new Motion();
-        long time() { return Math.floorMod(Math.round(hours / 30 * 1000 - 6000 + Math.floorMod(Math.round(minutes / 6), 60) * 1000d / 60), 24000); }
+        long time() {
+            double minutePhase = minutes - minuteOrigin;
+            return Math.floorMod(Math.round(hours / 30 * 1000 - 6000 + minutePhase * 1000 / 360), 24000);
+        }
     }
     public static final class Motion {
         public double angle, previousAngle, speed, inertia, drag;
@@ -49,7 +52,13 @@ public final class PonderClockwork {
         hands.putIfAbsent(section, new Hand(bearing, minute, axis, section.getAnimatedRotation(),
             minute ? state.differentialcreate$minuteAngle() : state.differentialcreate$hourAngle()));
         var clock = clocks.computeIfAbsent(bearing, ignored -> new Clock());
-        if (minute) clock.minutes += degrees; else clock.hours += degrees;
+        if (minute) clock.minutes += degrees;
+        else {
+            clock.hours += degrees;
+            // Minutes carry into the hour until the storyboard explicitly
+            // updates that hour. A later hour command acknowledges the carry.
+            clock.minuteOrigin = 360 * Math.floor(clock.minutes / 360);
+        }
         clock.running = true;
         var cells = new java.util.HashMap<BlockPos, ContraptionGeometry.Cell>();
         for (var pos : selection) if (!world.getBlockState(pos).isAir()) {
@@ -61,7 +70,7 @@ public final class PonderClockwork {
     public void stop(PonderLevel world, BlockPos pos) {
         if (!(world.getBlockEntity(pos) instanceof ClockworkBearingBlockEntity bearing)) return;
         var clock = clocks.computeIfAbsent(bearing, ignored -> new Clock());
-        clock.running = false; clock.hours = clock.minutes = 0;
+        clock.running = false; clock.hours = clock.minutes = clock.minuteOrigin = 0;
         clock.hour.angle = clock.minute.angle = clock.hour.speed = clock.minute.speed = 0;
         clock.hour.previousAngle = clock.minute.previousAngle = 0;
         var state = (ClockworkBearingAccessor) bearing;

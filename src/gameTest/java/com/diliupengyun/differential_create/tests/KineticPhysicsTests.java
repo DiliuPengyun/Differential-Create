@@ -89,11 +89,13 @@ public final class KineticPhysicsTests {
 	public static void kineticTickStep(GameTestHelper helper) { TickStepTests.run(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_orientation", timeoutTicks = 100)
 	public static void clockOrientation(GameTestHelper helper) { forceImpactChunks(helper); ClockOrientationTests.run(helper); }
-	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_hour_first", timeoutTicks = 220)
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_targets", timeoutTicks = 20)
+	public static void clockTargets(GameTestHelper helper) { ClockHandsTests.targets(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_hour_first", timeoutTicks = 540)
 	public static void clockHourFirst(GameTestHelper helper) { forceImpactChunks(helper); ClockHandsTests.run(helper, 0); }
-	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_minute_first", timeoutTicks = 220)
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_minute_first", timeoutTicks = 540)
 	public static void clockMinuteFirst(GameTestHelper helper) { forceImpactChunks(helper); ClockHandsTests.run(helper, 1); }
-	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_24_hour", timeoutTicks = 220)
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_24_hour", timeoutTicks = 540)
 	public static void clock24Hour(GameTestHelper helper) { forceImpactChunks(helper); ClockHandsTests.run(helper, 2); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "clock_control", timeoutTicks = 320)
 	public static void clockContinuousControl(GameTestHelper helper) { forceImpactChunks(helper); PositionControlTests.clock(helper); }

@@ -37,11 +37,12 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  * position, velocity or physics time is assigned. Artifacts require visual review. */
 public final class StructureClientAudit {
     private record Spec(String name, String kind, Direction facing, int variant, int mode) {}
-    private record View(String name, int tick, int entity, Vec3 position, double offset, double speed, BlockPos controller) {}
+    private record View(String name, int tick, int entity, Vec3 position, double offset, double speed, BlockPos controller, boolean continuousClock) {}
     private static final List<Spec> cases = new ArrayList<>();
     private static final List<Map<String, Object>> report = new ArrayList<>();
     private static final Path directory = Path.of(System.getProperty("differentialcreate.structureClientReport", "structure-audit"));
     private static final List<String> rows = new ArrayList<>(), failures = new ArrayList<>();
+    private static final List<String> clockRows = new ArrayList<>();
     private static final Map<Integer, Vec3[]> childFrames = new HashMap<>();
     private static final Set<String> checkedNested = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static final Set<String> checkedClocks = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -89,7 +90,9 @@ public final class StructureClientAudit {
                         for (int shape = 0; shape < 3; shape++) for (int mode = 0; mode < 3; mode++) add("bearing", facing, shape, mode);
                         for (int sticky = 0; sticky < 2; sticky++) for (int mode = 0; mode < 3; mode++) add("piston", facing, sticky, mode);
                         for (int side = 0; side < 2; side++) add("gantry", facing, side, 0);
-                        add("clock", facing, 0, 0);
+                        for (int mode = 0; mode < 3; mode++) {
+                            add("clock", facing, 0, mode); add("clock", facing, 1, mode);
+                        }
                     }
                     for (int shape = 0; shape < 2; shape++) for (int mode : new int[]{0, 2}) {
                         add("pulley", Direction.EAST, shape, mode); add("pulley", Direction.SOUTH, shape, mode);
@@ -109,7 +112,8 @@ public final class StructureClientAudit {
             if (current == null || current.tick == captured || current.tick < 5) return;
             boolean boundary = current.tick <= 25 || current.tick >= 174 || Math.abs(current.tick - 45) <= 4
                 || Math.abs(current.tick - 95) <= 4 || Math.abs(current.tick - 140) <= 4
-                || Math.abs(current.tick - 30) <= 4 || Math.abs(current.tick - 100) <= 4;
+                || Math.abs(current.tick - 30) <= 4 || Math.abs(current.tick - 100) <= 4
+                || current.continuousClock && Math.abs(current.tick - 155) <= 5;
             if (!boundary && current.tick % 10 != 0) return;
             captured = current.tick;
             var folder = directory.resolve(current.name); Files.createDirectories(folder);
@@ -137,7 +141,8 @@ public final class StructureClientAudit {
                         double inputInertia = InertiaRegistry.getInertia(clock), inputSpeed = NetworkDynamics.preciseSpeed(clock);
                         PositionControlTests.assertGoggleValue(clock, false, "inertia", inputInertia + inertia);
                         PositionControlTests.assertGoggleValue(clock, true, "local_energy", .5 * inputInertia * inputSpeed * inputSpeed + energy);
-                        clockReadouts.merge(current.name, energy > 1e-6 ? 1 : current.tick >= 140 ? 2 : 0, (a, b) -> a | b);
+                        boolean parkedWindow = current.continuousClock ? current.tick >= 60 && current.tick < 95 : current.tick >= 140;
+                        clockReadouts.merge(current.name, energy > 1e-6 ? 1 : parkedWindow ? 2 : 0, (a, b) -> a | b);
                         var clockRows = folder.resolve("clock-readout.csv");
                         if (!Files.exists(clockRows)) Files.writeString(clockRows, "tick,hand_inertia,hand_energy,input_rpm,local_energy\n");
                         Files.writeString(clockRows, current.tick + "," + inertia + "," + energy + "," + inputSpeed + ","
@@ -207,17 +212,22 @@ public final class StructureClientAudit {
         if (!initialized || done || world == null || index < 0) return;
         try {
             var spec = cases.get(index); age++;
+            boolean continuousClock = spec.kind.equals("clock") && spec.variant == 1;
             // Let real chunks, meshes and entity tracking arrive after teleport.
             // Starting the motor during the first loading frame hides assembly.
             if (age < 0) return;
             if (age == 0) power(command);
-            if (spec.kind.equals("clock") && age == 30) world.setDayTime(12500);
-            if (spec.kind.equals("clock") && age == 100) world.setDayTime(18000);
+            if (spec.kind.equals("clock") && !continuousClock && age == 30) world.setDayTime(12500);
+            if (spec.kind.equals("clock") && !continuousClock && age == 100) world.setDayTime(18000);
+            if (continuousClock && age == 95) world.getGameRules().getRule(GameRules.RULE_DAYLIGHT).set(true, world.getServer());
             if (age == 20) {
                 var be = world.getBlockEntity(base);
                 if (be instanceof MechanicalBearingBlockEntity bearing && !bearing.isRunning()) bearing.assemble();
                 else if (be instanceof ClockworkBearingBlockEntity clock && !clock.isRunning()) clock.assemble();
                 else if (be instanceof ElevatorPulleyBlockEntity elevator) elevator.clicked();
+                if (be instanceof ClockworkBearingAccessor clock
+                    && (clock.differentialcreate$hour() == null || clock.differentialcreate$minute() == null))
+                    throw new AssertionError("Clock fixture must assemble two independently attached hands");
             }
             if (spec.kind.equals("elevator") && (age == 30 || age == 100)) {
                 var elevator = (ElevatorPulleyBlockEntity) world.getBlockEntity(base);
@@ -239,8 +249,8 @@ public final class StructureClientAudit {
                 if (start == null) start = root.position();
                 moved |= root.position().distanceTo(start) > .05 || root instanceof com.simibubi.create.content.contraptions.ControlledContraptionEntity c && Math.abs(c.getAngle(1)) > 5;
             }
-            if (age == 45) world.setBlockAndUpdate(motor, Blocks.AIR.defaultBlockState());
-            if (age == 95) power(-command);
+            if (age == 45 && !continuousClock) world.setBlockAndUpdate(motor, Blocks.AIR.defaultBlockState());
+            if (age == 95 && !continuousClock) power(-command);
             if (age == 140 && spec.kind.equals("gantry")) {
                 Direction powerSide = spec.facing.getAxis() == Direction.Axis.X ? Direction.NORTH : Direction.WEST;
                 for (int n = -10; n <= 10; n++) {
@@ -264,7 +274,13 @@ public final class StructureClientAudit {
                 + "," + offset + "," + speed + "," + (owner == null ? 0 : ActorFeed.speed(owner)) + "," + (root == null || root.isRemoved())
                 + "," + (root instanceof com.simibubi.create.content.contraptions.ControlledContraptionEntity c ? c.getAngle(1) : 0)
                 + "," + ContraptionMotion.angular(root));
-            view = new View(spec.name, age, root == null ? -1 : root.getId(), position, offset, speed, base);
+            if (owner instanceof ClockworkBearingBlockEntity clock) {
+                var hands = ClockworkMotion.of(clock); var access = (ClockworkBearingAccessor) clock;
+                if (access.differentialcreate$minute() != null) moved |= Math.abs(access.differentialcreate$minute().getAngle(1)) > 5;
+                clockRows.add(age + "," + world.getDayTime() + "," + hands.hour.angle * 180 + "," + hands.minute.angle * 360
+                    + "," + hands.hour.speed * .5 + "," + hands.minute.speed);
+            }
+            view = new View(spec.name, age, root == null ? -1 : root.getId(), position, offset, speed, base, continuousClock);
             if (age >= 180) {
                 if (!assembled || !moved) failures.add(spec.name + ": assembled=" + assembled + ", moved=" + moved);
                 if (spec.kind.equals("bearing") && spec.variant == 2 && !checkedNested.contains(spec.name))
@@ -299,8 +315,10 @@ public final class StructureClientAudit {
             return;
         }
         var s = cases.get(index); age = -80; root = null; start = null; assembled = moved = false; rows.clear(); view = null;
-        world.setDayTime(6000);
+        world.getGameRules().getRule(GameRules.RULE_DAYLIGHT).set(false, world.getServer());
+        world.setDayTime(s.kind.equals("clock") && s.variant == 1 ? 17940 : 6000);
         rows.add("tick,entity,x_m,y_m,z_m,offset_m,input_rpm,output_rpm,removed,angle_deg,pending_deg");
+        clockRows.clear(); clockRows.add("tick,day_time,first_angle,second_angle,first_rpm,second_rpm");
         int grid = index + Integer.getInteger("differentialcreate.structureClientGridStart", 0);
         base = new BlockPos((grid % 8) * 48, -40, (grid / 8) * 48);
         var axis = s.facing.getAxis();
@@ -313,10 +331,14 @@ public final class StructureClientAudit {
             var anchor = base.relative(s.facing);
             for (int n = s.variant == 1 ? -2 : 0; n <= 2; n++) put(anchor.relative(radial, n), Blocks.SLIME_BLOCK.defaultBlockState());
             if (s.variant == 1) {
-                put(anchor.relative(radial, 2), Blocks.RED_CONCRETE.defaultBlockState());
-                put(anchor.relative(radial, -2), Blocks.YELLOW_CONCRETE.defaultBlockState());
+                // Keep coloured tips beyond the honey arm: a tip beside honey
+                // would glue both hands together through the concrete.
+                int tip = s.kind.equals("clock") ? 3 : 2;
+                put(anchor.relative(radial, tip), Blocks.RED_CONCRETE.defaultBlockState());
+                put(anchor.relative(radial, -tip), Blocks.YELLOW_CONCRETE.defaultBlockState());
             } else put(anchor.relative(radial, 3), Blocks.RED_CONCRETE.defaultBlockState());
             if (s.kind.equals("clock")) {
+                ((ClockworkBearingAccessor) world.getBlockEntity(base)).differentialcreate$operationMode().setValue(s.mode);
                 for (int n = 0; n < 3; n++) put(base.relative(s.facing, 2).relative(radial, n), Blocks.HONEY_BLOCK.defaultBlockState());
                 put(base.relative(s.facing, 2).relative(radial, 3), Blocks.BLUE_CONCRETE.defaultBlockState());
             }
@@ -365,7 +387,11 @@ public final class StructureClientAudit {
         var player = world.getServer().getPlayerList().getPlayers().getFirst();
         player.getAbilities().flying = true; player.onUpdateAbilities();
         var target = Vec3.atCenterOf(base).add(0, -2, 0);
-        var camera = target.add(12, 6, 14); var delta = target.subtract(camera.add(0, player.getEyeHeight(), 0));
+        boolean continuousClock = s.kind.equals("clock") && s.variant == 1;
+        if (continuousClock) for (var direction : Direction.values())
+            put(base.relative(direction, 5), Blocks.LIGHT.defaultBlockState());
+        var camera = continuousClock ? target.add(7, 3, 8) : target.add(12, 6, 14);
+        var delta = target.subtract(camera.add(0, player.getEyeHeight(), 0));
         float yaw = (float) Math.toDegrees(Math.atan2(-delta.x, delta.z));
         float pitch = (float) -Math.toDegrees(Math.atan2(delta.y, Math.sqrt(delta.x * delta.x + delta.z * delta.z)));
         player.connection.teleport(camera.x, camera.y, camera.z, yaw, pitch);
@@ -379,6 +405,7 @@ public final class StructureClientAudit {
     private static void finish() throws Exception {
         var s = cases.get(index); var folder = directory.resolve(s.name); Files.createDirectories(folder);
         Files.write(folder.resolve("server.csv"), rows);
+        if (s.kind.equals("clock")) Files.write(folder.resolve("clock-server.csv"), clockRows);
         report.add(Map.of("name", s.name, "controller", base.toShortString(), "assembled", assembled, "moved", moved));
         Files.writeString(directory.resolve("manifest.json"), new GsonBuilder().setPrettyPrinting().create().toJson(report));
         world.setBlockAndUpdate(motor, Blocks.AIR.defaultBlockState());

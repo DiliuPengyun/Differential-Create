@@ -80,9 +80,9 @@ final class PositionControlTests {
                 h.assertTrue(load.status() == LoadFactor.Status.AVAILABLE && load.fraction() < 1e-5,
                     "parked hands do not charge their gravity or air drag to the spinning input: " + Direction.values()[i] + " " + load);
                 checkClockReadout(be);
-                held[i] = clock.differentialcreate$hourAngle();
+                held[i] = clock.differentialcreate$minuteAngle();
             }
-            h.getLevel().setDayTime(12517); // minute target changes by 6 degrees; hour target is unchanged
+            h.getLevel().setDayTime(13500); // one hour later: same minute phase, different hour target
         });
         h.onEachTick(() -> {
             for (int i = 0; i < positions.size(); i++) {
@@ -117,10 +117,10 @@ final class PositionControlTests {
         h.runAfterDelay(280, () -> {
             for (int i = 0; i < positions.size(); i++) {
                 ClockworkBearingBlockEntity be = h.getBlockEntity(positions.get(i)); var clock = (ClockworkBearingAccessor) be;
-                h.assertTrue(Math.abs(AngleHelper.getShortestAngleDiff((float) held[i], clock.differentialcreate$hourAngle())) < .01,
-                    "moving the minute hand does not move the parked hour hand");
-                h.assertTrue(Math.abs(AngleHelper.getShortestAngleDiff(clock.differentialcreate$minuteAngle(), clock.differentialcreate$minuteTarget())) < .01,
-                    "minute hand independently reaches its new target");
+                h.assertTrue(Math.abs(AngleHelper.getShortestAngleDiff((float) held[i], clock.differentialcreate$minuteAngle())) < .01,
+                    "moving the hour hand does not move the parked minute hand");
+                h.assertTrue(Math.abs(AngleHelper.getShortestAngleDiff(clock.differentialcreate$hourAngle(), clock.differentialcreate$hourTarget(false))) < .01,
+                    "hour hand independently reaches its new target");
                 be.disassemble();
                 checkClockReadout(be);
                 h.assertTrue(!MachiningClock.needsPositionControl(be), "disassembled clock releases its control interval");
@@ -280,7 +280,7 @@ final class PositionControlTests {
         }
         return restored;
     }
-    private static void save(String name, java.util.List<String> rows) {
+    static void save(String name, java.util.List<String> rows) {
         try { var path = java.nio.file.Path.of(System.getProperty("differentialcreate.gravity.report", "build"), name);
             java.nio.file.Files.createDirectories(path.getParent()); java.nio.file.Files.write(path, rows);
         } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
