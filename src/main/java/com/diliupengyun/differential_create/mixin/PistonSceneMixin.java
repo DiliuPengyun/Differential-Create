@@ -13,9 +13,19 @@ import net.createmod.ponder.api.scene.SceneBuilder;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(PistonScenes.class)
 public abstract class PistonSceneMixin {
+    @Inject(method = "movement", at = @At("RETURN"))
+    private static void differentialcreate$finishAfterLoadArrives(SceneBuilder builder,
+        net.createmod.ponder.api.scene.SceneBuildingUtil util, CallbackInfo ci) {
+        builder.idle(60);
+        builder.addInstruction(new com.diliupengyun.differential_create.client.ponder.PonderAwait(scene ->
+            PonderSimulation.of(scene.getWorld()).point(new net.minecraft.core.BlockPos(3, 1, 1)).x <= 1.001, 160));
+    }
+
     @WrapOperation(method = "poles", at = @At(value = "INVOKE",
         target = "Lcom/simibubi/create/foundation/ponder/CreateSceneBuilder$SpecialInstructions;moveParrot(Lnet/createmod/ponder/api/element/ElementLink;Lnet/minecraft/world/phys/Vec3;I)V"))
     private static void differentialcreate$rideActualPiston(CreateSceneBuilder.SpecialInstructions special,

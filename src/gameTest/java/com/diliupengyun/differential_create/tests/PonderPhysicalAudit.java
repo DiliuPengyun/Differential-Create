@@ -30,7 +30,7 @@ final class PonderPhysicalAudit {
         source(false); source(true); honeySource(); shortWaterNetwork(); deployer(false); deployer(true);
         basin(false, false); basin(true, false); basin(false, true); basin(true, true); hopper();
         breaking(false); breaking(true); clockwork(false); clockwork(true); hoseMotion(false); hoseMotion(true); linearEndpoints(); roller(false); roller(true);
-        pulleyStroke(false); pulleyStroke(true); gantryDisassembly();
+        pulleyStroke(false); pulleyStroke(true); gantryDisassembly(); movingSectionNeighbours();
         mountTransitions(); toolReplacement(); dockTransitions(false); dockTransitions(true); templateCommands(); isolatedCallbacks();
         depotPressing(4, false); depotPressing(1, true); depotPressing(4, true); depotPressing(64, true);
         DifferentialCreate.LOGGER.info("DC_PONDER_PHYSICAL_INPUTS: finite/renewable water, reserved stock, filter refusal, zero-drive work, paid recipes, native block loot, inventory transfer, tool wear and clock isolation passed");
@@ -106,6 +106,29 @@ final class PonderPhysicalAudit {
     private static net.createmod.ponder.foundation.element.WorldSectionElementImpl section(BlockPos first, BlockPos last) {
         return new net.createmod.ponder.foundation.element.WorldSectionElementImpl(net.createmod.ponder.foundation.SelectionImpl.of(
             net.minecraft.world.level.levelgen.structure.BoundingBox.fromCorners(first, last)));
+    }
+    private static void movingSectionNeighbours() {
+        var world = world(); var firstPos = new BlockPos(0, 2, 0); var secondPos = firstPos.above();
+        world.setBlock(firstPos, AllBlocks.SHAFT.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.Y), 3);
+        world.setBlock(secondPos, AllBlocks.SHAFT.getDefaultState().setValue(BlockStateProperties.AXIS, Direction.Axis.Y), 3);
+        var scene = new net.createmod.ponder.foundation.PonderScene(world,
+            new net.createmod.ponder.foundation.registration.PonderLocalization(), DifferentialCreate.MODID,
+            net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(DifferentialCreate.MODID, "moving_neighbours"),
+            java.util.List.of(), java.util.List.of());
+        var first = section(firstPos, firstPos); var second = section(secondPos, secondPos);
+        first.setVisible(true); second.setVisible(true); first.forceApplyFade(1); second.forceApplyFade(1);
+        scene.addElement(first); scene.addElement(second);
+        var sim = PonderSimulation.of(world);
+        for (double height : new double[]{0, .125, .356, 2, -1.75}) {
+            var offset = new net.minecraft.world.phys.Vec3(0, height, 0);
+            first.setAnimatedOffset(offset, true); second.setAnimatedOffset(offset, true); sim.advance(world);
+            require(PhysicsPreview.neighbor(world, firstPos, Direction.UP).equals(secondPos)
+                && PhysicsPreview.neighbor(world, secondPos, Direction.DOWN).equals(firstPos),
+                "adjoining sections must stay connected between integer heights");
+            second.setAnimatedOffset(offset.add(.1, 0, 0), true); sim.advance(world);
+            require(!PhysicsPreview.neighbor(world, firstPos, Direction.UP).equals(secondPos),
+                "nearby but separated sections must not connect through their old template positions");
+        }
     }
     private static void hoseMotion(boolean powered) {
         var world = world(); var pos = new BlockPos(0, 5, 0);

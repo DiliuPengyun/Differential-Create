@@ -18,6 +18,9 @@ final class PonderMechanismAudit {
     private double firstPlankTravel, previousPlankAngle, previousOffset = Double.NaN, direction;
     private final PonderLiftAudit lifts = new PonderLiftAudit();
     private int clockSamples;
+    private double cascadedLift;
+    private int cascadedSamples;
+    private int cascadedPhysicalSamples;
 
     void sample(PonderScene scene) {
         lifts.sample(scene);
@@ -28,7 +31,12 @@ final class PonderMechanismAudit {
             case "stabilized_bearings" -> nested(scene);
             case "rope_pulley", "rope_pulley_modes" -> pulley(scene);
             case "gantry_redstone" -> gantry(scene);
+            case "gantry_cascaded" -> cascadedGantry(scene);
             case "clockwork_bearing" -> clock(scene);
+            case "mechanical_piston" -> {
+                if (scene.isFinished()) require(PonderSimulation.of(scene.getWorld()).point(new BlockPos(3, 1, 1)).x <= 1.001,
+                    "piston lesson finished before its final load arrived");
+            }
         }
     }
     private void clock(PonderScene scene) {
@@ -147,6 +155,27 @@ final class PonderMechanismAudit {
             gantrySamples++;
         });
     }
+    private void cascadedGantry(PonderScene scene) {
+        var world = scene.getWorld();
+        var parentPos = new BlockPos(5, 1, 2);
+        var childPos = new BlockPos(3, 2, 2);
+        WorldSectionElement[] pair = new WorldSectionElement[2];
+        scene.forEachVisible(WorldSectionElement.class, section -> {
+            var selection = ((PonderWorldSectionAccessor) section).differentialcreate$selection();
+            if (selection.test(parentPos)) pair[0] = section;
+            if (selection.test(childPos)) pair[1] = section;
+        });
+        if (pair[0] == null || pair[1] == null) return;
+        cascadedLift = Math.max(cascadedLift, pair[0].getAnimatedOffset().y);
+        if (cascadedLift < .01) return;
+        if (PonderSimulation.of(world).mountedBlock(childPos)) cascadedPhysicalSamples++;
+        for (float partial : new float[]{0, .25f, .5f, .75f, 1}) {
+            var first = ((PonderWorldSectionAccessor) pair[0]).differentialcreate$previousOffset().lerp(pair[0].getAnimatedOffset(), partial);
+            var second = ((PonderWorldSectionAccessor) pair[1]).differentialcreate$previousOffset().lerp(pair[1].getAnimatedOffset(), partial);
+            require(Math.abs(first.y - second.y) < .001, "cascaded carriage left its supporting shaft at a render subframe");
+        }
+        cascadedSamples++;
+    }
     void verify(PonderScene scene) {
         lifts.verify(scene);
         switch (scene.getId().getPath()) {
@@ -158,6 +187,13 @@ final class PonderMechanismAudit {
             case "rope_pulley", "rope_pulley_modes" -> require(pulleySamples > 30 && reversals >= 2
                 && Math.abs(previousOffset - 2) < 1e-4, "pulley strokes did not finish with synchronized cargo: " + scene.getId());
             case "gantry_redstone" -> require(gantrySamples > 30, "gantry disassembly was not exercised");
+            case "gantry_cascaded" -> {
+                require(cascadedLift >= 1.99 && cascadedSamples > 20,
+                    "cascaded gantries never completed their shared lift: " + cascadedLift);
+                require(cascadedPhysicalSamples > 20, "the second carriage never bound to its actual horizontal drive");
+                require(PonderSimulation.of(scene.getWorld()).point(new BlockPos(3, 2, 2)).x < .001,
+                    "cascaded carriage did not complete its horizontal stroke");
+            }
             case "clockwork_bearing" -> require(clockSamples > 30, "clock top and hand were not rendered together");
         }
     }

@@ -61,6 +61,11 @@ public final class PonderSimulation {
             if (actual != null) return actual;
         }
         if (same != null && same.section() == placement.section()) return target;
+        // Separate sections riding the same carriage still touch between grid
+        // positions. A world-grid lookup alone disconnects their shafts during
+        // the lift and loses the child carriage's physical binding on handoff.
+        if (same != null && point.distanceSquared(same.matrix().transformPosition(
+            new org.joml.Vector3f(target.getX(), target.getY(), target.getZ()))) < 1e-6) return target;
         // Empty displayed space must not meet an unused copy elsewhere in the template.
         return world.getBlockState(target).isAir() ? target : grid.offset(1_000_000, 0, 1_000_000);
     }

@@ -6,6 +6,7 @@ import java.util.List;
 
 import com.diliupengyun.differential_create.DifferentialCreate;
 import com.diliupengyun.differential_create.client.ponder.PonderAwait;
+import com.diliupengyun.differential_create.client.ponder.PonderSimulation;
 import com.simibubi.create.AllBlocks;
 import com.simibubi.create.content.fluids.hosePulley.HosePulleyBlockEntity;
 import com.simibubi.create.content.fluids.pump.PumpBlock;
@@ -13,6 +14,7 @@ import net.createmod.ponder.api.level.PonderLevel;
 import net.createmod.ponder.foundation.PonderIndex;
 import net.createmod.ponder.foundation.PonderScene;
 import net.createmod.ponder.foundation.registration.PonderLocalization;
+import net.createmod.ponder.foundation.ui.PonderUI;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -39,6 +41,7 @@ final class PonderTimingAudit {
     static void verify() {
         clock();
         detectMissingTime();
+        playbackIntervals();
         for (var component : List.of(AllBlocks.PORTABLE_STORAGE_INTERFACE.getId(), AllBlocks.PORTABLE_FLUID_INTERFACE.getId()))
             for (var scene : PonderIndex.getSceneAccess().compile(component))
                 if (scene.getId().getPath().equals("portable_storage_interface_redstone"))
@@ -133,6 +136,78 @@ final class PonderTimingAudit {
             plain.tick();
             require(plain.getCurrentTime() == tick, "native scenes without result gates changed timing");
         }
+    }
+
+    private static void playbackIntervals() {
+        var mc = Minecraft.getInstance();
+        var previousScreen = mc.screen;
+        var length = field(PonderUI.class, "extendedTickLength");
+        var remaining = field(PonderUI.class, "extendedTickTimer");
+        var ui = PonderUI.of(AllBlocks.MECHANICAL_PISTON.getId());
+        boolean previousSlowMode = ui.isComfyReadingEnabled();
+        int slowExits = 0;
+        try {
+            for (boolean toggle : new boolean[]{false, true}) {
+                ui = PonderUI.of(AllBlocks.MECHANICAL_PISTON.getId());
+                mc.setScreen(ui);
+                ui.setComfyReadingEnabled(true);
+                double previousEnd = Double.NaN;
+                int previousLength = 0;
+                for (int tick = 0; tick < 1800; tick++) {
+                    if (toggle && (tick == 160 || tick == 241 || tick == 420))
+                        ui.setComfyReadingEnabled(!ui.isComfyReadingEnabled());
+                    // Exercise the real UI clock, including caption disappearance
+                    // and changes in slow-reading mode between simulation ticks.
+                    ui.tick();
+                    int duration = length.getInt(ui), left = remaining.getInt(ui);
+                    long time = PonderSimulation.of(ui.getActiveScene().getWorld()).time();
+                    double start = time + (duration - left) / (duration + 1.0);
+                    double end = time + (duration - left + 1) / (duration + 1.0);
+                    require(duration >= left && left >= 0,
+                        "Ponder UI extrapolates outside its physical frame at client tick " + tick);
+                    require(Double.isNaN(previousEnd) || Math.abs(start - previousEnd) < 1e-9,
+                        "Ponder UI moves backwards or skips motion when reading speed changes at client tick " + tick);
+                    if (previousLength > 0 && duration == 0) slowExits++;
+                    previousEnd = end;
+                    previousLength = duration;
+                }
+            }
+            ui = PonderUI.of(AllBlocks.MECHANICAL_PISTON.getId());
+            mc.setScreen(ui);
+            ui.setComfyReadingEnabled(true);
+            for (int countdown : new int[]{1, 2}) {
+                int attempts = 0;
+                do { ui.tick(); }
+                while (++attempts < 400 && (remaining.getInt(ui) != countdown
+                    || PonderSimulation.of(ui.getActiveScene().getWorld()).time() < 100));
+                require(attempts < 400, "No slow interval available for identification test");
+                float displayed = PonderUI.getPartialTicks();
+                ui.keyPressed(81, 0, 0);
+                require(Math.abs(PonderUI.getPartialTicks() - displayed) < 1e-6,
+                    "Identification jumps from the displayed slow-motion pose");
+                for (int paused = 0; paused < 5; paused++) ui.tick();
+                require(Math.abs(PonderUI.getPartialTicks() - displayed) < 1e-6,
+                    "Identification must hold the captured pose");
+                ui.keyPressed(81, 0, 0);
+                require(Math.abs(PonderUI.getPartialTicks() - displayed) < 1e-6,
+                    "Resuming identification jumps to an unrelated UI timer phase");
+                double previous = PonderSimulation.of(ui.getActiveScene().getWorld()).time() + displayed;
+                for (int resumed = 0; resumed < 12; resumed++) {
+                    ui.tick();
+                    float partial = PonderUI.getPartialTicks();
+                    double current = PonderSimulation.of(ui.getActiveScene().getWorld()).time() + partial;
+                    require(partial >= 0 && partial <= 1 && current >= previous,
+                        "Resumed playback extrapolates or reverses its displayed time");
+                    previous = current;
+                }
+            }
+        } catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
+        finally {
+            ui.setComfyReadingEnabled(previousSlowMode);
+            mc.setScreen(previousScreen);
+        }
+        require(slowExits >= 4, "Real caption and slow-reading transitions were not exercised");
+        DifferentialCreate.LOGGER.info("DC_PONDER_UI_TIMING_PASS: real UI intervals remain continuous across captions, slow-reading transitions and identification pause/resume");
     }
 
     private static void detectMissingTime() {
