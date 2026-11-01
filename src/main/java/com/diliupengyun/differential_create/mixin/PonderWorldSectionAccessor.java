@@ -10,6 +10,8 @@ public interface PonderWorldSectionAccessor {
     @Accessor("section") Selection differentialcreate$selection();
     @Accessor("centerOfRotation") net.minecraft.world.phys.Vec3 differentialcreate$centre();
     @Accessor("prevAnimatedRotation") net.minecraft.world.phys.Vec3 differentialcreate$previousRotation();
+    @Accessor("prevAnimatedRotation") void differentialcreate$previousRotation(net.minecraft.world.phys.Vec3 value);
     @Accessor("prevAnimatedOffset") net.minecraft.world.phys.Vec3 differentialcreate$previousOffset();
+    @Accessor("prevAnimatedOffset") void differentialcreate$previousOffset(net.minecraft.world.phys.Vec3 value);
     @Accessor("stabilizationAnchor") net.minecraft.world.phys.Vec3 differentialcreate$stabilization();
 }

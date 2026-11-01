@@ -52,41 +52,59 @@ final class KineticIslandTests {
         h.setBlock(pulleyPos, AllBlocks.ROPE_PULLEY.getDefaultState()); h.setBlock(pulleyPos.below(), Blocks.SLIME_BLOCK);
         h.runAfterDelay(10, () -> {
             KineticBlockEntity control = h.getBlockEntity(CONTROL);
-            if (sequencer) {
-                var seq = (SequencedGearshiftBlockEntity) control;
-                seq.getInstructions().clear(); seq.getInstructions().add(new Instruction(SequencerInstructions.TURN_ANGLE, InstructionSpeedModifiers.getByModifier(1), 360));
-                seq.getInstructions().add(new Instruction(SequencerInstructions.END)); seq.run(0);
-            } else h.assertTrue(MachiningClock.needsPositionControl(control), "assembled clock needs 64 control samples");
-            LinearActuatorBlockEntity pulley = h.getBlockEntity(pulleyPos);
-            ElasticKinetics.state(pulley).physicalSpeed = 16;
-            try { ((LinearActuatorAccessor) pulley).differentialcreate$assemble(); }
-            catch (Exception e) { throw new AssertionError("pulley assembly", e); }
-            ElasticKinetics.state(pulley).physicalSpeed = 0;
-            h.assertTrue(pulley.movedContraption != null, "ordinary moving payload assembled");
-            var ordinary = new ArrayList<KineticBlockEntity>();
-            for (int i = 0; i < 8; i++) ordinary.add(flywheel(h, new BlockPos(3 + i * 3, 10, 5), 40));
-            var angles = ordinary.stream().mapToDouble(be -> ElasticKinetics.state(be).angle).toArray();
-            try (var trace = new ClockTestScope()) {
-                MachiningClock.advance(h.getLevel());
-                // The full suite can leave other working machines in loaded chunks.
-                // Count their legitimate world barriers separately from control-only steps.
-                h.assertTrue(trace.maximum(control) <= RotationMath.TICK_MINUTES / 64 + 1e-14, "controller keeps its sampling precision");
-                h.assertTrue(trace.maximum(pulley) <= RotationMath.TICK_MINUTES / 8 + 1e-14, "pulley keeps its sampling precision");
-                h.assertTrue(trace.steps(control) >= 64 && trace.steps(control) <= 64 + trace.barriers(), "controller captures plus event barriers");
-                h.assertTrue(trace.steps(pulley) >= 8 && trace.steps(pulley) <= 8 + trace.barriers(), "ordinary pulley is not resampled by unrelated control steps");
-                for (int i = 0; i < ordinary.size(); i++) {
-                    var be = ordinary.get(i);
-                    h.assertTrue(trace.steps(be) <= 1 + trace.barriers(), "unrelated flywheel needs one capture plus actual world barriers: " + trace.steps(be));
-                    near(h, RotationMath.TICK_MINUTES, trace.time(be), "ordinary rotor receives exactly one tick");
-                    near(h, 40 * RotationMath.TICK_MINUTES, ElasticKinetics.state(be).angle - angles[i], "analytic free-rotor displacement");
-                    near(h, 40, NetworkDynamics.preciseSpeed(be), "free rotor retains speed");
+            long originalTime = h.getLevel().getDayTime();
+            try {
+                if (!sequencer) {
+                    // Keep a substantial target error throughout this measurement.
+                    // A live world's clock can otherwise finish its tiny minute step
+                    // halfway through the tick and legitimately return to 8 samples.
+                    var outputs = ClockworkMotion.outputs(control);
+                    for (var output : outputs) { output.hand().index.reset(); output.hand().speed = 0; }
+                    long chosen = 0; double largest = -1;
+                    for (long time = 0; time < 24000; time += 125) {
+                        h.getLevel().setDayTime(time);
+                        double error = outputs.stream()
+                            .mapToDouble(output -> Math.abs(ClockworkMotion.error(output.drive()))).min().orElse(0);
+                        if (error > largest) { largest = error; chosen = time; }
+                    }
+                    h.getLevel().setDayTime(chosen);
                 }
-                near(h, RotationMath.TICK_MINUTES, trace.time(control), "controller time");
-                near(h, RotationMath.TICK_MINUTES, trace.time(pulley), "pulley time");
-                System.out.println("[DC islands] " + (sequencer ? "sequencer" : "clock") + " control=" + trace.steps(control)
-                    + " pulley=" + trace.steps(pulley) + " free=" + trace.steps(ordinary.getFirst()) + " worldBarriers=" + trace.barriers());
-            }
-            pulley.disassemble(); h.succeed();
+                if (sequencer) {
+                    var seq = (SequencedGearshiftBlockEntity) control;
+                    seq.getInstructions().clear(); seq.getInstructions().add(new Instruction(SequencerInstructions.TURN_ANGLE, InstructionSpeedModifiers.getByModifier(1), 360));
+                    seq.getInstructions().add(new Instruction(SequencerInstructions.END)); seq.run(0);
+                } else h.assertTrue(MachiningClock.needsPositionControl(control), "assembled clock needs 64 control samples");
+                LinearActuatorBlockEntity pulley = h.getBlockEntity(pulleyPos);
+                ElasticKinetics.state(pulley).physicalSpeed = 16;
+                try { ((LinearActuatorAccessor) pulley).differentialcreate$assemble(); }
+                catch (Exception e) { throw new AssertionError("pulley assembly", e); }
+                ElasticKinetics.state(pulley).physicalSpeed = 0;
+                h.assertTrue(pulley.movedContraption != null, "ordinary moving payload assembled");
+                var ordinary = new ArrayList<KineticBlockEntity>();
+                for (int i = 0; i < 8; i++) ordinary.add(flywheel(h, new BlockPos(3 + i * 3, 10, 5), 40));
+                var angles = ordinary.stream().mapToDouble(be -> ElasticKinetics.state(be).angle).toArray();
+                try (var trace = new ClockTestScope()) {
+                    MachiningClock.advance(h.getLevel());
+                    // The full suite can leave other working machines in loaded chunks.
+                    // Count their legitimate world barriers separately from control-only steps.
+                    h.assertTrue(trace.maximum(control) <= RotationMath.TICK_MINUTES / 64 + 1e-14, "controller keeps its sampling precision");
+                    h.assertTrue(trace.maximum(pulley) <= RotationMath.TICK_MINUTES / 8 + 1e-14, "pulley keeps its sampling precision");
+                    h.assertTrue(trace.steps(control) >= 64 && trace.steps(control) <= 64 + trace.barriers(), "controller captures plus event barriers: steps=" + trace.steps(control) + " barriers=" + trace.barriers());
+                    h.assertTrue(trace.steps(pulley) >= 8 && trace.steps(pulley) <= 8 + trace.barriers(), "ordinary pulley is not resampled by unrelated control steps");
+                    for (int i = 0; i < ordinary.size(); i++) {
+                        var be = ordinary.get(i);
+                        h.assertTrue(trace.steps(be) <= 1 + trace.barriers(), "unrelated flywheel needs one capture plus actual world barriers: " + trace.steps(be));
+                        near(h, RotationMath.TICK_MINUTES, trace.time(be), "ordinary rotor receives exactly one tick");
+                        near(h, 40 * RotationMath.TICK_MINUTES, ElasticKinetics.state(be).angle - angles[i], "analytic free-rotor displacement");
+                        near(h, 40, NetworkDynamics.preciseSpeed(be), "free rotor retains speed");
+                    }
+                    near(h, RotationMath.TICK_MINUTES, trace.time(control), "controller time");
+                    near(h, RotationMath.TICK_MINUTES, trace.time(pulley), "pulley time");
+                    System.out.println("[DC islands] " + (sequencer ? "sequencer" : "clock") + " control=" + trace.steps(control)
+                        + " pulley=" + trace.steps(pulley) + " free=" + trace.steps(ordinary.getFirst()) + " worldBarriers=" + trace.barriers());
+                }
+                pulley.disassemble(); h.succeed();
+            } finally { h.getLevel().setDayTime(originalTime); }
         });
     }
     static void recipeBarrier(GameTestHelper h) {

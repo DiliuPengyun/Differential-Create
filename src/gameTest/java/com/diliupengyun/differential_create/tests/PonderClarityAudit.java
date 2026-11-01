@@ -343,6 +343,10 @@ final class PonderClarityAudit {
             if (pos.getX() == 0) continue;
             if (receiving) reading("portable-in-" + pos.getX(), tank.getTankInventory().getFluidAmount());
             if (draining) reading("portable-out-" + pos.getX(), tank.getTankInventory().getFluidAmount());
+            double surface = tank.getFluidLevel() == null ? 0
+                : tank.getFluidLevel().getValue(1) * (tank.getHeight() - 9 / 16d);
+            if (receiving) reading("portable-surface-in-" + pos.getX(), surface);
+            if (draining) reading("portable-surface-out-" + pos.getX(), surface);
         }
         if (scene.getCurrentTime() >= 10) {
             inventory += com.diliupengyun.differential_create.kinetics.FluidKinetics.ownedVolume(world);
@@ -453,6 +457,9 @@ final class PonderClarityAudit {
             for (int tank : new int[]{5, 6})
                 if (change("portable-in-" + tank) < 3000 || change("portable-out-" + tank) > -3000)
                     throw new AssertionError("Both mounted tanks must visibly fill and drain during their captions: " + first + " -> " + last);
+            for (int tank : new int[]{5, 6})
+                if (change("portable-surface-in-" + tank) < .25 || change("portable-surface-out-" + tank) > -.25)
+                    throw new AssertionError("Mounted tank render surfaces must follow their inventories: " + first + " -> " + last);
         }
         if (id.equals("differentialcreate:dynamics")
             && (change("flywheel-startup") < 10 || change("flywheel-coast") >= 0))

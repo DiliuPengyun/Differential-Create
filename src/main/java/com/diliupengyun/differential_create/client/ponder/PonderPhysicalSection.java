@@ -55,6 +55,13 @@ public final class PonderPhysicalSection extends PonderInstruction {
             }
         if (!rotation && PonderSimulation.of(world).attachCart(section, delta, duration)) return true;
         for (var pos : selection) if (!rotation && world.getBlockEntity(pos) instanceof com.simibubi.create.content.trains.bogey.AbstractBogeyBlockEntity) {
+            // Native rail lessons travel along X. Lifting or relocating their
+            // diagram across tracks must not be converted into a zero-distance
+            // driver command which discards the visible Y/Z movement.
+            if (delta.y != 0 || delta.z != 0) {
+                PonderSimulation.of(world).release(section);
+                return false;
+            }
             // A movement instruction is a driver operation, never a prescribed displacement.
             PonderSimulation.of(world).driveTrain(world, section, delta.x, duration);
             return true;

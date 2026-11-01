@@ -23,6 +23,15 @@ final class PonderOutcomeAudit {
     private double pipeAirBefore;
     void sample(PonderScene scene) {
         var world = scene.getWorld();
+        if (scene.isFinished() && (scene.getId().getPath().equals("gantry_carriage")
+            || scene.getId().getPath().equals("gantry_shaft"))) {
+            scene.forEachVisible(net.createmod.ponder.api.element.WorldSectionElement.class, section -> {
+                var selection = ((com.diliupengyun.differential_create.mixin.PonderWorldSectionAccessor) section).differentialcreate$selection();
+                if (selection != null && selection.test(new net.minecraft.core.BlockPos(4, 2, 2))
+                    && Math.abs(section.getAnimatedOffset().x + 4) > .001)
+                    throw new AssertionError(scene.getId() + " marked complete before the visible carriage arrived: " + section.getAnimatedOffset());
+            });
+        }
         if (scene.getId().toString().equals("differentialcreate:pump_network")) pipeNetwork(scene);
         if (scene.getId().getPath().equals("fluid_pipe_interaction")) {
             var hive = world.getBlockState(new net.minecraft.core.BlockPos(1, 1, 2));

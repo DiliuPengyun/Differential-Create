@@ -72,8 +72,12 @@ final class PonderAnimationAudit {
     private final PonderClarityAudit clarity = new PonderClarityAudit();
     private final PonderTimingAudit timing = new PonderTimingAudit();
     private final PonderMechanismAudit mechanisms = new PonderMechanismAudit();
+    private final PonderTrainVisualAudit trains = new PonderTrainVisualAudit();
+    private final PonderSectionJoinAudit joining = new PonderSectionJoinAudit();
 
     void sample(PonderScene scene) {
+        joining.sample(scene);
+        trains.sample(scene);
         mechanisms.sample(scene);
         timing.observe(scene);
         pumpStartup(scene);
@@ -502,6 +506,8 @@ final class PonderAnimationAudit {
     }
 
     void verify(PonderScene scene) {
+        joining.verify(scene);
+        trains.verify(scene);
         mechanisms.verify(scene);
         if (scene.getId().toString().equals("differentialcreate:pump_network")
             && (pumpStartupSamples <= 40 || pumpStartupPeak > 10 || pumpSettledMin < 7.5

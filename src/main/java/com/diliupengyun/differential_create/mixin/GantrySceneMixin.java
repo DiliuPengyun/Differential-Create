@@ -1,6 +1,7 @@
 package com.diliupengyun.differential_create.mixin;
 
 import com.diliupengyun.differential_create.client.ponder.PonderSimulation;
+import com.diliupengyun.differential_create.client.ponder.PonderAwait;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.simibubi.create.foundation.ponder.CreateSceneBuilder;
@@ -16,6 +17,17 @@ import org.spongepowered.asm.mixin.injection.At;
 
 @Mixin(GantryScenes.class)
 public abstract class GantrySceneMixin {
+    @WrapOperation(method = "intro", at = @At(value = "INVOKE",
+        target = "Lcom/simibubi/create/foundation/ponder/CreateSceneBuilder;markAsFinished()V"))
+    private static void differentialcreate$finishAfterTravel(CreateSceneBuilder scene, Operation<Void> original) {
+        // The native scene marks completion only 20 ticks into a 60-tick move.
+        // Keep that travel in the visible timeline, then check the actual load.
+        scene.idle(40);
+        scene.addInstruction(new PonderAwait(ponder -> Math.abs(PonderSimulation.of(ponder.getWorld())
+            .point(new BlockPos(4, 2, 2)).x) < .001, 240));
+        original.call(scene);
+    }
+
     @WrapOperation(method = "redstone", at = @At(value = "INVOKE",
         target = "Lcom/simibubi/create/foundation/ponder/CreateSceneBuilder$WorldInstructions;showSection(Lnet/createmod/ponder/api/scene/Selection;Lnet/minecraft/core/Direction;)V", ordinal = 2))
     private static void differentialcreate$outputAtSettledCarriage(CreateSceneBuilder.WorldInstructions world,

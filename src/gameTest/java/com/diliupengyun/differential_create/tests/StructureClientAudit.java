@@ -3,6 +3,9 @@ package com.diliupengyun.differential_create.tests;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Semaphore;
 import com.diliupengyun.differential_create.DifferentialCreate;
 import com.diliupengyun.differential_create.kinetics.*;
 import com.diliupengyun.differential_create.mixin.*;
@@ -50,6 +53,15 @@ public final class StructureClientAudit {
     private static final Map<String, Integer> clearViews = new java.util.concurrent.ConcurrentHashMap<>();
     private static boolean requested, initialized; private static volatile boolean done;
     private static int index = -1, age, frames, captured = -1;
+    private static int renderFrame;
+    private static final boolean denseFrames = Boolean.getBoolean("differentialcreate.structureClientDense");
+    private static final ExecutorService imageWriter = Executors.newSingleThreadExecutor(r -> {
+        var thread = new Thread(r, "Structure audit screenshots");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private static final Semaphore imageSlots = new Semaphore(8);
+    private static volatile Throwable imageFailure;
     private static CompletableFuture<?> setup;
     private static volatile View view;
     private static ServerLevel world;
@@ -79,7 +91,11 @@ public final class StructureClientAudit {
                         .value().createWorldDimensions(), mc.screen);
                 return;
             }
-            if (done) return;
+            if (imageFailure != null) throw new IllegalStateException("Could not save audit screenshot", imageFailure);
+            if (done) {
+                if (imageSlots.availablePermits() == 8 && !Boolean.getBoolean("differentialcreate.structureClientHold")) mc.stop();
+                return;
+            }
             if (System.nanoTime() > deadline) throw new AssertionError("Structure client audit timed out");
             if (mc.level == null || mc.player == null || mc.getSingleplayerServer() == null) return;
             if (setup == null) {
@@ -109,12 +125,17 @@ public final class StructureClientAudit {
             }
             if (setup.isCompletedExceptionally()) setup.join();
             var current = view;
-            if (current == null || current.tick == captured || current.tick < 5) return;
+            if (current == null || current.tick < 5) return;
+            renderFrame++;
             boolean boundary = current.tick <= 25 || current.tick >= 174 || Math.abs(current.tick - 45) <= 4
                 || Math.abs(current.tick - 95) <= 4 || Math.abs(current.tick - 140) <= 4
                 || Math.abs(current.tick - 30) <= 4 || Math.abs(current.tick - 100) <= 4
                 || current.continuousClock && Math.abs(current.tick - 155) <= 5;
             if (!boundary && current.tick % 10 != 0) return;
+            if (current.tick == captured) {
+                if (denseFrames && boundary && mc.screen == null) capture(mc, current);
+                return;
+            }
             captured = current.tick;
             var folder = directory.resolve(current.name); Files.createDirectories(folder);
             var replica = mc.level.getEntity(current.entity);
@@ -194,14 +215,30 @@ public final class StructureClientAudit {
                     + "," + replica.getBoundingBox().maxX + "," + replica.getBoundingBox().maxY + "," + replica.getBoundingBox().maxZ)
                 + "\n", StandardOpenOption.APPEND);
             if (mc.screen == null) {
-                try (var image = Screenshot.takeScreenshot(mc.getMainRenderTarget())) {
-                    image.writeToFile(folder.resolve(String.format(Locale.ROOT, "%03d.png", current.tick)));
-                }
+                capture(mc, current);
                 clearViews.merge(current.name, current.tick < 95 ? 1 : current.tick >= 140 ? 2 : 0, (a, b) -> a | b);
             }
         } catch (Throwable failure) {
             DifferentialCreate.LOGGER.error("DC_STRUCTURE_CLIENT_FAIL", failure); done = true; mc.stop();
         }
+    }
+    private static void capture(Minecraft mc, View current) throws Exception {
+        // PNG compression must not stall the render thread and skip the very
+        // assembly/disassembly frames this audit is meant to inspect.
+        imageSlots.acquire();
+        com.mojang.blaze3d.platform.NativeImage image;
+        try { image = Screenshot.takeScreenshot(mc.getMainRenderTarget()); }
+        catch (Throwable failure) { imageSlots.release(); throw failure; }
+        var folder = directory.resolve(current.name);
+        String filename = denseFrames ? String.format(Locale.ROOT, "%03d-%06d.png", current.tick, renderFrame)
+            : String.format(Locale.ROOT, "%03d.png", current.tick);
+        imageWriter.execute(() -> {
+            try (image) {
+                Files.createDirectories(folder);
+                image.writeToFile(folder.resolve(filename));
+            } catch (Throwable failure) { imageFailure = failure; }
+            finally { imageSlots.release(); }
+        });
     }
     private static void add(String kind, Direction facing, int variant, int mode) {
         String name = kind + "_" + facing.getName() + "_" + variant + "_" + mode;
@@ -311,7 +348,7 @@ public final class StructureClientAudit {
             done = true; Files.writeString(directory.resolve("failures.json"), new GsonBuilder().setPrettyPrinting().create().toJson(failures));
             DifferentialCreate.LOGGER.info(failures.isEmpty() ? "DC_STRUCTURE_CLIENT_PASS: {} real-world constructions, screenshots require review"
                 : "DC_STRUCTURE_CLIENT_FAIL: {} cases; see failures.json", cases.size());
-            if (!Boolean.getBoolean("differentialcreate.structureClientHold")) Minecraft.getInstance().execute(() -> Minecraft.getInstance().stop());
+            // The render loop exits after the queued screenshots have reached disk.
             return;
         }
         var s = cases.get(index); age = -80; root = null; start = null; assembled = moved = false; rows.clear(); view = null;
@@ -391,6 +428,8 @@ public final class StructureClientAudit {
         if (continuousClock) for (var direction : Direction.values())
             put(base.relative(direction, 5), Blocks.LIGHT.defaultBlockState());
         var camera = continuousClock ? target.add(7, 3, 8) : target.add(12, 6, 14);
+        double cameraScale = Double.parseDouble(System.getProperty("differentialcreate.structureClientCameraScale", "1"));
+        camera = target.add(camera.subtract(target).scale(cameraScale));
         var delta = target.subtract(camera.add(0, player.getEyeHeight(), 0));
         float yaw = (float) Math.toDegrees(Math.atan2(-delta.x, delta.z));
         float pitch = (float) -Math.toDegrees(Math.atan2(delta.y, Math.sqrt(delta.x * delta.x + delta.z * delta.z)));

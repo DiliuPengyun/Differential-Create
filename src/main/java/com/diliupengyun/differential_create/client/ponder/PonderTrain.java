@@ -23,6 +23,7 @@ final class PonderTrain {
     private final CarriageContraption contraption;
     private final Carriage carriage;
     private final WorldSectionElement section;
+    private final List<WorldSectionElement> sections;
     private final CarriageContraptionEntity entity;
     private final TrainMechanics.Engine boundary = new TrainMechanics.Engine();
     private final List<BlockPos> bogeys = new ArrayList<>();
@@ -31,9 +32,11 @@ final class PonderTrain {
     boolean contains(BlockPos pos) { return bogeys.contains(pos); }
     boolean owns(BlockPos pos) { return contraption.getBlocks().containsKey(pos); }
     boolean live() {
-        var selected = ((PonderWorldSectionAccessor) section).differentialcreate$selection();
-        return section.isVisible() && selected != null && bogeys.stream().anyMatch(pos -> selected.test(pos)
-            && entity.level().getBlockEntity(pos) == bogeyTemplates.get(pos));
+        return sections.stream().anyMatch(member -> {
+            var selected = ((PonderWorldSectionAccessor) member).differentialcreate$selection();
+            return member.isVisible() && selected != null && bogeys.stream().anyMatch(pos -> selected.test(pos)
+                && entity.level().getBlockEntity(pos) == bogeyTemplates.get(pos));
+        });
     }
     java.util.List<Double> reading() {
         var cs = TrainPhysics.carriage(carriage); var state = TrainPhysics.state(train);
@@ -46,6 +49,7 @@ final class PonderTrain {
     private int duration;
     private int direction = 1;
     private Double destination;
+    private boolean pendingPose;
     TrainMechanics.Engine boundary() {
         if (!TrainPhysics.carriage(carriage).engines.isEmpty()) return null;
         // An off-stage towing source is an input boundary for infrastructure
@@ -61,11 +65,18 @@ final class PonderTrain {
     }
 
     PonderTrain(PonderLevel world, WorldSectionElement section) {
-        this.section = section;
+        this(world, List.of(section));
+    }
+    PonderTrain(PonderLevel world, List<WorldSectionElement> sections) {
+        this.sections = List.copyOf(sections);
+        this.section = sections.getFirst();
         contraption = new CarriageContraption(Direction.EAST);
         contraption.anchor = BlockPos.ZERO;
         var selection = ((PonderWorldSectionAccessor) section).differentialcreate$selection();
         if (selection == null) throw new IllegalArgumentException("Empty train section");
+        selection = selection.copy();
+        for (var member : sections) if (member != section)
+            selection.add(((PonderWorldSectionAccessor) member).differentialcreate$selection());
         for (var cursor : selection) {
             var pos = cursor.immutable();
             var state = world.getBlockState(pos); if (state.isAir()) continue;
@@ -115,6 +126,7 @@ final class PonderTrain {
     boolean arrived() { return destination == null || Math.abs(destination - section.getAnimatedOffset().x) < .1 && Math.abs(train.speed) < .001; }
 
     void tick(PonderLevel world) {
+        pendingPose = false;
         if (!live()) { TrainPhysics.state(train).distance = 0; return; }
         // OrientedContraptionEntity's anchor is position minus (.5, 0, .5).
         // Template coordinates already are scene coordinates; keep actor contact
@@ -148,8 +160,24 @@ final class PonderTrain {
             if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.harvester.HarvesterBlockEntity harvester) harvester.setAnimatedSpeed(ctx.getAnimationSpeed());
         }
         if (duration > 0 && --duration == 0 && stopAtEnd) brake = true;
+        pendingPose = true;
+        var state = TrainPhysics.carriage(carriage);
+        // These BEs only display the mounted inventories; the carriage remains their simulation owner.
+        for (var info : contraption.getBlocks().values())
+            carriage.storage.unmount(world, info, info.pos(), world.getBlockEntity(info.pos()));
+        for (var entry : state.boilers.entrySet())
+            if (world.getBlockEntity(entry.getKey()) instanceof FluidTankBlockEntity tank) {
+                tank.boiler.read(entry.getValue().write(), tank.getTotalTankSize());
+            }
+    }
+
+    /** Apply after scene elements snapshot their previous pose, like bearings
+     * and linear actuators. Riders and wheels then share the same subframe. */
+    void applyPose(PonderLevel world) {
+        if (!pendingPose) return;
+        pendingPose = false;
         double distance = TrainPhysics.state(train).distance;
-        section.setAnimatedOffset(section.getAnimatedOffset().add(distance, 0, 0), false);
+        for (var member : sections) member.setAnimatedOffset(member.getAnimatedOffset().add(distance, 0, 0), false);
         var state = TrainPhysics.carriage(carriage);
         for (var pos : bogeys) if (world.getBlockEntity(pos) instanceof AbstractBogeyBlockEntity be) {
             be.animate((float) -distance);
@@ -160,12 +188,5 @@ final class PonderTrain {
                 be.setBogeyData(data);
             }
         }
-        // These BEs only display the mounted inventories; the carriage remains their simulation owner.
-        for (var info : contraption.getBlocks().values())
-            carriage.storage.unmount(world, info, info.pos(), world.getBlockEntity(info.pos()));
-        for (var entry : state.boilers.entrySet())
-            if (world.getBlockEntity(entry.getKey()) instanceof FluidTankBlockEntity tank) {
-                tank.boiler.read(entry.getValue().write(), tank.getTotalTankSize());
-            }
     }
 }

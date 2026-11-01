@@ -5,6 +5,7 @@
   "minVersion": "0.8",
   "refmap": "differentialcreate.refmap.json",
   "mixins": [
+    "ContraptionBlockUpdatesMixin",
     "ElevatorPulleyAccessor",
     "ElevatorPositionControlMixin",
     "PonderLootTableMixin",
@@ -109,6 +110,8 @@
     "WindmillBearingBlockEntityMixin"
   ],
   "client": [
+    "ContraptionRenderHandoffMixin",
+    "ContraptionTerrainHandoffMixin",
     "ClockworkBearingRendererMixin",
     "LinearActuatorRendererMixin",
     "LinearActuatorOffsetRendererMixin",
@@ -145,6 +148,7 @@
     "DisplayLinkSceneMixin",
     "PonderKineticInstructionsMixin",
     "PonderSectionInstructionsMixin",
+    "PonderSectionJoiningMixin",
     "PonderCartInstructionsMixin",
     "PonderDirectionIndicatorMixin",
     "PonderAirCurrentMixin",
@@ -191,9 +195,12 @@
     "PressingSceneMixin",
     "DeployerSceneMixin",
     "BearingSceneMixin",
+    "StickerSceneMixin",
+    "ThresholdSwitchSceneMixin",
     "SpeedControllerSceneMixin",
     "SequencerSceneMixin",
     "TrainControlsSceneMixin",
+    "TrainStoryboardMotionMixin",
     "GearboxRendererMixin",
     "GearboxVisualMixin",
     "BeltVisualMixin",

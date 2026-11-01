@@ -193,6 +193,8 @@ neoForge {
             systemProperty 'differentialcreate.structureClientAudit', 'true'
             systemProperty 'differentialcreate.structureClientSelect', providers.gradleProperty('structureClientSelect').getOrElse('.*')
             systemProperty 'differentialcreate.structureClientHold', providers.gradleProperty('structureClientHold').getOrElse('false')
+            systemProperty 'differentialcreate.structureClientDense', providers.gradleProperty('structureClientDense').getOrElse('false')
+            systemProperty 'differentialcreate.structureClientCameraScale', providers.gradleProperty('structureClientCameraScale').getOrElse('1')
             systemProperty 'differentialcreate.structureClientGridStart', providers.gradleProperty('structureClientGridStart').getOrElse('0')
             systemProperty 'differentialcreate.structureClientReport', project.file(providers.gradleProperty('structureClientReport').getOrElse('build/full-audit/world')).absolutePath
             programArguments.addAll '--width', '1280', '--height', '900'

@@ -21,6 +21,8 @@ public final class PonderSimulation {
     public PonderClockwork clockwork() { return clockwork; }
     private final PonderMounting mounting = new PonderMounting();
     public PonderMounting mounting() { return mounting; }
+    private final PonderSectionJoining joining = new PonderSectionJoining();
+    public PonderSectionJoining joining() { return joining; }
     private final Set<BlockPos> visible = new HashSet<>();
     private record Placement(org.joml.Matrix4f matrix, WorldSectionElement section) {}
     private final Map<BlockPos, Placement> placements = new java.util.LinkedHashMap<>();
@@ -166,6 +168,7 @@ public final class PonderSimulation {
     public void passenger(ParrotElement passenger, WorldSectionElement support) {
         passengers.put(passenger, new Passenger(support, support.getAnimatedOffset(), passenger.getPositionOffset()));
     }
+    public void releasePassenger(ParrotElement passenger) { passengers.remove(passenger); }
     /** A carriage mounted on a moving shaft inherits that shaft's actual transform. */
     public boolean followCarriage(PonderLevel world, WorldSectionElement section, int requestedAxis) {
         for (var cursor : ((PonderWorldSectionAccessor) section).differentialcreate$selection()) {
@@ -308,6 +311,7 @@ public final class PonderSimulation {
         return motion == null ? fallback : motion.direction() * (binding.actuator() instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity ? 2 : 1);
     }
     public void finish(PonderLevel world) {
+        trains.values().forEach(train -> train.applyPose(world));
         var machines = java.util.stream.StreamSupport.stream(world.getBlockEntities().spliterator(), false).toList();
         for (var be : machines) if (visible.contains(be.getBlockPos())
             && be instanceof com.simibubi.create.content.kinetics.fan.EncasedFanBlockEntity fan) { fan.getAirCurrent().rebuild(); fan.getAirCurrent().findEntities(); }
@@ -385,6 +389,10 @@ public final class PonderSimulation {
         cartLoads.forEach((section, load) -> {
             if (section.isVisible()) section.setAnimatedOffset(load.start().add(load.cart().getPositionOffset().subtract(load.cartStart())), false);
         });
+        joining.finish();
+        PonderContactScene.tick(world);
+        PonderPulleyLengthScene.tick(world);
+        PonderTrackObserverScene.tick(world);
         passengers.forEach((passenger, binding) -> {
             if (passenger.isVisible() && binding.support().isVisible())
                 passenger.setPositionOffset(binding.start().add(binding.support().getAnimatedOffset().subtract(binding.supportStart())), false);
@@ -397,6 +405,9 @@ public final class PonderSimulation {
     }
     public void driveTrain(PonderLevel world, WorldSectionElement section, double direction, int duration) {
         trains.computeIfAbsent(section, key -> new PonderTrain(world, key)).driver(world, direction, duration);
+    }
+    public void driveTrain(PonderLevel world, java.util.List<WorldSectionElement> sections, double direction, int duration) {
+        trains.computeIfAbsent(sections.getFirst(), key -> new PonderTrain(world, sections)).driver(world, direction, duration);
     }
     public boolean trainArrived(WorldSectionElement section) { return !trains.containsKey(section) || trains.get(section).arrived(); }
     public boolean trainBogey(BlockPos pos) { return trains.values().stream().anyMatch(train -> train.live() && train.contains(pos)); }
@@ -420,7 +431,7 @@ public final class PonderSimulation {
         return visible.contains(pos) || world.getBlockState(pos).isAir();
     }
     public void reset(PonderLevel world) {
-        clockwork.reset(); mounting.reset(); linearMotions.clear(); parents.clear(); passengers.clear();
+        clockwork.reset(); mounting.reset(); joining.reset(); linearMotions.clear(); parents.clear(); passengers.clear();
         settledGantries.clear(); stabilizedBearings.clear(); pulleys.clear();
         PonderLoot.reset(world);
         visible.clear(); placements.clear(); displayed.clear(); fluidBoundaries.clear(); trains.clear(); attachments.clear(); valveHandles.clear(); actorSections.clear(); actorDrives.clear(); docks.clear(); dockedEndpoints.clear(); carts.clear(); couplings.clear(); cartLoads.clear(); hands.clear(); time = 0;
