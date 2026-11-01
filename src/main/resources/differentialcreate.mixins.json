@@ -132,6 +132,7 @@
     "MultiPulleySceneMixin",
     "ElevatorSceneMixin",
     "GantrySceneMixin",
+    "ChassisSceneMixin",
     "GantryCarriageRendererMixin",
     "HosePulleySceneMixin",
     "DrainSceneMixin",

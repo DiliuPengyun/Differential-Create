@@ -31,6 +31,7 @@ final class PonderClarityAudit {
     private final Map<BlockPos, Integer> comparedSheets = new HashMap<>();
     private int comparedBatch;
     private int flywheelBatch, flywheelInputs, flywheelSheets;
+    private int chassisWarningTicks;
 
     private boolean caption(PonderScene scene, List<String> active, int number) {
         return active.contains(PonderIndex.getLangAccess().getSpecific(scene.getId(), "text_" + number));
@@ -44,6 +45,22 @@ final class PonderClarityAudit {
     void sample(PonderScene scene, List<String> active) {
         var world = scene.getWorld();
         switch (scene.getId().toString()) {
+            case "create:linear_chassis_group" -> {
+                // The first half of the red warning explains a stationary group;
+                // the next revolution then demonstrates the excluded blocks.
+                if (caption(scene, active, 3) && ++chassisWarningTicks <= 30)
+                    parkedChassis(scene, 360, "chassis-warning-parked");
+            }
+            case "create:linear_chassis_attachment" -> {
+                if (caption(scene, active, 5)) parkedChassis(scene, 180, "chassis-range-parked");
+                if (caption(scene, active, 6)) parkedChassis(scene, 360, "chassis-group-range-parked");
+                if (caption(scene, active, 7)) parkedChassis(scene, 540, "chassis-glue-parked");
+            }
+            case "create:radial_chassis" -> {
+                if (caption(scene, active, 3)) parkedChassis(scene, 360, "radial-glue-parked");
+                if (caption(scene, active, 8)) parkedChassis(scene, 720, "radial-range-parked");
+                if (caption(scene, active, 9)) parkedChassis(scene, 1080, "radial-exclusion-parked");
+            }
             case "create:windmill_source" -> {
                 if (caption(scene, active, 7)) scene.forEachVisible(net.createmod.ponder.api.element.WorldSectionElement.class, section -> {
                     if (!((com.diliupengyun.differential_create.mixin.PonderWorldSectionAccessor) section).differentialcreate$selection().test(new BlockPos(3, 2, 0))) return;
@@ -422,9 +439,26 @@ final class PonderClarityAudit {
         });
     }
 
+    private void parkedChassis(PonderScene scene, double angle, String check) {
+        scene.forEachVisible(net.createmod.ponder.api.element.WorldSectionElement.class, section -> {
+            var access = (com.diliupengyun.differential_create.mixin.PonderWorldSectionAccessor) section;
+            var chassis = new BlockPos(2, scene.getId().getPath().equals("linear_chassis_attachment") ? 3 : 2, 2);
+            if (!access.differentialcreate$selection().test(chassis)) return;
+            double current = section.getAnimatedRotation().y;
+            double previous = access.differentialcreate$previousRotation().y;
+            if (Math.abs(current - angle) > .02 || Math.abs(current - previous) > 1e-4)
+                throw new AssertionError(check + " must be stationary at " + angle + " degrees during its caption: "
+                    + previous + " -> " + current + " at tick " + scene.getCurrentTime());
+            seen.add(check);
+        });
+    }
+
     void verify(PonderScene scene) {
         String id = scene.getId().toString();
         var expected = switch (id) {
+            case "create:linear_chassis_group" -> List.of("chassis-warning-parked");
+            case "create:linear_chassis_attachment" -> List.of("chassis-range-parked", "chassis-group-range-parked", "chassis-glue-parked");
+            case "create:radial_chassis" -> List.of("radial-glue-parked", "radial-range-parked", "radial-exclusion-parked");
             case "create:windmill_source" -> List.of("windmill-grid-aligned");
             case "create:piston_pole" -> List.of("piston-passenger-arrived");
             case "differentialcreate:continuous_work" -> List.of("press-start", "press-slow", "press-coast-finished");

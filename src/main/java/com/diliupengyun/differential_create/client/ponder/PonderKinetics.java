@@ -86,7 +86,7 @@ public final class PonderKinetics {
 
     private static final class Attachment {
         boolean active = true;
-        double inertia, load, actorLoad, drag, speed, previous, angle, twist, ratio = 1;
+        double inertia, load, actorLoad, brake, drag, speed, previous, angle, twist, ratio = 1;
         com.diliupengyun.differential_create.kinetics.ShaftPotential gravity = com.diliupengyun.differential_create.kinetics.ShaftPotential.NONE;
     }
     public record AttachmentState(boolean active, double inertia, double load, double actorLoad) {}
@@ -98,7 +98,7 @@ public final class PonderKinetics {
         var rotor = rotors.get(be.getBlockPos());
         if (rotor == null || rotor.be != be || rotor.attachment == null) return;
         var mounted = rotor.attachment;
-        if (!active) { mounted.speed = mounted.twist = 0; mounted.load = mounted.actorLoad = 0; }
+        if (!active) { mounted.speed = mounted.twist = 0; mounted.load = mounted.actorLoad = mounted.brake = 0; }
         mounted.active = active;
     }
 
@@ -252,6 +252,11 @@ public final class PonderKinetics {
     public void setAttachmentLoad(BlockPos pos, double load) {
         var rotor = rotors.get(pos);
         if (rotor != null && rotor.attachment != null) rotor.attachment.load = Math.max(0, load);
+    }
+    /** A casing brake stays engaged when the tutorial adds or removes payload blocks. */
+    public void setAttachmentBrake(BlockPos pos, double torque) {
+        var rotor = rotors.get(pos);
+        if (rotor != null && rotor.attachment != null) rotor.attachment.brake = Math.max(0, torque);
     }
     public void attachmentGravity(KineticBlockEntity be, com.diliupengyun.differential_create.kinetics.ShaftPotential gravity) {
         var rotor = rotors.get(be.getBlockPos());
@@ -464,7 +469,7 @@ public final class PonderKinetics {
             double ratio = PonderSimulation.of(level).couplingRatio(rotor.be);
             if (ratio != mounted.ratio) { mounted.twist = 0; mounted.ratio = ratio; }
             int at = bodies.size(); speed[at] = mounted.speed;
-            bodies.add(new TorsionSolver.Body(mounted.inertia, 0, 0, mounted.load + mounted.actorLoad, mounted.drag)
+            bodies.add(new TorsionSolver.Body(mounted.inertia, 0, 0, mounted.load + mounted.actorLoad + mounted.brake, mounted.drag)
                 .withPotential(mounted.gravity).withSpeedLimit(com.diliupengyun.differential_create.kinetics.ContraptionMotion.speedLimit(rotor.be)));
             boolean linear = rotor.be instanceof com.simibubi.create.content.contraptions.piston.LinearActuatorBlockEntity
                 || rotor.be instanceof com.simibubi.create.content.kinetics.gantry.GantryShaftBlockEntity;

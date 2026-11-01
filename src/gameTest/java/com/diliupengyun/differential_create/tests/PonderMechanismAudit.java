@@ -21,6 +21,7 @@ final class PonderMechanismAudit {
     private double cascadedLift;
     private int cascadedSamples;
     private int cascadedPhysicalSamples;
+    private int chassisExclusionSamples;
 
     void sample(PonderScene scene) {
         lifts.sample(scene);
@@ -33,11 +34,46 @@ final class PonderMechanismAudit {
             case "gantry_redstone" -> gantry(scene);
             case "gantry_cascaded" -> cascadedGantry(scene);
             case "clockwork_bearing" -> clock(scene);
+            case "linear_chassis_group", "linear_chassis_attachment", "radial_chassis" -> chassis(scene);
             case "mechanical_piston" -> {
                 if (scene.isFinished()) require(PonderSimulation.of(scene.getWorld()).point(new BlockPos(3, 1, 1)).x <= 1.001,
                     "piston lesson finished before its final load arrived");
             }
         }
+    }
+    private static WorldSectionElement chassisSection(PonderScene scene, BlockPos part) {
+        WorldSectionElement[] result = new WorldSectionElement[1];
+        scene.forEachVisible(WorldSectionElement.class, section -> {
+            if (((PonderWorldSectionAccessor) section).differentialcreate$selection().test(part)) result[0] = section;
+        });
+        return result[0];
+    }
+    private void chassis(PonderScene scene) {
+        String id = scene.getId().getPath();
+        var part = new BlockPos(2, id.equals("linear_chassis_attachment") ? 3 : 2, 2);
+        var main = chassisSection(scene, part);
+        if (main == null) return;
+        double angle = main.getAnimatedRotation().y;
+        double lower = id.equals("linear_chassis_attachment") ? 200 : id.equals("radial_chassis") ? 760 : 400;
+        double upper = id.equals("linear_chassis_attachment") ? 340 : id.equals("radial_chassis") ? 1040 : 700;
+        if (angle <= lower || angle >= upper) return;
+        var sim = PonderSimulation.of(scene.getWorld());
+        if (id.equals("linear_chassis_group")) {
+            for (var excluded : new BlockPos[]{new BlockPos(2, 4, 2), new BlockPos(0, 2, 2)})
+                require(sim.point(excluded).distanceToSqr(Vec3.atLowerCornerOf(excluded)) < 1e-8,
+                    "wrong-type and differently-facing chassis must stay in place during the second turn");
+        } else {
+            var excluded = chassisSection(scene, id.equals("radial_chassis") ? new BlockPos(0, 2, 2) : new BlockPos(2, 6, 2));
+            require(excluded != null, "the excluded chassis payload disappeared");
+            // The outer radial layer is revealed after the first revolution,
+            // so its own angle is one turn behind the central chassis.
+            double parked = id.equals("radial_chassis") ? 360 : 180;
+            var access = (PonderWorldSectionAccessor) excluded;
+            for (float partial : new float[]{0, .25f, .5f, .75f, 1})
+                require(Math.abs(access.differentialcreate$previousRotation().lerp(excluded.getAnimatedRotation(), partial).y - parked) < .02,
+                    "payload outside the reduced chassis range followed its old attachment");
+        }
+        chassisExclusionSamples++;
     }
     private void clock(PonderScene scene) {
         var world = scene.getWorld(); var sim = PonderSimulation.of(world);
@@ -179,6 +215,16 @@ final class PonderMechanismAudit {
     void verify(PonderScene scene) {
         lifts.verify(scene);
         switch (scene.getId().getPath()) {
+            case "linear_chassis_group", "linear_chassis_attachment", "radial_chassis" -> {
+                String id = scene.getId().getPath();
+                var finalPart = new BlockPos(2, id.equals("linear_chassis_attachment") ? 7 : 2, 2);
+                var section = chassisSection(scene, finalPart);
+                double angle = id.equals("radial_chassis") ? 1080 : 720;
+                require(chassisExclusionSamples >= 20, "the chassis never restarted to demonstrate the excluded payload");
+                require(section != null && Math.abs(section.getAnimatedRotation().y - angle) < .02
+                    && Math.abs(section.getAnimatedRotation().y - ((PonderWorldSectionAccessor) section).differentialcreate$previousRotation().y) < 1e-4,
+                    "the final chassis stroke must finish and park before the lesson ends");
+            }
             case "mechanical_bearing", "bearing" -> require(bearingSamples > 30 && firstPlankTravel > 10,
                 "the first bearing example never bound or rotated: " + scene.getId());
             case "stabilized_bearings" -> require(nestedSamples > 30, "nested bearing compensation was not exercised");
