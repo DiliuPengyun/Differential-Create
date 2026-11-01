@@ -34,14 +34,15 @@ final class ClockHandsTests {
                     for (long time : new long[]{0, 1, 16, 17, 125, 500, 999, 1000, 5999, 6000, 17999, 18000, 23999, 24000}) {
                         timeWorld.setDayTime(time);
                         h.assertTrue(world.getDayTime() == time, "dimension sees the controlled world time");
-                        double hours = (time * (world.dimensionType().natural() ? 1 : 24) / 1000d + 6) % 24;
-                        double minute = (hours * 60) % 60;
+                        long minuteCount = (time * (world.dimensionType().natural() ? 1 : 24) * 60 / 1000 + 360) % 1440;
+                        double hours = minuteCount / 60d;
+                        double minute = minuteCount % 60;
                         h.assertTrue(Math.abs(AngleHelper.getShortestAngleDiff(access.differentialcreate$hourTarget(false), (float) (-sign * hours * 30))) < 5e-5,
                             "native 12-hour target includes minutes: " + dimension + " " + facing + " " + time);
                         h.assertTrue(Math.abs(AngleHelper.getShortestAngleDiff(access.differentialcreate$hourTarget(true), (float) (-sign * hours * 15))) < 5e-5,
                             "native 24-hour target includes minutes: " + dimension + " " + facing + " " + time);
                         h.assertTrue(Math.abs(AngleHelper.getShortestAngleDiff(access.differentialcreate$minuteTarget(), (float) (-sign * minute * 6))) < 5e-5,
-                            "native minute target includes seconds: " + dimension + " " + facing + " " + time);
+                            "native minute target holds between whole game minutes: " + dimension + " " + facing + " " + time);
                     }
                 }
             } finally { timeWorld.setDayTime(previous); }
@@ -79,6 +80,7 @@ final class ClockHandsTests {
         });
         var rows = new ArrayList<String>(); rows.add("tick,day_time,facing,first_angle,second_angle,first_target,second_target");
         double[][] previousAngles = new double[6][2];
+        int[][] dwells = new int[6][2], movingFrames = new int[6][2];
         for (var pair : previousAngles) java.util.Arrays.fill(pair, Double.NaN);
         h.onEachTick(() -> {
             if (h.getTick() >= 85 && h.getTick() < 100 || h.getTick() >= 170 && h.getTick() < 185) {
@@ -105,11 +107,14 @@ final class ClockHandsTests {
                         boolean hour = mode == 1 ? hand == 1 : hand == 0;
                         double rate = hour ? mode == 2 ? .015 : .03 : .36;
                         double step = -Direction.values()[i].getAxisDirection().getStep() * (angles[hand] - previousAngles[i][hand]);
-                        if (Double.isFinite(step)) h.assertTrue(step > rate * .25 && step < rate * 1.75,
-                            "running hand follows time without whole-minute/hour stops or jumps: mode=" + mode + " facing=" + Direction.values()[i]
+                        if (Double.isFinite(step)) h.assertTrue(step > -.002 && step < rate * 35,
+                            "jumping hand advances through integrated motion without a visible reverse or teleport: mode=" + mode + " facing=" + Direction.values()[i]
                                 + " hand=" + hand + " tick=" + h.getTick() + " step=" + step);
-                        h.assertTrue(Math.abs(AngleHelper.getShortestAngleDiff((float) (angles[hand] % 360), targets[hand])) < (hour ? .5 : 5),
-                            "finite controller tracks the advancing time with bounded lag");
+                        h.assertTrue(Math.abs(AngleHelper.getShortestAngleDiff((float) (angles[hand] % 360), targets[hand])) < (hour ? 1.1 : 12.1),
+                            "finite index follows minute steps with bounded lag");
+                        var state = hand == 0 ? clock.hour : clock.minute;
+                        if (state.speed == 0 && !state.index.moving) dwells[i][hand]++;
+                        else movingFrames[i][hand]++;
                         previousAngles[i][hand] = angles[hand];
                     }
                     rows.add(h.getTick() + "," + h.getLevel().getDayTime() + "," + Direction.values()[i] + "," + angles[0] + "," + angles[1] + "," + targets[0] + "," + targets[1]);
@@ -121,6 +126,10 @@ final class ClockHandsTests {
         h.runAfterDelay(265, () -> daylight.set(true, h.getLevel().getServer()));
         h.runAfterDelay(425, () -> daylight.set(false, h.getLevel().getServer()));
         h.runAfterDelay(500, () -> {
+            for (int i = 0; i < 6; i++) for (int hand = 0; hand < 2; hand++)
+                h.assertTrue(dwells[i][hand] >= 10 && movingFrames[i][hand] >= 10,
+                    "each hand has visible movement and geometric dwell frames: facing=" + Direction.values()[i]
+                        + " hand=" + hand + " dwell=" + dwells[i][hand] + " moving=" + movingFrames[i][hand]);
             for (var p : positions) {
                 var access = (ClockworkBearingAccessor) h.getBlockEntity(p);
                 float first = mode == 1 ? access.differentialcreate$minuteTarget() : access.differentialcreate$hourTarget(mode == 2);

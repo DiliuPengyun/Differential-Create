@@ -41,7 +41,7 @@ public final class MachiningClock {
     }
     public static boolean needsPositionControl(KineticBlockEntity be) {
         if (ContraptionPhysics.incomplete(be)) return false;
-        return ClockworkMotion.manages(be) ? !ClockworkMotion.outputs(be).isEmpty()
+        return ClockworkMotion.manages(be) ? ClockworkMotion.needsControl(be)
             : be instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity && ActorFeed.enabled(be);
     }
     public static void advance(Level level) {

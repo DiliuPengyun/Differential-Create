@@ -4,6 +4,7 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 import com.diliupengyun.differential_create.kinetics.ContraptionGeometry;
 import com.diliupengyun.differential_create.kinetics.ShaftPotential;
+import com.diliupengyun.differential_create.kinetics.ClockworkTransmission;
 import net.createmod.catnip.math.AngleHelper;
 import com.diliupengyun.differential_create.mixin.ClockworkBearingAccessor;
 import com.diliupengyun.differential_create.mixin.PonderWorldSectionAccessor;
@@ -22,11 +23,16 @@ public final class PonderClockwork {
         final Motion hour = new Motion(), minute = new Motion();
         long time() {
             double minutePhase = minutes - minuteOrigin;
-            return Math.floorMod(Math.round(hours / 30 * 1000 - 6000 + minutePhase * 1000 / 360), 24000);
+            long minute = Math.floorMod((long) Math.floor(hours * 2 + minutePhase / 6 - 360 + 1e-9), 1440);
+            // A minute boundary is 16 2/3 ticks. Rounding to the nearest tick
+            // puts alternate forward steps (and reverse hour crossings) into
+            // the preceding minute. Select its first representable world tick.
+            return (minute * 1000 + 59) / 60;
         }
     }
     public static final class Motion {
         public double angle, previousAngle, speed, inertia, drag;
+        public final ClockworkTransmission.State index = new ClockworkTransmission.State();
         ContraptionGeometry.Shape shape;
         int axis;
     }
@@ -73,6 +79,7 @@ public final class PonderClockwork {
         clock.running = false; clock.hours = clock.minutes = clock.minuteOrigin = 0;
         clock.hour.angle = clock.minute.angle = clock.hour.speed = clock.minute.speed = 0;
         clock.hour.previousAngle = clock.minute.previousAngle = 0;
+        clock.hour.index.reset(); clock.minute.index.reset();
         var state = (ClockworkBearingAccessor) bearing;
         state.differentialcreate$hourAngle(0); state.differentialcreate$minuteAngle(0);
     }

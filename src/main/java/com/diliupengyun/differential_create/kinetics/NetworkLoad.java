@@ -57,15 +57,15 @@ public final class NetworkLoad {
                 feed.gear * NetworkDynamics.preciseSpeed(be) - feed.speed);
         }
         for (var be : network.members.keySet()) for (var output : ClockworkMotion.outputs(be)) {
-            var drive = output.drive(); var hand = output.hand(); var command = hand.command;
-            double ratio = ratios.getOrDefault(be, 1f) * command.gear();
+            var drive = output.drive(); var hand = output.hand(); var index = hand.index;
+            double ratio = ratios.getOrDefault(be, 1f) * index.gear;
             double drag = ContraptionPhysics.drives(be).stream().filter(d -> d.root() == drive.root())
                 .mapToDouble(ContraptionPhysics.Drive::drag).sum();
             members.add(new LoadFactor.Member(ratio, hand.speed, 0,
-                command.brake() + ContraptionPhysics.feedLoad(drive) + drag * hand.speed * hand.speed, false));
+                ContraptionPhysics.feedLoad(drive) + drag * hand.speed * hand.speed, false));
             members.add(new LoadFactor.Member(ratio, hand.speed, ContraptionGravity.capture(drive).torque(0, 0), 0, false));
-            loss += LoadFactor.contactLoss(0, PositionServo.DAMPING, command.coupling(), 0,
-                command.gear() * NetworkDynamics.preciseSpeed(be) - hand.speed);
+            loss += LoadFactor.contactLoss(ClockworkTransmission.STIFFNESS, 0, ClockworkTransmission.TORQUE, index.twist,
+                index.gear * NetworkDynamics.preciseSpeed(be) - hand.speed);
         }
         // Gravitational power opposes lifting and supplies descent. Keep it
         // separate from source torque so opposing terms cannot cancel before

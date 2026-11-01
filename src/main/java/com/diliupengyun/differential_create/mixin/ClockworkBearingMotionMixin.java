@@ -21,14 +21,14 @@ public abstract class ClockworkBearingMotionMixin {
 	@Shadow protected boolean assembleNextTick;
 	@Shadow protected abstract void applyRotations();
 	// Keep the native time read so Ponder's demonstration clock and the dimension
-	// multiplier still apply; replace only the whole-hour/minute rounding.
+	// multiplier still apply; both hands now share the whole-minute boundary.
 	@ModifyReturnValue(method = "getHourTarget", at = @At("RETURN"))
-	private float differentialcreate$continuousHour(float original, boolean cycle24,
+	private float differentialcreate$indexedHour(float original, boolean cycle24,
 		@Local(ordinal = 0) int dayTime, @Local(ordinal = 2) int direction) {
 		return ClockworkTargets.hour(dayTime, cycle24, direction);
 	}
 	@ModifyReturnValue(method = "getMinuteTarget", at = @At("RETURN"))
-	private float differentialcreate$continuousMinute(float original,
+	private float differentialcreate$indexedMinute(float original,
 		@Local(ordinal = 0) int dayTime, @Local(ordinal = 2) int direction) {
 		return ClockworkTargets.minute(dayTime, direction);
 	}

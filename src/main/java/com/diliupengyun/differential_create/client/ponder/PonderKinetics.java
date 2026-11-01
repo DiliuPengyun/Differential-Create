@@ -479,8 +479,7 @@ public final class PonderKinetics {
         for (var clock : clocks) {
             int at = bodies.size(); var motion = clock.motion(); speed[at] = motion.speed;
             bodies.add(new TorsionSolver.Body(motion.inertia, 0, 0, 0, motion.drag).withPotential(clock.gravity()));
-            links.add(new TorsionSolver.Link(indices.get(clock.bearing()), at, 1, 0,
-                com.diliupengyun.differential_create.kinetics.PositionServo.DAMPING, Double.POSITIVE_INFINITY, 0));
+            links.add(motion.index.link(indices.get(clock.bearing()), at));
         }
         var crushers = new ArrayList<CrushingKinetics.Pair>();
         for (var be : level.getBlockEntities())
@@ -493,6 +492,7 @@ public final class PonderKinetics {
         for (var pair : crushers)
             links.add(TorsionSolver.Link.work(indices.get(pair.a()), indices.get(pair.b()), pair.torque()));
         twist = Arrays.copyOf(twist, links.size());
+        for (int i = 0; i < clocks.size(); i++) twist[couplingStart + servos.size() + i] = clocks.get(i).motion().index.twist;
         var result = servos.isEmpty() && attachments.isEmpty() && clocks.isEmpty()
             ? TorsionSolver.advance(bodies, links, speed, twist, RotationMath.TICK_MINUTES, PhysicsTuning.TORSION_MAX_STEP)
             : advanceMotion(level, members, servos, attachments, connections, indices, outputs, bodies, links, speed, twist, couplingStart, explicitSources, clocks);
@@ -927,13 +927,16 @@ public final class PonderKinetics {
             for (int i = 0; i < clocks.size(); i++) {
                 var clock = clocks.get(i); int out = members.size() + servos.size() + attachments.size() + i;
                 var body = initialBodies.get(out); var potential = body.potential().shifted(angles[out]);
-                var command = com.diliupengyun.differential_create.kinetics.PositionServo.plan(clock.error(angles[out]), speed[out],
+                var index = clock.motion().index;
+                index.prepare(clock.motion().angle + angles[out], clock.error(angles[out]), speed[out],
                     speed[indices.get(clock.bearing())], body.inertia(), body.load(), potential.torque(0, 0), false);
-                bodies.set(out, new TorsionSolver.Body(body.inertia(), 0, 0, command.brake(), body.drag()).withPotential(potential));
-                links.set(couplingStart + servos.size() + i, new TorsionSolver.Link(indices.get(clock.bearing()), out, command.gear(),
-                    0, com.diliupengyun.differential_create.kinetics.PositionServo.DAMPING, Double.POSITIVE_INFINITY, command.coupling()));
+                bodies.set(out, new TorsionSolver.Body(body.inertia(), 0, 0, body.load(), body.drag())
+                    .withPotential(potential).withStop(index.pinned ? 2 : 0));
+                links.set(couplingStart + servos.size() + i, index.link(indices.get(clock.bearing()), out));
+                var boundary = index.boundary(out, speed[out]); if (boundary != null) limits.add(boundary);
             }
-            boolean controlled = !servos.isEmpty() || !clocks.isEmpty() || attachments.stream().anyMatch(r -> r.be instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity);
+            boolean controlled = !servos.isEmpty() || clocks.stream().anyMatch(c -> c.motion().index.moving)
+                || attachments.stream().anyMatch(r -> r.be instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity);
             double duration = controlled ? Math.min(remaining, SequencerMotion.CONTROL_INTERVAL) : remaining;
             double step = Math.min(duration, PhysicsTuning.TORSION_MAX_STEP);
             var captured = TorsionSolver.prepare(bodies, links, speed, twist);
@@ -942,6 +945,12 @@ public final class PonderKinetics {
             speed = result.speed(); twist = result.twist();
             for (int i = 0; i < speed.length; i++) {
                 angles[i] += result.angle()[i]; travel[i] += result.travel()[i];
+            }
+            for (int i = 0; i < clocks.size(); i++) {
+                var clock = clocks.get(i); var motion = clock.motion();
+                int out = members.size() + servos.size() + attachments.size() + i, edge = couplingStart + servos.size() + i;
+                speed[out] = motion.index.accept(motion.angle + angles[out], speed[out], motion.inertia,
+                    initialBodies.get(out).potential().torque(angles[out], 0), twist[edge]);
             }
             for (var rotor : servos) {
                 var servo = (ISequencerDynamics) rotor.be;

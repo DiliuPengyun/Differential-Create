@@ -54,6 +54,8 @@ final class PositionControlTests {
         h.runAfterDelay(120, () -> {
             ClockworkBearingBlockEntity be = h.getBlockEntity(positions.getFirst());
             var before = ClockworkMotion.outputs(be).stream().map(o -> new Sample(o.hand().speed, o.hand().angle, 0)).toList();
+            var transmissions = ClockworkMotion.outputs(be).stream().map(o -> new double[]{o.hand().index.twist,
+                o.hand().index.destination, o.hand().index.moving ? 1 : 0, o.hand().index.landing ? 1 : 0}).toList();
             h.assertTrue(ContraptionPhysics.drives(be).stream().anyMatch(ContraptionPhysics.Drive::stabilized), "nested clock includes a real stabilized child");
             double mass = ClockworkMotion.of(be).hour.inertia;
             var restored = (ClockworkBearingBlockEntity) reload(h, be);
@@ -62,6 +64,10 @@ final class PositionControlTests {
             for (int i = 0; i < 2; i++) {
                 h.assertTrue(after.get(i).hand().speed == before.get(i).speed && after.get(i).hand().angle == before.get(i).angle,
                     "clock reload preserves each hand's independent velocity and integrated coordinate");
+                var index = after.get(i).hand().index; var saved = transmissions.get(i);
+                h.assertTrue(index.twist == saved[0] && index.destination == saved[1]
+                    && index.moving == (saved[2] == 1) && index.landing == (saved[3] == 1),
+                    "reload preserves elastic energy and the unfinished mechanical index");
             }
             h.assertTrue(ClockworkMotion.of(restored).hour.inertia == mass, "partially reloaded clock retains the saved child inertia");
             h.runAfterDelay(3, () -> h.assertTrue(!ContraptionPhysics.incomplete(restored)
@@ -73,7 +79,7 @@ final class PositionControlTests {
                 ClockworkBearingBlockEntity be = h.getBlockEntity(positions.get(i));
                 var clock = (ClockworkBearingAccessor) be;
                 h.assertTrue(clock.differentialcreate$hour() != null && clock.differentialcreate$minute() != null, "both hands assembled");
-                h.assertTrue(MachiningClock.needsPositionControl(be), "assembled clock retains its finite control interval");
+                h.assertTrue(!MachiningClock.needsPositionControl(be), "parked clock releases its high-frequency control interval");
                 h.assertTrue(Math.abs(ClockworkMotion.of(be).hour.speed) < .02 && Math.abs(ClockworkMotion.of(be).minute.speed) < .02,
                     "both outputs settle before independent target change");
                 var load = NetworkLoad.of(be);

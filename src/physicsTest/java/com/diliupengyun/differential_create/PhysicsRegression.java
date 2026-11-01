@@ -21,6 +21,7 @@ public final class PhysicsRegression {
 		BoundarySearchRegression.run();
 		SequencerRegression.run();
 		PositionServoRegression.run();
+		ClockworkIndexRegression.run();
 		KineticPartitionRegression.run();
 		MinecartRegression.run();
 		com.diliupengyun.differential_create.kinetics.TreeSolverRegression.run();

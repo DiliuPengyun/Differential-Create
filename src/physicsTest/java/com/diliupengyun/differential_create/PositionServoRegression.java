@@ -64,18 +64,19 @@ public final class PositionServoRegression {
                 "at 06:30 the hour hand is halfway between 6 and 7");
             require(ClockworkTargets.hour(500, true, direction) == -direction * 97.5,
                 "24-hour mode includes the same half-hour phase");
-            require(ClockworkTargets.minute(125, direction) == -direction * 45,
-                "the minute hand includes the half-minute at 06:07:30");
+            require(ClockworkTargets.minute(125, direction) == -direction * 42,
+                "at 06:07:30 the jumping minute hand remains on minute seven");
             for (long time = -24000; time <= 48000; time++) {
+                long advance = Math.floorDiv((time + 1) * 60, 1000) - Math.floorDiv(time * 60, 1000);
                 require(Math.abs(wrapped(ClockworkTargets.hour(time + 1, false, direction)
-                    - ClockworkTargets.hour(time, false, direction)) + direction * .03) < 4e-5,
-                    "12-hour target advances uniformly across every minute, hour and day wrap");
+                    - ClockworkTargets.hour(time, false, direction)) + direction * .5 * advance) < 4e-5,
+                    "12-hour target advances half a degree on the shared minute boundary");
                 require(Math.abs(wrapped(ClockworkTargets.hour(time + 1, true, direction)
-                    - ClockworkTargets.hour(time, true, direction)) + direction * .015) < 4e-5,
-                    "24-hour target advances uniformly across every hour and midnight");
+                    - ClockworkTargets.hour(time, true, direction)) + direction * .25 * advance) < 4e-5,
+                    "24-hour target advances a quarter degree on the shared minute boundary");
                 require(Math.abs(wrapped(ClockworkTargets.minute(time + 1, direction)
-                    - ClockworkTargets.minute(time, direction)) + direction * .36) < 4e-5,
-                    "minute target has no whole-minute plateaus or jumps");
+                    - ClockworkTargets.minute(time, direction)) + direction * 6 * advance) < 4e-5,
+                    "minute target has exact six-degree steps without accumulated cadence drift");
             }
         }
     }

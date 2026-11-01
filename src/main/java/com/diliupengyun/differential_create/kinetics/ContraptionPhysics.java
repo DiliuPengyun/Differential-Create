@@ -43,7 +43,10 @@ public final class ContraptionPhysics {
 		boolean rotation, double ratio, AbstractContraptionEntity root, BlockPos mount) implements ActorDrive {
 		@Override public double speed() { return ClockworkMotion.manages(shaft) ? ClockworkMotion.hand(this).speed : ActorFeed.speed(shaft); }
 		@Override public double preferredSpeed() {
-			if (ClockworkMotion.manages(shaft)) return ClockworkMotion.hand(this).command.velocity();
+			if (ClockworkMotion.manages(shaft)) {
+				var hand = ClockworkMotion.hand(this);
+				return hand.index.moving ? Math.signum(hand.index.destination - hand.angle) : 0;
+			}
 			if (shaft instanceof com.simibubi.create.content.contraptions.elevator.ElevatorPulleyBlockEntity elevator)
 				return ((com.diliupengyun.differential_create.mixin.ElevatorPulleyAccessor) elevator).differentialcreate$targetOffset() - elevator.offset;
 			double input = NetworkDynamics.preciseSpeed(shaft);

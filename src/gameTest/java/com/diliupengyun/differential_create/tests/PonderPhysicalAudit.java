@@ -213,9 +213,9 @@ final class PonderPhysicalAudit {
         var clock = PonderSimulation.of(world).clockwork();
         clock.request(hour, bearing, 2, 90); clock.request(minute, bearing, 2, 45);
         var state = (com.diliupengyun.differential_create.mixin.ClockworkBearingAccessor) bearing;
-        require(Math.abs(state.differentialcreate$hourTarget(false) - 93.75) < .001
-            && Math.abs(state.differentialcreate$minuteTarget() - 45) < .001,
-            "Ponder's 03:07:30 target preserves fractional minutes and the hour hand's minute progress");
+        require(Math.abs(state.differentialcreate$hourTarget(false) - 93.5) < .001
+            && Math.abs(state.differentialcreate$minuteTarget() - 42) < .001,
+            "Ponder's 03:07:30 indication stays on the shared 03:07 minute index");
         clock.request(minute, bearing, 2, 135);
         for (int i = 0; i < 300; i++) { world.tick(); PonderSimulation.of(world).finish(world); }
         require(Math.abs(Math.IEEEremainder(state.differentialcreate$hourAngle() - (powered ? 105 : 0), 360)) < .01
@@ -233,16 +233,24 @@ final class PonderPhysicalAudit {
         require(Math.abs(state.differentialcreate$hourTarget(false) - 120) < .001,
             "the explicit hour command must not count the minute carry twice");
         clock.request(minute, bearing, 2, -6);
-        require(Math.abs(state.differentialcreate$hourTarget(false) - 119.49) < .001
-            && Math.abs(state.differentialcreate$minuteTarget() - 353.88) < .001,
-            "reverse minute travel crosses the hour continuously at world-tick resolution");
+        require(Math.abs(state.differentialcreate$hourTarget(false) - 119.5) < .001
+            && Math.abs(state.differentialcreate$minuteTarget() - 354) < .001,
+            "reverse minute travel lands at 03:59 without rounding down to 03:58");
         clock.request(hour, bearing, 2, -30);
-        require(Math.abs(state.differentialcreate$hourTarget(false) - 119.49) < .001,
+        require(Math.abs(state.differentialcreate$hourTarget(false) - 119.5) < .001,
             "an explicit reverse hour command acknowledges the negative carry");
         clock.stop(world, pos);
         require(Math.abs(state.differentialcreate$hourTarget(false)) < .001
             && Math.abs(state.differentialcreate$minuteTarget()) < .001,
             "stopping the storyboard clears both time and its minute carry");
+        for (int i = 1; i <= 60; i++) {
+            clock.request(minute, bearing, 2, 6);
+            require(Math.abs(state.differentialcreate$minuteTarget() - (i % 60) * 6) < .001,
+                "each six-degree storyboard command advances exactly one game minute");
+            require(Math.abs(state.differentialcreate$hourTarget(false) - i * .5) < .001,
+                "the hour hand shares every minute boundary without early or missing steps");
+        }
+        clock.stop(world, pos);
     }
     private static void linearEndpoints() {
         var world = world(); var pos = new BlockPos(0, 1, 0);

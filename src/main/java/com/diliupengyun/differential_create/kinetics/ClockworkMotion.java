@@ -9,23 +9,35 @@ import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import net.createmod.catnip.math.AngleHelper;
 import net.minecraft.nbt.CompoundTag;
 
-/** Each clock hand has its own momentum, brake and passive input coupling.
+/** Each clock hand has its own momentum, elastic transmission and geometric dwell.
  * Speeds use the input-equivalent coordinate; the fixed hand ratio never flips. */
 public final class ClockworkMotion {
     public static final class Hand {
         public UUID entity;
         public double speed, angle, inertia, brakeHeat;
-        public PositionServo.Command command = new PositionServo.Command(1, 0, PositionServo.TORQUE, 0);
+        public final ClockworkTransmission.State index = new ClockworkTransmission.State();
         void write(CompoundTag tag) {
             if (entity != null) tag.putUUID("Entity", entity);
             tag.putDouble("Speed", speed); tag.putDouble("Angle", angle);
             tag.putDouble("Inertia", inertia); tag.putDouble("BrakeHeat", brakeHeat);
+            tag.putInt("IndexVersion", 1);
+            tag.putDouble("Twist", index.twist); tag.putDouble("Destination", index.destination);
+            tag.putDouble("CaptureLoss", index.captureLoss);
+            tag.putBoolean("IndexInitialized", index.initialized); tag.putBoolean("Moving", index.moving);
+            tag.putBoolean("Landing", index.landing);
         }
         void read(CompoundTag tag) {
             entity = tag.hasUUID("Entity") ? tag.getUUID("Entity") : null;
             speed = finite(tag.getDouble("Speed")); angle = finite(tag.getDouble("Angle"));
             inertia = Math.max(0, finite(tag.getDouble("Inertia")));
             brakeHeat = Math.max(0, finite(tag.getDouble("BrakeHeat")));
+            index.reset();
+            if (tag.getInt("IndexVersion") == 1) {
+                index.twist = finite(tag.getDouble("Twist")); index.destination = finite(tag.getDouble("Destination"));
+                index.captureLoss = Math.max(0, finite(tag.getDouble("CaptureLoss")));
+                index.initialized = tag.getBoolean("IndexInitialized"); index.moving = tag.getBoolean("Moving");
+                index.landing = tag.getBoolean("Landing");
+            }
         }
     }
     public record Output(ContraptionPhysics.Drive drive, Hand hand) {}
@@ -54,6 +66,7 @@ public final class ClockworkMotion {
             if (!drive.root().getUUID().equals(hand.entity)) {
                 var access = (ClockworkBearingAccessor) be;
                 hand.entity = drive.root().getUUID(); hand.speed = 0; hand.inertia = 0;
+                hand.index.reset();
                 hand.angle = (drive.ratio() == .5 ? access.differentialcreate$hourAngle() : access.differentialcreate$minuteAngle()) / (360 * drive.ratio());
             } else if (inertia > hand.inertia && hand.inertia > 0) hand.speed *= hand.inertia / inertia;
             hand.inertia = inertia;
@@ -82,8 +95,19 @@ public final class ClockworkMotion {
                 if (ctx == null || !MovingDeployerWork.isHand(ctx)) continue;
                 var tool = ContraptionActorWork.of(ctx).hand(); tool.prepare(); holding |= tool.holding();
             }
-        hand.command = PositionServo.plan(error(drive), hand.speed, NetworkDynamics.preciseSpeed(drive.shaft()),
-            hand.inertia, resistance, gravity.torque(0, 0), holding);
+        hand.index.prepare(hand.angle, error(drive), hand.speed, NetworkDynamics.preciseSpeed(drive.shaft()),
+            hand.inertia, resistance, gravity.torque(0, 0), holding || drive.root().isStalled() || drive.root().getContraption().stalled);
+    }
+    public static boolean needsControl(KineticBlockEntity be) {
+        for (var output : outputs(be)) {
+            var hand = output.hand();
+            if (hand.index.moving && !hand.index.pinned || Math.abs(error(output.drive())) > 2 * ClockworkTransmission.POSITION_EPSILON
+                && Math.abs(NetworkDynamics.preciseSpeed(be)) > ClockworkTransmission.SPEED_EPSILON) return true;
+        }
+        return false;
+    }
+    public static double elasticEnergy(KineticBlockEntity be) {
+        return outputs(be).stream().mapToDouble(o -> ClockworkTransmission.energy(o.hand.index.twist)).sum();
     }
     public static double kineticEnergy(KineticBlockEntity be) {
         return outputs(be).stream().mapToDouble(o -> .5 * o.hand.inertia * o.hand.speed * o.hand.speed).sum();

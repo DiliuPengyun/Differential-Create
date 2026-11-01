@@ -1209,7 +1209,9 @@ public final class TorsionSolver {
         for (int i = 0; i < n; i++) adjacent.add(new ArrayList<>());
         for (int e = 0; e < links.size(); e++) {
             Link link = links.get(e);
-            if (link.friction > 0 && (weights == null || weights[e] > 0)) {
+            // A zero-ratio dwell is an elastic support on b. It carries no
+            // velocity relation to a and must never seed a 1/0 speed frame.
+            if (link.ratio != 0 && link.friction > 0 && (weights == null || weights[e] > 0)) {
                 adjacent.get(link.a).add(link); adjacent.get(link.b).add(link);
             }
         }
@@ -1219,8 +1221,11 @@ public final class TorsionSolver {
                 roots[i] = i; ratios[i] = 1; queue[tail++] = i;
             }
         }
-        for (int seed = 0; seed < n; seed++) {
-            if (head == tail && roots[seed] < 0) {
+        // Drain physical anchors before seeding any remaining algebraic
+        // component. Otherwise an isolated node before the first anchor can
+        // be skipped when zero-ratio/zero-weight links split the speed frame.
+        for (int seed = -1; seed < n; seed++) {
+            if (seed >= 0 && roots[seed] < 0) {
                 roots[seed] = seed; ratios[seed] = 1; queue[tail++] = seed;
             }
             while (head < tail) {
