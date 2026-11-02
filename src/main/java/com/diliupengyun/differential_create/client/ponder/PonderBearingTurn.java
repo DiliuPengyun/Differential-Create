@@ -6,20 +6,22 @@ import net.createmod.ponder.foundation.PonderScene;
 import net.createmod.ponder.foundation.instruction.PonderInstruction;
 import net.minecraft.core.BlockPos;
 
-/** Off-stage operator for finite chassis demonstrations, including braking and holding. */
-public final class PonderChassisTurn extends PonderInstruction {
+/** Off-stage operator for finite bearing demonstrations, including braking and holding. */
+public final class PonderBearingTurn extends PonderInstruction {
     private final BlockPos bearing;
     private final double degrees, cruise;
     private final int limit;
+    private final boolean reselect;
     private int elapsed;
     private double target;
     private boolean started, braking, complete;
 
-    public PonderChassisTurn(BlockPos bearing, float degrees, int duration) {
+    public PonderBearingTurn(BlockPos bearing, float degrees, int duration, boolean reselect) {
         this.bearing = bearing.immutable();
         this.degrees = degrees;
         cruise = Math.abs(degrees / (.3 * duration));
         limit = duration + 300;
+        this.reselect = reselect;
     }
 
     @Override public boolean isComplete() { return complete; }
@@ -35,8 +37,10 @@ public final class PonderChassisTurn extends PonderInstruction {
             target = (angle == null ? 0 : angle) + degrees;
             // The next rotateSection instructions choose the new attachment
             // range. A section omitted from that stroke must remain parked.
-            var simulation = PonderSimulation.of(world);
-            for (var section : simulation.sections(be)) simulation.release(section);
+            if (reselect) {
+                var simulation = PonderSimulation.of(world);
+                for (var section : simulation.sections(be)) simulation.release(section);
+            }
             physics.setAttachmentBrake(bearing, 0);
         }
         double error = target - (angle == null ? 0 : angle);

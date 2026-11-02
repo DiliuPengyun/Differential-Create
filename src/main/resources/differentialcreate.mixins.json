@@ -133,6 +133,7 @@
     "ElevatorSceneMixin",
     "GantrySceneMixin",
     "ChassisSceneMixin",
+    "ContraptionControlsSceneMixin",
     "GantryCarriageRendererMixin",
     "HosePulleySceneMixin",
     "DrainSceneMixin",

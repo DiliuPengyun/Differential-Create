@@ -1,7 +1,7 @@
 package com.diliupengyun.differential_create.mixin;
 
 import com.diliupengyun.differential_create.client.ponder.PonderAwait;
-import com.diliupengyun.differential_create.client.ponder.PonderChassisTurn;
+import com.diliupengyun.differential_create.client.ponder.PonderBearingTurn;
 import com.diliupengyun.differential_create.client.ponder.PonderSimulation;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
@@ -24,12 +24,12 @@ public abstract class ChassisSceneMixin {
         target = "Lcom/simibubi/create/foundation/ponder/CreateSceneBuilder$WorldInstructions;rotateBearing(Lnet/minecraft/core/BlockPos;FI)V"))
     private static void differentialcreate$finiteTurn(CreateSceneBuilder.WorldInstructions world, BlockPos pos,
         float degrees, int duration, Operation<Void> original, SceneBuilder builder, SceneBuildingUtil util) {
-        builder.addInstruction(new PonderChassisTurn(pos, degrees, duration));
+        builder.addInstruction(new PonderBearingTurn(pos, degrees, duration, true));
     }
 
     private static void differentialcreate$park(SceneBuilder builder, int reserve) {
         builder.idle(reserve);
-        builder.addInstruction(new PonderAwait(scene -> PonderChassisTurn.parked(scene, new BlockPos(2, 1, 2)), 300));
+        builder.addInstruction(new PonderAwait(scene -> PonderBearingTurn.parked(scene, new BlockPos(2, 1, 2)), 300));
     }
 
     @WrapOperation(method = {"linearGroup", "linearAttachement", "radial"}, at = @At(value = "INVOKE",

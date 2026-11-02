@@ -123,14 +123,14 @@ final class PonderActorWork implements ActorDrive {
             ctx.relativeMotion = new Vec3(inverse.transformDirection(new org.joml.Vector3f((float) delta.x, (float) delta.y, (float) delta.z)));
             ctx.rotation = v -> new Vec3(matrix.transformDirection(new org.joml.Vector3f((float) v.x, (float) v.y, (float) v.z)));
             ctx.disabled = false;
-            if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.harvester.HarvesterBlockEntity harvester) harvester.setAnimatedSpeed(ctx.getAnimationSpeed());
-            if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.roller.RollerBlockEntity roller) roller.setAnimatedSpeed(ctx.getAnimationSpeed());
             for (var controlOwner : PonderSimulation.of(world).sections(actuator))
             for (var controlPos : ((PonderWorldSectionAccessor) controlOwner).differentialcreate$selection())
                 if (world.getBlockEntity(controlPos) instanceof com.simibubi.create.content.contraptions.actors.contraptionControls.ContraptionControlsBlockEntity control && control.disabled) {
                     var filter = control.getBehaviour(com.simibubi.create.foundation.blockEntity.behaviour.filtering.FilteringBehaviour.TYPE);
                     if (filter == null || filter.getFilter().isEmpty() || filter.test(new net.minecraft.world.item.ItemStack(ctx.state.getBlock()))) ctx.disabled = true;
                 }
+            if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.harvester.HarvesterBlockEntity harvester) harvester.setAnimatedSpeed(ctx.getAnimationSpeed());
+            if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.roller.RollerBlockEntity roller) roller.setAnimatedSpeed(ctx.getAnimationSpeed());
             if (accepted <= 1e-10 || !actor.behaviour.isActive(ctx)) continue;
             int steps = Math.max(1, (int) Math.ceil(delta.length() / .03));
             for (int i = 1; i <= steps; i++) {
