@@ -75,8 +75,10 @@ final class PonderAnimationAudit {
     private final PonderTrainVisualAudit trains = new PonderTrainVisualAudit();
     private final PonderSectionJoinAudit joining = new PonderSectionJoinAudit();
     private final PonderControlsAudit controls = new PonderControlsAudit();
+    private final PonderCoastingAudit coasting = new PonderCoastingAudit();
 
     void sample(PonderScene scene) {
+        PonderPresentationAudit.sample(scene);
         controls.sample(scene);
         joining.sample(scene);
         trains.sample(scene);
@@ -292,6 +294,7 @@ final class PonderAnimationAudit {
             catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
         });
         clarity.sample(scene, captions);
+        coasting.sample(scene, captions);
         if (Boolean.getBoolean("differentialcreate.ponderAudit")) {
             frames.add(new Frame(tick, scene.getCurrentTime(), scene.getTotalTime(), scene.isFinished(), captions, rotors, sections, changes, mechanisms));
         }
@@ -508,6 +511,7 @@ final class PonderAnimationAudit {
     }
 
     void verify(PonderScene scene) {
+        coasting.verify(scene);
         controls.verify(scene);
         joining.verify(scene);
         trains.verify(scene);

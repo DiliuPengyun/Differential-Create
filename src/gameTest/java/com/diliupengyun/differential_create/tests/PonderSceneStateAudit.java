@@ -9,7 +9,9 @@ import java.util.Map;
 
 import com.diliupengyun.differential_create.client.ponder.PonderHoseElement;
 import com.diliupengyun.differential_create.client.ponder.PonderKinetics;
+import com.diliupengyun.differential_create.client.ponder.PonderSimulation;
 import com.diliupengyun.differential_create.kinetics.BoilerAdmission;
+import com.diliupengyun.differential_create.kinetics.LoadFactor;
 import com.diliupengyun.differential_create.kinetics.NetworkTopology;
 import com.diliupengyun.differential_create.kinetics.SourcePhysics;
 import com.diliupengyun.differential_create.mixin.PonderWorldSectionAccessor;
@@ -39,6 +41,9 @@ final class PonderSceneStateAudit {
     private record Shown(Block block, double fade, Vec3 offset) {}
     private final Map<BlockPos, Shown> previous = new HashMap<>();
     private final Map<String, Integer> failures = new LinkedHashMap<>();
+    private final Map<BlockPos, Block> connectedPumps = new HashMap<>(), connectedInlets = new HashMap<>();
+    private final Map<BlockPos, Long> pumpDisconnects = new HashMap<>();
+    private final Map<BlockPos, Long> hiddenPumpDrives = new HashMap<>();
     private double maximumSteamRpm;
     private boolean steamCoast, steamGauge, trainSupply, trainHose, trainFuel;
     private boolean unequalCrushing;
@@ -72,6 +77,12 @@ final class PonderSceneStateAudit {
                 shown.put(pos.immutable(), new Shown(block, fade, section.getAnimatedOffset()));
             }
         });
+        // Ponder's NBT/block-state edits can recreate a BE without replacing the
+        // displayed machine. Retain its connection history until the block leaves.
+        connectedPumps.entrySet().removeIf(e -> !shown.containsKey(e.getKey()) || shown.get(e.getKey()).block() != e.getValue());
+        connectedInlets.entrySet().removeIf(e -> !shown.containsKey(e.getKey()) || shown.get(e.getKey()).block() != e.getValue());
+        pumpDisconnects.keySet().retainAll(connectedPumps.keySet());
+        hiddenPumpDrives.keySet().retainAll(connectedPumps.keySet());
         for (var entry : shown.entrySet()) {
             if (entry.getValue().fade() < .999) continue;
             var be = world.getBlockEntity(entry.getKey());
@@ -119,8 +130,26 @@ final class PonderSceneStateAudit {
                     }
                 steamGauge |= tank.boiler.isActive() && tank.boiler.gauge.getValue(1) > .25;
             }
-            if (be instanceof PumpBlockEntity pump && !hasVisibleDrive(scene, pump, shown))
-                fail(scene, "Pump is animated without a connected visible drive at " + pump.getBlockPos());
+            if (be instanceof PumpBlockEntity pump) {
+                var pos = pump.getBlockPos();
+                if (hasDrive(scene, pump, shown)) {
+                    connectedPumps.put(pos, state.getBlock()); pumpDisconnects.remove(pos); hiddenPumpDrives.remove(pos);
+                } else {
+                    long time = PonderSimulation.of(world).time();
+                    boolean physicallyConnected = hasDrive(scene, pump, null);
+                    // Fade completion can hide the shaft one tick before its AIR
+                    // instruction. The supply sample in the removal frame still
+                    // precedes that edit; require NO_POWER on the next world step.
+                    long changedAt = (physicallyConnected ? hiddenPumpDrives : pumpDisconnects)
+                        .computeIfAbsent(pos, ignored -> time);
+                    var supply = PonderKinetics.of(world).loadReading(pump).status();
+                    if (!connectedPumps.containsKey(pos) || time != changedAt
+                        && (physicallyConnected || supply != LoadFactor.Status.NO_POWER))
+                        fail(scene, "Pump lacks a visible drive or a previously connected unpowered coasting state at " + pos
+                            + ", previouslyConnected=" + connectedPumps.containsKey(pos) + ", time=" + time
+                            + ", physicallyConnected=" + physicallyConnected + ", changedAt=" + changedAt + ", supply=" + supply);
+                }
+            }
             if (be instanceof SteamEngineBlockEntity engine) {
                 var tank = engine.getTank(); var shaft = engine.getShaft();
                 if (tank == null || shaft == null || !engine.isValid()) {
@@ -231,7 +260,7 @@ final class PonderSceneStateAudit {
         return false;
     }
 
-    private static boolean hasVisibleDrive(PonderScene scene, KineticBlockEntity start, Map<BlockPos, Shown> shown) {
+    private static boolean hasDrive(PonderScene scene, KineticBlockEntity start, Map<BlockPos, Shown> shown) {
         var visited = new HashSet<BlockPos>();
         var queue = new ArrayDeque<KineticBlockEntity>(); queue.add(start);
         while (!queue.isEmpty()) {
@@ -240,9 +269,9 @@ final class PonderSceneStateAudit {
             if (be instanceof CreativeMotorBlockEntity) return true;
             // A visible inlet may explicitly represent off-stage power. The connecting
             // shafts/gears must still be present; an arbitrary spinning pump is insufficient.
-            if (isBoundary(scene, be) && shown.containsKey(be.getBlockPos())) return true;
+            if (isBoundary(scene, be) && (shown == null || shown.containsKey(be.getBlockPos()))) return true;
             for (var pos : neighbours(be)) {
-                if (shown.containsKey(pos) && scene.getWorld().getBlockEntity(pos) instanceof KineticBlockEntity other
+                if ((shown == null || shown.containsKey(pos)) && scene.getWorld().getBlockEntity(pos) instanceof KineticBlockEntity other
                     && (NetworkTopology.connection(be, other) != 0 || NetworkTopology.connection(other, be) != 0)) queue.add(other);
             }
         }
@@ -289,7 +318,11 @@ final class PonderSceneStateAudit {
                     && (NetworkTopology.connection(be, other) != 0 || NetworkTopology.connection(other, be) != 0))
                     queue.add(other);
         }
-        if (!connected) fail(scene, "Edge cog has no visible mechanical connection into the stage at " + pos);
+        // The inlet must first reach actual stage machinery. Once an operator
+        // disconnects it, the source may keep turning its now-unloaded stub.
+        if (connected) connectedInlets.put(pos, inlet.getBlockState().getBlock());
+        else if (!connectedInlets.containsKey(pos))
+            fail(scene, "Edge cog has never had a visible mechanical connection into the stage at " + pos);
     }
 
     private static java.util.List<BlockPos> neighbours(KineticBlockEntity be) {

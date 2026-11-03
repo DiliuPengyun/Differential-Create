@@ -80,7 +80,6 @@ final class PonderClarityAudit {
                     String key = "press-contact-" + phase;
                     if (cycle.running && depot.getHeldItem().is(Items.COPPER_INGOT)) {
                         seen.add(phase == 1 ? "press-start" : "press-slow");
-                        if (phase == 1 && !first.containsKey(key + "-start")) pressFraming(scene);
                         first.putIfAbsent(key + "-start", (double) scene.getCurrentTime());
                     }
                     if (first.containsKey(key + "-start") && AllItems.COPPER_SHEET.isIn(depot.getHeldItem())
@@ -563,30 +562,6 @@ final class PonderClarityAudit {
                 || change("native-filter-chocolate-surface") < .04 || change("native-filter-milk-surface") < .04))
             throw new AssertionError("Both smart-pipe tanks must receive new matching liquid during the final caption: " + first + " -> " + last
                 + "; pipes=" + filterRoutingState(scene));
-    }
-
-    /** Model extrema must fit the usable viewport, including common automatic GUI scales. */
-    private static void pressFraming(PonderScene scene) {
-        var transform = scene.new SceneTransform();
-        transform.xRotation.startWithValue(scene.getTransform().xRotation.getValue(1));
-        transform.yRotation.startWithValue(scene.getTransform().yRotation.getValue(1));
-        var points = new java.util.ArrayList<net.minecraft.world.phys.Vec3>();
-        for (int i = 0; i < 32; i++) {
-            double angle = i * Math.PI / 16;
-            points.add(new net.minecraft.world.phys.Vec3(2.5, 3.5 + 1.5 * Math.sin(angle), 2.5 + 1.5 * Math.cos(angle)));
-            points.add(new net.minecraft.world.phys.Vec3(5.5, .5 + .875 * Math.sin(angle), 1.5 + .875 * Math.cos(angle)));
-        }
-        for (double x : new double[]{0, 1, 5, 6}) for (double z : new double[]{2, 3})
-            points.add(new net.minecraft.world.phys.Vec3(x, x < 2 ? 4.75 : 4, z));
-        for (var viewport : new int[][]{{480, 264}, {426, 240}, {600, 450}}) {
-            transform.updateScreenParams(viewport[0], viewport[1], 0);
-            for (var point : points) {
-                var screen = transform.sceneToScreen(point, 1);
-                if (screen.x < 8 || screen.x > viewport[0] - 8 || screen.y < 8 || screen.y > viewport[1] - 40)
-                    throw new AssertionError("Press/flywheel geometry leaves the usable Ponder viewport "
-                        + viewport[0] + "x" + viewport[1] + ": " + point + " -> " + screen);
-            }
-        }
     }
 
     private List<String> filterRoutingState(PonderScene scene) {

@@ -62,10 +62,12 @@ public final class DifferentialPonderScenes {
         lesson.title(scene);
         scene.addInstruction(s -> PonderKinetics.of(s.getWorld()).useExplicitSources());
         scene.configureBasePlate(0, 0, 5);
-        // Tall machines need headroom at 16:9; low benches can use the closer view.
+        // Keep input ladders and moving parts inside the viewport at larger GUI
+        // scales too. The dynamics camera turn needs additional top clearance.
         scene.scaleSceneView(switch (lesson.id) {
-            case "dynamics", "continuous_work", "crusher_work", "steam_power" -> 0.9f;
-            default -> 1.3f;
+            case "dynamics", "ratio" -> .8f;
+            case "continuous_work", "crusher_work", "steam_power" -> .9f;
+            default -> .95f;
         });
         scene.world().setBlocks(util.select().fromTo(-1, 1, -1, 7, 6, 7), Blocks.AIR.defaultBlockState(), false);
         scene.showBasePlate();
@@ -202,6 +204,24 @@ public final class DifferentialPonderScenes {
         scene.idle(40);
     }
 
+    /** Remove the shown shaft so coasting follows an observable source disconnection. */
+    private static void disconnectInput(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos shaft, int ticks) {
+        disconnectInput(scene, util, shaft, ticks, Pointing.DOWN);
+    }
+
+    private static void disconnectInput(CreateSceneBuilder scene, SceneBuildingUtil util, BlockPos shaft, int ticks,
+        Pointing pointing) {
+        scene.overlay().showControls(util.vector().topOf(shaft), pointing, 20)
+            .withItem(AllItems.WRENCH.asStack()).rightClick().whileSneaking();
+        scene.world().hideSection(util.select().position(shaft), Direction.UP);
+        scene.idle(15);
+        scene.world().setBlock(shaft, Blocks.AIR.defaultBlockState(), false);
+        // Let the next physics step rebuild the disconnected components before
+        // the following caption describes their supply and measured load.
+        scene.idle(1);
+        scene.overlay().showOutline(PonderPalette.RED, new Object(), util.select().position(shaft), ticks);
+    }
+
     public static void dynamics(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.DYNAMICS);
         BlockPos control = CONTROL.above(2);
@@ -224,13 +244,8 @@ public final class DifferentialPonderScenes {
         // Leave the original workpieces in place. Physically removing the input
         // shaft makes the change from driven work to stored energy visible.
         BlockPos inputShaft = control.east();
-        scene.overlay().showControls(util.vector().topOf(inputShaft), Pointing.DOWN, 20)
-            .withItem(AllItems.WRENCH.asStack()).rightClick().whileSneaking();
-        scene.world().hideSection(util.select().position(inputShaft), Direction.UP);
-        scene.idle(15);
-        scene.world().setBlock(inputShaft, Blocks.AIR.defaultBlockState(), false);
+        disconnectInput(scene, util, inputShaft, 130);
         PonderLesson.DYNAMICS.showFor(scene, util, control, 1, PonderPalette.WHITE, 130);
-        scene.overlay().showOutline(PonderPalette.RED, new Object(), util.select().position(inputShaft), 130);
         scene.idle(140);
         awaitPressBatch(scene, INPUT);
         scene.overlay().showControls(util.vector().blockSurface(INPUT, Direction.NORTH), Pointing.RIGHT, 25)
@@ -395,7 +410,7 @@ public final class DifferentialPonderScenes {
         scene.effects().indicateRedstone(CONTROL.north());
         PonderLesson.LOAD_GAUGE.show(scene, util, CONTROL, 1, PonderPalette.MEDIUM);
 
-        target(scene, util, input, 0);
+        disconnectInput(scene, util, CONTROL.east(), 100);
         PonderLesson.LOAD_GAUGE.show(scene, util, CONTROL.north(), 2, PonderPalette.RED);
 
         scene.overlay().showControls(util.vector().topOf(CONTROL), Pointing.DOWN, 40)
@@ -482,8 +497,8 @@ public final class DifferentialPonderScenes {
         scene.world().modifyBlock(CONTROL, s -> s.setValue(PumpBlock.FACING, Direction.WEST), true);
         scene.idle(130);
 
+        disconnectInput(scene, util, CONTROL.south().east(), 100);
         PonderLesson.PUMP_DIRECTION.showFor(scene, util, CONTROL, 2, PonderPalette.WHITE, 100);
-        input.setSpeed(scene, util, 0);
         scene.idle(110);
         scene.markAsFinished();
     }
@@ -540,8 +555,8 @@ public final class DifferentialPonderScenes {
         inputPos.setSpeed(scene, util, 32);
         scene.idle(120);
 
+        disconnectInput(scene, util, bearingPos.below().east(), 100);
         PonderLesson.BEARING.showFor(scene, util, bearingPos, 2, PonderPalette.BLUE, 100);
-        inputPos.setSpeed(scene, util, 0);
         scene.idle(110);
         scene.markAsFinished();
     }
@@ -621,13 +636,8 @@ public final class DifferentialPonderScenes {
         loadPressBatch(scene, ingot, INPUT);
         scene.idle(8);
         BlockPos inputShaft = control.east();
-        scene.overlay().showControls(util.vector().topOf(inputShaft), Pointing.DOWN, 20)
-            .withItem(AllItems.WRENCH.asStack()).rightClick().whileSneaking();
-        scene.world().hideSection(util.select().position(inputShaft), Direction.UP);
-        scene.idle(15);
-        scene.world().setBlock(inputShaft, Blocks.AIR.defaultBlockState(), false);
+        disconnectInput(scene, util, inputShaft, 150);
         PonderLesson.CONTINUOUS_WORK.showFor(scene, util, control, 2, PonderPalette.GREEN, 150);
-        scene.overlay().showOutline(PonderPalette.RED, new Object(), util.select().position(inputShaft), 150);
         scene.idle(160);
         awaitPressBatch(scene, INPUT);
         scene.markAsFinished();
@@ -649,7 +659,9 @@ public final class DifferentialPonderScenes {
         input.setSpeed(scene, util, 64);
         scene.idle(130);
 
-        target(scene, util, input, 0);
+        disconnectInput(scene, util, inputPos.north(), 100);
+        // Finish the wrench hint's fade before the nearby item-insertion hint.
+        scene.idle(15);
         ItemStack stack = new ItemStack(Items.COPPER_INGOT);
         scene.overlay().showControls(util.vector().topOf(OUTPUT), Pointing.DOWN, 35).withItem(stack);
         scene.effects().indicateSuccess(OUTPUT);
@@ -659,6 +671,9 @@ public final class DifferentialPonderScenes {
         scene.overlay().showOutline(PonderPalette.OUTPUT, new Object(), util.select().position(CONTROL), 60);
         scene.world().modifyBlockEntity(OUTPUT, com.simibubi.create.content.logistics.depot.EjectorBlockEntity.class,
             ejector -> ejector.setTarget(2, 0));
+        scene.overlay().showControls(util.vector().topOf(inputPos.north()), Pointing.DOWN, 30)
+            .withItem(AllBlocks.SHAFT.asStack()).rightClick();
+        block(scene, util, inputPos.north(), axis(AllBlocks.SHAFT.getDefaultState(), Axis.Z));
         target(scene, util, input, 64);
         PonderLesson.EJECTOR_WORK.showFor(scene, util, CONTROL, 2, PonderPalette.BLUE, 120);
         scene.world().createItemOnBeltLike(OUTPUT, Direction.EAST, stack);
@@ -669,7 +684,7 @@ public final class DifferentialPonderScenes {
     public static void fan(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.FAN_WORK);
         scene.configureBasePlate(0, 0, 6);
-        scene.scaleSceneView(1.1f);
+        scene.scaleSceneView(.85f);
         BlockPos inputPos = new BlockPos(2, 2, 5);
         BlockPos fanPos = new BlockPos(2, 2, 4);
         BlockPos lavaPos = new BlockPos(2, 2, 2);
@@ -703,8 +718,8 @@ public final class DifferentialPonderScenes {
         scene.overlay().showOutline(PonderPalette.GREEN, new Object(), util.select().position(depotPos), 210);
         scene.idle(230);
 
+        disconnectInput(scene, util, inputPos, 120, Pointing.RIGHT);
         PonderLesson.FAN_WORK.showFor(scene, util, fanPos, 2, PonderPalette.MEDIUM, 120);
-        input.setSpeed(scene, util, 0);
         scene.idle(130);
         scene.markAsFinished();
     }
@@ -712,7 +727,7 @@ public final class DifferentialPonderScenes {
     public static void sequencer(SceneBuilder builder, SceneBuildingUtil util) {
         var scene = start(builder, util, PonderLesson.SEQUENCER);
         scene.configureBasePlate(0, 0, 6);
-        scene.scaleSceneView(1.05f);
+        scene.scaleSceneView(.7f);
         BlockPos control = CONTROL.above(), output = OUTPUT.above();
         Drive input = drive(scene, util, AllBlocks.SEQUENCED_GEARSHIFT.getDefaultState(),
             AllBlocks.MECHANICAL_BEARING.getDefaultState().setValue(BlockStateProperties.FACING, Direction.EAST), 2, Direction.WEST);
@@ -957,7 +972,7 @@ public final class DifferentialPonderScenes {
                 bounds.minX(), bounds.minY(), bounds.minZ(), bounds.maxX(), Math.max(5, bounds.maxY()), bounds.maxZ()));
         });
         scene.configureBasePlate(1, 0, 9);
-        scene.scaleSceneView(.75f);
+        scene.scaleSceneView(.65f);
         scene.setSceneOffsetY(-1);
         scene.showBasePlate();
         scene.world().showSection(util.select().layer(1), Direction.DOWN);
