@@ -75,11 +75,35 @@ final class PonderClarityAudit {
             case "differentialcreate:continuous_work" -> {
                 if (!(world.getBlockEntity(new BlockPos(0, 3, 2)) instanceof MechanicalPressBlockEntity press)
                     || !(world.getBlockEntity(new BlockPos(0, 1, 2)) instanceof DepotBlockEntity depot)) return;
-                if (caption(scene, active, 1) && press.getPressingBehaviour().running) seen.add("press-start");
-                if (caption(scene, active, 2) && press.getPressingBehaviour().running) seen.add("press-slow");
+                for (int phase = 1; phase <= 2; phase++) if (caption(scene, active, phase)) {
+                    var cycle = press.getPressingBehaviour();
+                    String key = "press-contact-" + phase;
+                    if (cycle.running && depot.getHeldItem().is(Items.COPPER_INGOT)) {
+                        seen.add(phase == 1 ? "press-start" : "press-slow");
+                        if (phase == 1 && !first.containsKey(key + "-start")) pressFraming(scene);
+                        first.putIfAbsent(key + "-start", (double) scene.getCurrentTime());
+                    }
+                    if (first.containsKey(key + "-start") && AllItems.COPPER_SHEET.isIn(depot.getHeldItem())
+                        && !first.containsKey(key + "-duration")) {
+                        if (!cycle.running || cycle.getRenderedHeadOffset(1) < .99)
+                            throw new AssertionError("The copper sheet must appear at actual press contact");
+                        first.put(key + "-duration", scene.getCurrentTime() - first.get(key + "-start"));
+                    }
+                }
                 if (caption(scene, active, 3)) {
+                    if (!world.getBlockState(new BlockPos(3, 3, 2)).isAir())
+                        throw new AssertionError("The cut-power press caption needs a visible break in the input shaft");
+                    if (!first.containsKey("press-coast-start")) {
+                        var cycle = press.getPressingBehaviour();
+                        if (!cycle.running || cycle.runningTicks <= 0 || cycle.runningTicks >= 120
+                            || !depot.getHeldItem().is(Items.COPPER_INGOT))
+                            throw new AssertionError("Disconnect the input during the unfinished stroke, before contact");
+                        first.put("press-coast-start", (double) scene.getCurrentTime());
+                    }
+                    reading("press-coast-speed", Math.abs(press.getSpeed()));
                     coastingPressStarted |= press.getPressingBehaviour().running && depot.getHeldItem().is(Items.COPPER_INGOT);
-                    if (coastingPressStarted && AllItems.COPPER_SHEET.isIn(depot.getHeldItem())) seen.add("press-coast-finished");
+                    if (coastingPressStarted && AllItems.COPPER_SHEET.isIn(depot.getHeldItem())
+                        && !press.getPressingBehaviour().running) seen.add("press-coast-finished");
                 }
             }
             case "differentialcreate:dynamics" -> {
@@ -480,6 +504,15 @@ final class PonderClarityAudit {
             default -> List.<String>of();
         };
         if (!seen.containsAll(expected)) throw new AssertionError(id + " caption/result mismatch: expected=" + expected + ", witnessed=" + seen);
+        if (id.equals("differentialcreate:continuous_work")) {
+            double fast = first.getOrDefault("press-contact-1-duration", 0d), slow = first.getOrDefault("press-contact-2-duration", 0d);
+            if (fast <= 0 || slow < fast * 1.5)
+                throw new AssertionError("The slow press must visibly take longer to reach contact: " + fast + " vs " + slow);
+            if (change("press-coast-speed") >= 0)
+                throw new AssertionError("The disconnected flywheel must spend stored energy finishing the stroke");
+            com.diliupengyun.differential_create.DifferentialCreate.LOGGER.info("DC_CONTINUOUS_PRESS_PASS: fastContactTicks={} slowContactTicks={} coastSpeed={} -> {}",
+                fast, slow, first.get("press-coast-speed"), last.get("press-coast-speed"));
+        }
         if (id.equals("create:piston_pole") && change("piston-passenger-travel") > -1.999)
             throw new AssertionError("The passenger must stay on the block throughout the complete two-block piston stroke");
         if (id.equals("create:portable_storage_interface_redstone")
@@ -530,6 +563,30 @@ final class PonderClarityAudit {
                 || change("native-filter-chocolate-surface") < .04 || change("native-filter-milk-surface") < .04))
             throw new AssertionError("Both smart-pipe tanks must receive new matching liquid during the final caption: " + first + " -> " + last
                 + "; pipes=" + filterRoutingState(scene));
+    }
+
+    /** Model extrema must fit the usable viewport, including common automatic GUI scales. */
+    private static void pressFraming(PonderScene scene) {
+        var transform = scene.new SceneTransform();
+        transform.xRotation.startWithValue(scene.getTransform().xRotation.getValue(1));
+        transform.yRotation.startWithValue(scene.getTransform().yRotation.getValue(1));
+        var points = new java.util.ArrayList<net.minecraft.world.phys.Vec3>();
+        for (int i = 0; i < 32; i++) {
+            double angle = i * Math.PI / 16;
+            points.add(new net.minecraft.world.phys.Vec3(2.5, 3.5 + 1.5 * Math.sin(angle), 2.5 + 1.5 * Math.cos(angle)));
+            points.add(new net.minecraft.world.phys.Vec3(5.5, .5 + .875 * Math.sin(angle), 1.5 + .875 * Math.cos(angle)));
+        }
+        for (double x : new double[]{0, 1, 5, 6}) for (double z : new double[]{2, 3})
+            points.add(new net.minecraft.world.phys.Vec3(x, x < 2 ? 4.75 : 4, z));
+        for (var viewport : new int[][]{{480, 264}, {426, 240}, {600, 450}}) {
+            transform.updateScreenParams(viewport[0], viewport[1], 0);
+            for (var point : points) {
+                var screen = transform.sceneToScreen(point, 1);
+                if (screen.x < 8 || screen.x > viewport[0] - 8 || screen.y < 8 || screen.y > viewport[1] - 40)
+                    throw new AssertionError("Press/flywheel geometry leaves the usable Ponder viewport "
+                        + viewport[0] + "x" + viewport[1] + ": " + point + " -> " + screen);
+            }
+        }
     }
 
     private List<String> filterRoutingState(PonderScene scene) {

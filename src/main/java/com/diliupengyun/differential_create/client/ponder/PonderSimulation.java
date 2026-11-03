@@ -339,7 +339,7 @@ public final class PonderSimulation {
         for (var be : machines) if (visible.contains(be.getBlockPos())
             && be instanceof net.minecraft.world.level.block.entity.HopperBlockEntity hopper)
             net.minecraft.world.level.block.entity.HopperBlockEntity.pushItemsTick(world, be.getBlockPos(), be.getBlockState(), hopper);
-        if (world.scene == null || (!world.scene.getId().getPath().equals("mechanical_press") && !world.scene.getId().getPath().equals("continuous_work")))
+        if (world.scene == null || !world.scene.getId().getPath().equals("mechanical_press"))
             for (var be : machines) if (visible.contains(be.getBlockPos()) && be instanceof com.simibubi.create.content.kinetics.press.MechanicalPressBlockEntity press) pressing.tick(press);
         for (var be : machines) if (visible.contains(be.getBlockPos())
             && be instanceof com.simibubi.create.content.fluids.spout.SpoutBlockEntity spout) {

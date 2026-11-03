@@ -69,7 +69,7 @@ public enum PonderLesson {
         "Slow Processing and Working After Power Is Cut",
         "Watch the press complete a copper sheet as its shaft turns.",
         "A slower input makes the next pressing stroke slower.",
-        "Cut power: the Flywheel finishes this last copper sheet."
+        "Disconnect the input shaft: the Flywheel finishes the stroke already in progress."
     ),
     EJECTOR_WORK("ejector_work",
         "Charging, Firing, and Retargeting Ejectors",

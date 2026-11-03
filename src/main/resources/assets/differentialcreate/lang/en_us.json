@@ -185,7 +185,7 @@
   "differentialcreate.ponder.continuous_work.header": "Slow Processing and Working After Power Is Cut",
   "differentialcreate.ponder.continuous_work.text_1": "Watch the press complete a copper sheet as its shaft turns.",
   "differentialcreate.ponder.continuous_work.text_2": "A slower input makes the next pressing stroke slower.",
-  "differentialcreate.ponder.continuous_work.text_3": "Cut power: the Flywheel finishes this last copper sheet.",
+  "differentialcreate.ponder.continuous_work.text_3": "Disconnect the input shaft: the Flywheel finishes the stroke already in progress.",
   "differentialcreate.ponder.ejector_work.header": "Charging, Firing, and Retargeting Ejectors",
   "differentialcreate.ponder.ejector_work.text_1": "Turn the input shaft to charge the Ejector.",
   "differentialcreate.ponder.ejector_work.text_2": "Once charged, cut power and add an ingot: it still launches.",

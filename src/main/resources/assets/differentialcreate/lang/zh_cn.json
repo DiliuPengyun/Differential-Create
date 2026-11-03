@@ -185,7 +185,7 @@
   "differentialcreate.ponder.continuous_work.header": "机器的慢速加工与断电续作",
   "differentialcreate.ponder.continuous_work.text_1": "轴转动后，冲压机把铜锭压成铜板。",
   "differentialcreate.ponder.continuous_work.text_2": "减慢输入，下一次冲压也会更慢。",
-  "differentialcreate.ponder.continuous_work.text_3": "切断动力，飞轮仍能把这一件压完。",
+  "differentialcreate.ponder.continuous_work.text_3": "断开输入轴，飞轮仍能完成正在进行的这次冲压。",
   "differentialcreate.ponder.ejector_work.header": "弹射器蓄力、发射与更改落点",
   "differentialcreate.ponder.ejector_work.text_1": "先转动输入轴，为弹射器蓄力。",
   "differentialcreate.ponder.ejector_work.text_2": "蓄满后切断动力，再投入铜锭，仍可发射。",

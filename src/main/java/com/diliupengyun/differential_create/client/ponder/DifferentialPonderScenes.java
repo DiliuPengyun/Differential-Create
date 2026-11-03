@@ -64,7 +64,7 @@ public final class DifferentialPonderScenes {
         scene.configureBasePlate(0, 0, 5);
         // Tall machines need headroom at 16:9; low benches can use the closer view.
         scene.scaleSceneView(switch (lesson.id) {
-            case "dynamics", "crusher_work", "steam_power" -> 0.9f;
+            case "dynamics", "continuous_work", "crusher_work", "steam_power" -> 0.9f;
             default -> 1.3f;
         });
         scene.world().setBlocks(util.select().fromTo(-1, 1, -1, 7, 6, 7), Blocks.AIR.defaultBlockState(), false);
@@ -589,29 +589,47 @@ public final class DifferentialPonderScenes {
         Drive input = drive(scene, util, AllBlocks.FLYWHEEL.getDefaultState(), AllBlocks.MECHANICAL_PRESS.getDefaultState(), 3);
         block(scene, util, INPUT, AllBlocks.DEPOT.getDefaultState());
         ItemStack ingot = new ItemStack(Items.COPPER_INGOT);
-        ItemStack sheet = new ItemStack(AllItems.COPPER_SHEET.get());
 
-        // The press consumes the ingot on the contact tick and leaves the sheet on the
-        // depot; the item change must follow the shaft travel, not a scripted flip.
-        PonderPressing.run(scene, 80, output, INPUT, ingot, sheet, 4, 3, 5);
-        scene.overlay().showControls(util.vector().blockSurface(INPUT, Direction.NORTH), Pointing.RIGHT, 30)
-            .withItem(ingot);
-        PonderLesson.CONTINUOUS_WORK.showFor(scene, util, output, 0, PonderPalette.WHITE, 120);
+        // Use the same native depot/recipe callbacks as the flywheel lesson. Reach
+        // the demonstrated speed before feeding so startup inertia cannot invert
+        // the fast/slow comparison. Reserve the physical time in the timeline.
+        PonderLesson.CONTINUOUS_WORK.showFor(scene, util, output, 0, PonderPalette.WHITE, 290);
         input.setSpeed(scene, util, 64);
         scene.effects().rotationSpeedIndicator(control);
-        scene.idle(130);
+        scene.idle(180);
+        scene.addInstruction(new PonderAwait(s -> Math.abs(((com.simibubi.create.content.kinetics.base.KineticBlockEntity)
+            s.getWorld().getBlockEntity(output)).getSpeed()) >= 55, 150));
+        loadPressBatch(scene, ingot, INPUT);
+        scene.overlay().showControls(util.vector().blockSurface(INPUT, Direction.NORTH), Pointing.RIGHT, 30)
+            .withItem(ingot);
+        scene.idle(120);
+        awaitPressBatch(scene, INPUT);
 
-        // Place a new ingot for each case, while its explanatory caption is visible.
-        PonderPressing.run(scene, 260, output, INPUT, ingot, sheet, 4, 3, 5);
-        PonderLesson.CONTINUOUS_WORK.showFor(scene, util, output, 1, PonderPalette.MEDIUM, 120);
+        PonderLesson.CONTINUOUS_WORK.showFor(scene, util, output, 1, PonderPalette.MEDIUM, 250);
         input.setSpeed(scene, util, 32);
-        scene.idle(130);
+        scene.idle(140);
+        scene.addInstruction(new PonderAwait(s -> Math.abs(((com.simibubi.create.content.kinetics.base.KineticBlockEntity)
+            s.getWorld().getBlockEntity(output)).getSpeed()) <= 34, 150));
+        scene.overlay().showControls(util.vector().blockSurface(INPUT, Direction.NORTH), Pointing.RIGHT, 30)
+            .rightClick().withItem(ingot);
+        loadPressBatch(scene, ingot, INPUT);
+        scene.idle(120);
+        awaitPressBatch(scene, INPUT);
 
+        scene.overlay().showControls(util.vector().blockSurface(INPUT, Direction.NORTH), Pointing.RIGHT, 25)
+            .rightClick().withItem(ingot);
+        loadPressBatch(scene, ingot, INPUT);
+        scene.idle(8);
+        BlockPos inputShaft = control.east();
+        scene.overlay().showControls(util.vector().topOf(inputShaft), Pointing.DOWN, 20)
+            .withItem(AllItems.WRENCH.asStack()).rightClick().whileSneaking();
+        scene.world().hideSection(util.select().position(inputShaft), Direction.UP);
+        scene.idle(15);
+        scene.world().setBlock(inputShaft, Blocks.AIR.defaultBlockState(), false);
         PonderLesson.CONTINUOUS_WORK.showFor(scene, util, control, 2, PonderPalette.GREEN, 150);
-        scene.overlay().showControls(util.vector().topOf(INPUT), Pointing.DOWN, 40).withItem(ingot);
-        PonderPressing.run(scene, 260, output, INPUT, ingot, sheet, 4, 3, 5);
-        input.setSpeed(scene, util, 0);
+        scene.overlay().showOutline(PonderPalette.RED, new Object(), util.select().position(inputShaft), 150);
         scene.idle(160);
+        awaitPressBatch(scene, INPUT);
         scene.markAsFinished();
     }
 
