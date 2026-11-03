@@ -93,13 +93,14 @@ public final class ClientSpeedSync {
 				// Keep every packet safely below the custom-payload size limit.
 				if (rotors.size() == 2048) {
 					var packet = new RotorStatePayload(server.dimension().location(), network.id, energy, elasticEnergy.total(),
-						loadFactor, List.copyOf(rotors));
+						loadFactor, List.copyOf(rotors), server.tickRateManager().isFrozen());
 					for (var player : last.audience) queue(player, packet);
 					rotors.clear();
 				}
 			}
 			if (!rotors.isEmpty()) {
-				var packet = new RotorStatePayload(server.dimension().location(), network.id, energy, elasticEnergy.total(), loadFactor, rotors);
+				var packet = new RotorStatePayload(server.dimension().location(), network.id, energy, elasticEnergy.total(), loadFactor, rotors,
+					server.tickRateManager().isFrozen());
 				for (var player : last.audience) queue(player, packet);
 			}
 		}

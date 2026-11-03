@@ -122,20 +122,20 @@ public final class ClientNetworkSpeeds {
 			rotor.speed = update.speed(); rotor.torque = update.torque();
 			rotor.steamIntake = update.steamIntake();
 			rotor.elasticEnergy = update.elasticEnergy();
-			rotor.animation.receive(update.angle(), update.output() == null ? null : update.output().angle());
+			rotor.animation.receive(update.angle(), update.output() == null ? null : update.output().angle(), payload.stepped());
 			if (update.bearing() == null) rotor.bearing = null;
 			else {
 				if (rotor.bearing == null) rotor.bearing = new BearingAnimation();
-				rotor.bearing.receive(update.bearing().entityId(), update.bearing().angle());
+				rotor.bearing.receive(update.bearing().entityId(), update.bearing().angle(), payload.stepped());
 			}
 			rotor.clockInertia = update.clock().stream().mapToDouble(RotorStatePayload.ClockPose::inertia).sum();
 			rotor.clockEnergy = update.clock().stream().mapToDouble(RotorStatePayload.ClockPose::kineticEnergy).sum();
 			rotor.clock.keySet().retainAll(update.clock().stream().map(RotorStatePayload.ClockPose::entityId).toList());
-			for (var hand : update.clock()) rotor.clock.computeIfAbsent(hand.entityId(), id -> new BearingAnimation()).receive(hand.entityId(), hand.angle());
+			for (var hand : update.clock()) rotor.clock.computeIfAbsent(hand.entityId(), id -> new BearingAnimation()).receive(hand.entityId(), hand.angle(), payload.stepped());
 			if (update.linear() == null) rotor.linear = null;
 			else {
 				if (rotor.linear == null) rotor.linear = new BearingAnimation();
-				rotor.linear.receive(update.linear().entityId(), update.linear().offset());
+				rotor.linear.receive(update.linear().entityId(), update.linear().offset(), payload.stepped());
 			}
 		}
 	}

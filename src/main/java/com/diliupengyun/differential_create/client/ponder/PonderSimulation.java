@@ -14,6 +14,7 @@ import net.createmod.ponder.api.element.ParrotElement;
 import net.createmod.ponder.api.element.WorldSectionElement;
 import net.createmod.ponder.api.level.PonderLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.Vec3;
 
 /** Production adapters run on the preview's own clock and inventories, including during seek. */
 public final class PonderSimulation {
@@ -231,6 +232,8 @@ public final class PonderSimulation {
     private record CartLoad(net.createmod.ponder.api.element.MinecartElement cart, net.minecraft.world.phys.Vec3 cartStart,
                             net.minecraft.world.phys.Vec3 start) {}
     private final Map<WorldSectionElement, CartLoad> cartLoads = new java.util.IdentityHashMap<>();
+    private record CartBinding(WorldSectionElement section, Vec3 request, int duration, java.util.function.Consumer<Boolean> result) {}
+    private final java.util.List<CartBinding> cartBindings = new java.util.ArrayList<>();
     private final Map<com.simibubi.create.content.kinetics.deployer.DeployerBlockEntity, PonderDeployerProcessing> hands = new java.util.IdentityHashMap<>();
     private final PonderPressProcessing pressing = new PonderPressProcessing();
     public boolean attachCart(WorldSectionElement section, net.minecraft.world.phys.Vec3 request, int duration) {
@@ -241,6 +244,11 @@ public final class PonderSimulation {
             return true;
         }
         return false;
+    }
+    public void deferCartBinding(WorldSectionElement section, Vec3 request, int duration, java.util.function.Consumer<Boolean> result) {
+        // A native storyboard can list its cargo before the cart's command. Resolve
+        // both after the instruction batch, before either consumes any travel.
+        cartBindings.add(new CartBinding(section, request, duration, result));
     }
     public void cartLoad(WorldSectionElement section, net.createmod.ponder.api.element.MinecartElement first,
         net.createmod.ponder.api.element.MinecartElement second, double inertia, double drag) {
@@ -266,6 +274,11 @@ public final class PonderSimulation {
     }
 
     public void release(WorldSectionElement section) {
+        cartBindings.removeIf(binding -> {
+            if (binding.section() != section) return false;
+            binding.result().accept(false);
+            return true;
+        });
         clockwork.release(section);
         mounting.release(section);
         attachments.remove(section); linearMotions.remove(section); parents.remove(section); trains.remove(section); cartLoads.remove(section); valveHandles.remove(section);
@@ -405,6 +418,7 @@ public final class PonderSimulation {
                 90 * ((PonderValveStroke) handle.valve()).differentialcreate$opening(), 0), false);
         });
         docks.forEach(PonderDocking::tick);
+        carts.values().forEach(PonderCart::finish);
         cartLoads.forEach((section, load) -> {
             if (section.isVisible()) section.setAnimatedOffset(load.start().add(load.cart().getPositionOffset().subtract(load.cartStart())), false);
         });
@@ -453,7 +467,7 @@ public final class PonderSimulation {
         clockwork.reset(); mounting.reset(); joining.reset(); linearMotions.clear(); parents.clear(); passengers.clear();
         settledGantries.clear(); stabilizedBearings.clear(); pulleys.clear();
         PonderLoot.reset(world);
-        visible.clear(); placements.clear(); displayed.clear(); fluidBoundaries.clear(); trains.clear(); attachments.clear(); valveHandles.clear(); actorSections.clear(); actorDrives.clear(); docks.clear(); dockedEndpoints.clear(); carts.clear(); couplings.clear(); cartLoads.clear(); hands.clear(); time = 0;
+        visible.clear(); placements.clear(); displayed.clear(); fluidBoundaries.clear(); trains.clear(); attachments.clear(); valveHandles.clear(); actorSections.clear(); actorDrives.clear(); docks.clear(); dockedEndpoints.clear(); carts.clear(); couplings.clear(); cartLoads.clear(); cartBindings.clear(); hands.clear(); time = 0;
         initializedInventories.clear(); materialSupplies.clear(); motionInputs.clear(); punches.clear(); FluidKinetics.resetPreview(world);
     }
     public Map<KineticBlockEntity, Double> advance(PonderLevel world) {
@@ -471,6 +485,8 @@ public final class PonderSimulation {
         for (var entry : java.util.List.copyOf(attachments.entrySet()))
             if (entry.getValue().actuator().isRemoved() || world.getBlockEntity(entry.getValue().actuator().getBlockPos()) != entry.getValue().actuator()) release(entry.getKey());
         trains.values().forEach(train -> train.tick(world));
+        cartBindings.forEach(binding -> binding.result().accept(attachCart(binding.section(), binding.request(), binding.duration())));
+        cartBindings.clear();
         carts.values().stream().filter(cart -> cart.element.isVisible()).forEach(cart -> cart.tick(world));
         for (var pair : couplings) {
             var a = pair.first(); var b = pair.second(); var axis = pair.axis();

@@ -7,11 +7,15 @@ public final class RotorPoseAnimation {
     private RotorAnimation output;
 
     public void receive(double memberAngle, Double outputAngle) {
-        member.receive(memberAngle);
+        receive(memberAngle, outputAngle, false);
+    }
+
+    public void receive(double memberAngle, Double outputAngle, boolean stepped) {
+        member.receive(memberAngle, stepped);
         if (outputAngle == null) output = null;
         else {
             if (output == null) output = new RotorAnimation();
-            output.receive(outputAngle);
+            output.receive(outputAngle, stepped);
         }
     }
 

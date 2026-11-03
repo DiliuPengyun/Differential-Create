@@ -12,6 +12,20 @@ import org.spongepowered.asm.mixin.injection.At;
 
 @Mixin(FluidTankScenes.class)
 public abstract class FluidTankSceneMixin {
+    @org.spongepowered.asm.mixin.injection.Inject(method = "storage", at = @At("HEAD"))
+    private static void differentialcreate$frameVolumeComparison(net.createmod.ponder.api.scene.SceneBuilder builder,
+        net.createmod.ponder.api.scene.SceneBuildingUtil util, org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
+        builder.scaleSceneView(.85f);
+        builder.setSceneOffsetY(-1.25f);
+    }
+
+    @org.spongepowered.asm.mixin.injection.Inject(method = "sizes", at = @At("RETURN"))
+    private static void differentialcreate$frameTallTanks(net.createmod.ponder.api.scene.SceneBuilder builder,
+        net.createmod.ponder.api.scene.SceneBuildingUtil util, org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
+        builder.scaleSceneView(.75f);
+        builder.setSceneOffsetY(-1.8f);
+    }
+
     // The real filling callback now owns the splash and its timing.
     @WrapOperation(method = "storage", at = @At(value = "INVOKE", target = "Lcom/simibubi/create/foundation/ponder/CreateSceneBuilder$EffectInstructions;emitParticles(Lnet/minecraft/world/phys/Vec3;Lnet/createmod/ponder/api/ParticleEmitter;FI)V"))
     private static void differentialcreate$actualParticles(CreateSceneBuilder.EffectInstructions effects, net.minecraft.world.phys.Vec3 pos,

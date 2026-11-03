@@ -30,9 +30,15 @@ final class PonderPresentationAudit {
         }
     }
     private static final java.util.Map<String, Field> OVERLAY_FIELDS = new java.util.HashMap<>();
+    private static final java.util.Map<PonderScene, java.util.Map<String, double[]>> NATIVE_BOUNDS = new java.util.WeakHashMap<>();
 
     static void sample(PonderScene scene) {
-        if (!scene.getId().getNamespace().equals("differentialcreate") || scene.getCurrentTime() % 5 != 0) return;
+        boolean addon = scene.getId().getNamespace().equals("differentialcreate");
+        // The native elevator intentionally pans remote floors out of view. Its active
+        // cabin and floor travel are checked separately by the lift audits.
+        boolean nativeFraming = java.util.Set.of("fluid_tank_sizes", "fluid_tank_storage", "mechanical_plough", "steam_engine", "steam_whistle")
+            .contains(scene.getId().getPath());
+        if ((!addon && !nativeFraming) || scene.getCurrentTime() % 5 != 0) return;
         var points = new java.util.ArrayList<Point>();
         scene.forEachVisible(WorldSectionElement.class, section -> {
             try { if (((LerpedFloat) FADE.get(section)).getValue(1) < .999f) return; }
@@ -67,15 +73,39 @@ final class PonderPresentationAudit {
             transform.xRotation.startWithValue(scene.getTransform().xRotation.getValue(1));
             transform.yRotation.startWithValue(scene.getTransform().yRotation.getValue(1));
             transform.updateScreenParams(viewport[0], viewport[1], 0);
-            overlays(scene, transform, viewport[0], viewport[1]);
+            if (addon) overlays(scene, transform, viewport[0], viewport[1]);
             for (var point : points) {
+                // Native scripts temporarily park retired diagram copies 100 blocks below the stage.
+                if (!addon && point.position().y < -64) continue;
                 var screen = transform.sceneToScreen(point.position(), 1);
+                if (!addon) {
+                    var bounds = NATIVE_BOUNDS.computeIfAbsent(scene, ignored -> new java.util.LinkedHashMap<>())
+                        .computeIfAbsent(viewport[0] + "x" + viewport[1], ignored -> new double[]{Double.POSITIVE_INFINITY,
+                            Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY});
+                    bounds[0] = Math.min(bounds[0], screen.x); bounds[1] = Math.min(bounds[1], screen.y);
+                    bounds[2] = Math.max(bounds[2], screen.x); bounds[3] = Math.max(bounds[3], screen.y);
+                    continue;
+                }
                 if (screen.x < 8 || screen.x > viewport[0] - 8 || screen.y < 8 || screen.y > viewport[1] - 40)
                     throw new AssertionError("Machinery leaves the usable Ponder viewport in " + scene.getId()
                         + " at tick " + scene.getCurrentTime() + " " + viewport[0] + "x" + viewport[1]
                         + ": " + point.block() + " -> " + screen.x + ", " + screen.y);
             }
         }
+    }
+
+    static void verify(PonderScene scene) {
+        var bounds = NATIVE_BOUNDS.remove(scene);
+        if (bounds == null) return;
+        var issues = new java.util.ArrayList<String>();
+        bounds.forEach((size, box) -> {
+            String[] dimensions = size.split("x");
+            int width = Integer.parseInt(dimensions[0]), height = Integer.parseInt(dimensions[1]);
+            if (box[0] < 8 || box[2] > width - 8 || box[1] < 8 || box[3] > height - 40)
+                issues.add(size + ": " + java.util.Arrays.toString(box));
+        });
+        if (!issues.isEmpty()) throw new AssertionError("Native machinery framing in " + scene.getId()
+            + " (scale=" + scene.getScaleFactor() + ", offset=" + scene.getYOffset() + "): " + issues);
     }
 
     /** Match native speech-box layout: distinct operator actions must remain readable. */

@@ -126,6 +126,7 @@ public final class PonderClientSmokeTests {
                 PonderTextAudit.verify();
                 PonderFanAudit.verifyRenderer();
                 PonderToolRenderAudit.verify();
+                MixerRenderingAudit.verify();
                 ShaftRenderingAudit.verify();
                 started = true;
             }
@@ -978,7 +979,8 @@ public final class PonderClientSmokeTests {
                             "rope_pulley", "rope_pulley_modes", "rope_pulley_multi_rope", "elevator_pulley", "elevator_pulley_multi_rope",
                             "clockwork_bearing", "gantry_redstone", "gantry_cascaded", "mechanical_drill_contraption",
                             "mechanical_saw_contraption", "mechanical_harvester", "mechanical_roller_pave", "mechanical_roller_fill", "linear_chassis_group",
-                            "linear_chassis_attachment", "radial_chassis", "contraption_controls").contains(scene.getId().getPath())) attachmentReplay(scene);
+                            "linear_chassis_attachment", "radial_chassis", "contraption_controls", "cart_assembler",
+                            "cart_assembler_modes", "cart_assembler_dual", "cart_assembler_rails").contains(scene.getId().getPath())) attachmentReplay(scene);
                 } catch (Throwable failure) {
                     playbackFailures.add(scene.getId() + ": " + failure);
                     DifferentialCreate.LOGGER.error("DC_PONDER_NATIVE_FAIL: {}", scene.getId(), failure);

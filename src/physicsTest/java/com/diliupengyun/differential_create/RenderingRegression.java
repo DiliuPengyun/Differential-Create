@@ -36,6 +36,7 @@ public final class RenderingRegression {
 		hoseRenderObservations();
 		hosePulleyStartup();
 		rotorSamples();
+		frozenWorldSteps();
 		bearingPoses();
 		bearingSampleBuffer();
 		fallingWaterGeometry();
@@ -389,6 +390,32 @@ public final class RenderingRegression {
 				angle(sample.angleAt(sample.tick() + partial) + 11.25,
 					shader(sample, sample.tick() + partial, 11.25f),
 					"ordinary and instanced rendering share the received angle segment");
+		}
+	}
+
+	private static void frozenWorldSteps() {
+		for (double travel : new double[]{19.2, -19.2, 720, -.0001}) for (double partial : new double[]{0, .1, .5, .99}) {
+			var rotor = new RotorPoseAnimation();
+			var bearing = new BearingAnimation();
+			rotor.receive(0, 0d); rotor.advance(0, 0, false);
+			bearing.receive(7, 0); bearing.advance(0, 0, false);
+			rotor.receive(travel, -travel); rotor.advance(1, 1, false);
+			bearing.receive(7, travel); bearing.receive(7, 2 * travel); bearing.advance(1, 1, false);
+			rotor.advance(2, 1 + partial, true); bearing.advance(2, 1 + partial, true);
+			for (int step = 3; step < 9; step++) {
+				double endpoint = step * travel;
+				rotor.receive(endpoint, -endpoint, true); bearing.receive(7, endpoint, true);
+				rotor.advance(step, step + partial, true); bearing.advance(step, step + partial, true);
+				near(endpoint, rotor.memberFrame().angle(), 1e-10, "a frozen shaft presents the full requested step");
+				near(-endpoint, rotor.outputFrame().angle(), 1e-10, "both spindles present the same accepted step");
+				near(endpoint, bearing.frame(7).angle(), 1e-10, "a frozen structure presents the full requested step");
+				rotor.advance(step, step, true); bearing.advance(step, step, true);
+				near(endpoint, rotor.memberFrame().angleAt(step + 5), 1e-10, "refreezing cannot discard the stepped shaft endpoint");
+				near(endpoint, bearing.frame(7).angleAt(step + 5), 1e-10, "a stepped structure holds without another step");
+			}
+			rotor.advance(9, 9, false); bearing.advance(9, 9, false);
+			near(8 * travel, rotor.memberFrame().angleAt(10), 1e-10, "resume does not replay a completed shaft step");
+			near(8 * travel, bearing.frame(7).angleAt(10), 1e-10, "resume discards the pre-step structure buffer");
 		}
 	}
 

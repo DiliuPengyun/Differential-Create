@@ -21,6 +21,13 @@ import org.spongepowered.asm.mixin.injection.At;
 /** Moving tools and portable interfaces use actual operations in the native compositions. */
 @Mixin(MovementActorScenes.class)
 public abstract class MovementActorSceneMixin {
+    @org.spongepowered.asm.mixin.injection.Inject(method = "plough", at = @At("RETURN"))
+    private static void differentialcreate$frameUprightPlough(net.createmod.ponder.api.scene.SceneBuilder builder,
+        net.createmod.ponder.api.scene.SceneBuildingUtil util, org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
+        builder.scaleSceneView(.8f);
+        builder.setSceneOffsetY(-1.25f);
+    }
+
     @org.spongepowered.asm.mixin.injection.Inject(method = "psiRedstone", at = @At("HEAD"), cancellable = true)
     private static void differentialcreate$redstoneLesson(net.createmod.ponder.api.scene.SceneBuilder builder,
         net.createmod.ponder.api.scene.SceneBuildingUtil util, org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {

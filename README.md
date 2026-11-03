@@ -43,7 +43,7 @@ Linux 使用 `./gradlew build runGameTestServer runVirtualAirServer`，首次运
 
 游戏集成测试、客户端检查和测试结构放在 `src/gameTest/`，纯数值回归放在 `src/physicsTest/`。开发运行配置会加载游戏测试，正式 JAR 只包含 `src/main/` 的运行代码和资源；`build` 同时检查发布包没有混入测试文件或对测试类的依赖。
 
-客户端和服务端均安装同一版本，并安装对应的 Create 及其依赖。当前网络兼容版本为 **22**，以 [DifferentialCreate 的网络注册值](src/main/java/com/diliupengyun/differential_create/DifferentialCreate.java) 为准；列车、机械手动画、结构姿态、负载率状态、弹射轨迹、粉碎轮反力与接口状态需客户端、服务端一起更新。
+客户端和服务端均安装同一版本，并安装对应的 Create 及其依赖。当前网络兼容版本为 **26**，以 [DifferentialCreate 的网络注册值](src/main/java/com/diliupengyun/differential_create/DifferentialCreate.java) 为准；列车、机械手动画、结构姿态、负载率状态、弹射轨迹、粉碎轮反力与接口状态需客户端、服务端一起更新。
 
 `build` 自动运行数值回归；`runGameTestServer` 验证拓扑、配方、物品控制、供汽和动态结构，默认使用 `run-gametest/`。`runVirtualAirServer` 在 `build/` 中运行流体、机器、动态管网与卸载场景，可用 `-PvirtualAirSelect=pump_direction_.*,structure_.*` 选择子集。CI 执行完整构建、常规 GameTest、流体、背罐、弹射置物台及粉碎轮专项并保存日志，验证入口见 [设计文档](DESIGN.md#9-验证与维护) 和 [流体覆盖矩阵](docs/FLUID_COVERAGE.md)。
 
@@ -64,6 +64,8 @@ Linux 使用 `./gradlew build runGameTestServer runVirtualAirServer`，首次运
 粉碎轮专项使用 `.\gradlew.bat runCrusherServer`，在 `build/crusher/` 的独立世界验证双轮反力、进度、批量、独立驱动和离合滑移；覆盖范围见[动力覆盖](docs/KINETIC_COVERAGE.md#粉碎轮双轮作业)。
 
 传送带表面专项使用 `.\gradlew.bat runBeltClientSmoke`，在 `build/belt/` 的独立世界让真实传送带从 32 RPM 加速到 256 RPM，核对上下表面相位随累计行程连续变化、不再按绝对渲染时间跳变；客户端检查完成后自动退出。
+
+搅拌器专项使用 `.\gradlew.bat runMixerClientSmoke`，在 `build/mixer-client/` 的独立世界搭建三台真实机器，检查低速、变速、反转、中途断能、渲染重建、冻结与完整单步的头部运动。追加 `-PmixerClientStayOpen=true` 可在检查通过后保留客户端供手动复查，默认自动退出。思索专项另比较普通渲染网格与 Flywheel 实例，见[思索验证](docs/PONDER.md)。
 
 ## 当前边界与待办
 

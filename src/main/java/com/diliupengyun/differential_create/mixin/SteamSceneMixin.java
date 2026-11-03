@@ -13,6 +13,18 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(SteamScenes.class)
 public abstract class SteamSceneMixin {
+    @Inject(method = "engine", at = @At("RETURN"))
+    private static void differentialcreate$frameTallBoiler(SceneBuilder builder, SceneBuildingUtil util, CallbackInfo ci) {
+        builder.scaleSceneView(.6f);
+        builder.setSceneOffsetY(-3.4f);
+    }
+
+    @Inject(method = "whistle", at = @At("RETURN"))
+    private static void differentialcreate$frameLongWhistle(SceneBuilder builder, SceneBuildingUtil util, CallbackInfo ci) {
+        builder.scaleSceneView(.9f);
+        builder.setSceneOffsetY(-.9f);
+    }
+
     @Inject(method = "engine", at = @At("HEAD"))
     private static void differentialcreate$wellFoundation(SceneBuilder builder, SceneBuildingUtil util, CallbackInfo ci) {
         new CreateSceneBuilder(builder).addInstruction(scene -> {

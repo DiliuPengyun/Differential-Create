@@ -15,8 +15,12 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 /** Actual local rotor states; clients never reconstruct an elastic network from one average speed. */
 public record RotorStatePayload(ResourceLocation dimension, long networkId, double energy, double elasticEnergy,
-    LoadFactor.Reading loadFactor, List<Rotor> rotors)
+    LoadFactor.Reading loadFactor, List<Rotor> rotors, boolean stepped)
     implements CustomPacketPayload {
+    public RotorStatePayload(ResourceLocation dimension, long networkId, double energy, double elasticEnergy,
+        LoadFactor.Reading loadFactor, List<Rotor> rotors) {
+        this(dimension, networkId, energy, elasticEnergy, loadFactor, rotors, false);
+    }
     public record BearingPose(int entityId, double angle) {}
     /** Angle is the rendered hand angle; speed and inertia use its fixed input-equivalent coordinate. */
     public record ClockPose(int entityId, double angle, double speed, double inertia) {
@@ -46,6 +50,7 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
         buf.writeResourceLocation(p.dimension); buf.writeVarLong(p.networkId); buf.writeDouble(p.energy);
         buf.writeDouble(p.elasticEnergy);
         buf.writeEnum(p.loadFactor.status()); buf.writeDouble(p.loadFactor.fraction());
+        buf.writeBoolean(p.stepped);
         buf.writeVarInt(p.rotors.size());
         for (Rotor r : p.rotors) {
             buf.writeBlockPos(r.pos); buf.writeFloat(r.speed); buf.writeDouble(r.angle); buf.writeFloat(r.torque);
@@ -69,6 +74,7 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
         var dimension = buf.readResourceLocation(); long id = buf.readVarLong(); double energy = buf.readDouble();
         double elasticEnergy = buf.readDouble();
         var load = new LoadFactor.Reading(buf.readEnum(LoadFactor.Status.class), buf.readDouble());
+        boolean stepped = buf.readBoolean();
         int size = buf.readVarInt();
         if (size < 0 || size > 32768) throw new IllegalArgumentException("Invalid rotor packet size");
         List<Rotor> rotors = new ArrayList<>(size);
@@ -98,7 +104,7 @@ public record RotorStatePayload(ResourceLocation dimension, long networkId, doub
             if (linear != null && (linear.entityId() < 0 || !Double.isFinite(linear.offset()))) throw new IllegalArgumentException("Invalid linear pose");
             rotors.add(new Rotor(pos, speed, angle, torque, steamIntake, localEnergy, bearing, output, feed, List.copyOf(clock), linear));
         }
-        return new RotorStatePayload(dimension, id, energy, elasticEnergy, load, rotors);
+        return new RotorStatePayload(dimension, id, energy, elasticEnergy, load, rotors, stepped);
     });
     @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     public static void handle(RotorStatePayload payload, IPayloadContext context) {

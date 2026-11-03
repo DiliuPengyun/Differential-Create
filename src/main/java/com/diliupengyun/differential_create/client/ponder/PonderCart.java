@@ -9,6 +9,7 @@ final class PonderCart {
     final MinecartElement element;
     Vec3 velocity = Vec3.ZERO, requested = Vec3.ZERO;
     Vec3 previousVelocity = Vec3.ZERO;
+    private Vec3 previousPosition, integratedPosition;
     double inertia = MinecartMotion.BASE_INERTIA;
     int remaining;
     int commandedTicks;
@@ -35,5 +36,21 @@ final class PonderCart {
         Vec3 next = new Vec3(x, y, z);
         velocity = next;
     }
-    void integrate() { element.setPositionOffset(element.getPositionOffset().add(previousVelocity.add(velocity).scale(.5)), false); }
+    void integrate() {
+        previousPosition = element.getPositionOffset();
+        integratedPosition = previousPosition.add(previousVelocity.add(velocity).scale(.5));
+        element.setPositionOffset(integratedPosition, false);
+    }
+    void finish() {
+        var endpoint = integratedPosition;
+        integratedPosition = null;
+        var entity = ((com.diliupengyun.differential_create.mixin.PonderMinecartAccessor) element).differentialcreate$cart();
+        if (entity == null || endpoint == null || !element.getPositionOffset().equals(endpoint)) return;
+        // MinecartElement.tick runs after the preview physics and overwrites the
+        // previous position with its new endpoint. Restore the actual segment,
+        // unless a later storyboard instruction deliberately teleported the cart.
+        entity.xo = entity.xOld = previousPosition.x;
+        entity.yo = entity.yOld = previousPosition.y;
+        entity.zo = entity.zOld = previousPosition.z;
+    }
 }

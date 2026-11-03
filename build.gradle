@@ -167,6 +167,16 @@ neoForge {
             logLevel = org.slf4j.event.Level.INFO
         }
 
+        mixerClientSmoke {
+            client()
+            gameDirectory = project.file('build/mixer-client/runs/' + UUID.randomUUID())
+            systemProperty 'differentialcreate.mixerClientSmoke', 'true'
+            systemProperty 'differentialcreate.mixerClientReport', project.file('build/mixer-client/frames').absolutePath
+            systemProperty 'differentialcreate.mixerClientStayOpen', providers.gradleProperty('mixerClientStayOpen').orElse('false').get()
+            programArguments.addAll '--width', '1600', '--height', '1000'
+            logLevel = org.slf4j.event.Level.INFO
+        }
+
         ponderClientSmoke {
             client()
             gameDirectory = project.file('build/ponder/runs/' + UUID.randomUUID())
@@ -355,6 +365,16 @@ tasks.named('runPonderClientSmoke') {
         def log = new File(directory, 'logs/latest.log')
         if (!log.isFile() || !log.text.contains('DC_PONDER_CLIENT_PASS') || log.text.contains('DC_PONDER_CLIENT_FAIL'))
             throw new GradleException('Ponder client verification failed; inspect its latest.log.')
+    }
+}
+
+tasks.named('runMixerClientSmoke') {
+    notCompatibleWithConfigurationCache('Mixer verification uses a fresh disposable client world.')
+    doLast {
+        def directory = neoForge.runs.getByName('mixerClientSmoke').gameDirectory.get().asFile
+        def log = new File(directory, 'logs/latest.log')
+        if (!log.isFile() || !log.text.contains('DC_MIXER_CLIENT_PASS') || log.text.contains('DC_MIXER_CLIENT_FAIL'))
+            throw new GradleException('Mixer client verification failed; inspect its latest.log.')
     }
 }
 

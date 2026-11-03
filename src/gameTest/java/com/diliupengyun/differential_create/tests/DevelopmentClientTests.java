@@ -15,6 +15,10 @@ public final class DevelopmentClientTests {
     @SubscribeEvent
     public static void setup(FMLClientSetupEvent event) {
         event.enqueueWork(() -> {
+            if (Boolean.getBoolean("differentialcreate.mixerClientSmoke")) {
+                NeoForge.EVENT_BUS.addListener(MixerClientSmokeTests::frame);
+                NeoForge.EVENT_BUS.addListener(MixerClientSmokeTests::tick);
+            }
             if (Boolean.getBoolean("differentialcreate.structureClientAudit")) {
                 NeoForge.EVENT_BUS.addListener(StructureClientAudit::frame);
                 NeoForge.EVENT_BUS.addListener(StructureClientAudit::tick);

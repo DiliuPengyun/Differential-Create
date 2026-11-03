@@ -11,12 +11,24 @@ public final class BearingAnimation {
 	private RotorAnimation animation;
 
 	public void receive(int id, double angle) {
+		receive(id, angle, false);
+	}
+
+	public void receive(int id, double angle, boolean stepped) {
 		if (animation == null || entityId != id) {
 			entityId = id;
 			animation = new RotorAnimation();
 			head = size = 0;
 			playing = wasFrozen = false;
-			animation.receive(angle);
+			animation.receive(angle, stepped);
+			return;
+		}
+		if (stepped) {
+			// Buffered normal playback predates this explicit world step. Replaying
+			// it on resume would rewind the structure behind the stepped pose.
+			head = size = 0;
+			playing = false;
+			animation.receive(angle, true);
 			return;
 		}
 		// A packet is one server-tick endpoint. Keep both endpoints when two

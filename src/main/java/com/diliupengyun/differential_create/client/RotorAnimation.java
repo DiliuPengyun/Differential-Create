@@ -6,9 +6,16 @@ public final class RotorAnimation {
 	private boolean initialized;
 	private double angle, target;
 	private RotationFrame frame;
+	private boolean stepped;
 
 	public void receive(double serverAngle) {
+		receive(serverAngle, false);
+	}
+
+	/** A requested frozen-world step presents its complete confirmed endpoint. */
+	public void receive(double serverAngle, boolean stepped) {
 		target = serverAngle;
+		this.stepped |= stepped;
 		if (!initialized) {
 			angle = serverAngle;
 			initialized = true;
@@ -17,6 +24,11 @@ public final class RotorAnimation {
 
 	public RotationFrame advance(int tick, double renderTick, boolean frozen) {
 		if (!initialized) return null;
+		if (stepped) {
+			stepped = false;
+			angle = target;
+			return frame = new RotationFrame(tick, angle, 0);
+		}
 		if (frozen) {
 			if (frame != null && frame.degreesPerTick() != 0)
 				angle = frame.angleAt(Math.clamp(renderTick, frame.tick(), frame.tick() + 1.0));

@@ -20,11 +20,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /** Mixing and head travel consume shaft travel calibrated at 64 RPM. */
 @Mixin(MechanicalMixerBlockEntity.class)
-public abstract class MechanicalMixerBlockEntityMixin extends BasinOperatingBlockEntity implements ShaftWork {
+public abstract class MechanicalMixerBlockEntityMixin extends BasinOperatingBlockEntity implements ShaftWork, com.diliupengyun.differential_create.kinetics.MixerStroke {
 	@Unique private final WorkAccumulator differentialcreate$travel = new WorkAccumulator();
 	@Unique private double differentialcreate$remaining = -1;
 	@Unique private ResourceLocation differentialcreate$recipe;
 	protected MechanicalMixerBlockEntityMixin(BlockEntityType<?> type, BlockPos pos, BlockState state) { super(type, pos, state); }
+
+    @Override public double differentialcreate$stroke() {
+        var self = (MechanicalMixerBlockEntity) (Object) this;
+        return !self.running ? 0 : self.runningTicks == 20 ? 20
+            : Math.min(40, self.runningTicks + differentialcreate$travel.remainder());
+    }
 
 	@Inject(method = "tick", at = @At(value = "INVOKE",
 		target = "Lcom/simibubi/create/content/processing/basin/BasinOperatingBlockEntity;tick()V", shift = At.Shift.AFTER), cancellable = true)

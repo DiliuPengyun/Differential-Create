@@ -190,6 +190,18 @@ final class PonderAnimationAudit {
         scene.forEachVisible(net.createmod.ponder.api.element.MinecartElement.class, cart -> {
             var offset = cart.getPositionOffset();
             mechanisms.put("cart " + mechanisms.size(), List.of(offset.x, offset.y, offset.z));
+            if (scene.getId().getPath().equals("cart_assembler") && scene.getCurrentTime() >= scene.getTotalTime())
+                scene.forEachVisible(WorldSectionElement.class, section -> {
+                    var accessor = (com.diliupengyun.differential_create.mixin.PonderWorldSectionAccessor) section;
+                    if (!accessor.differentialcreate$selection().test(new BlockPos(3, 1, 2))) return;
+                    var entity = ((com.diliupengyun.differential_create.mixin.PonderMinecartAccessor) cart).differentialcreate$cart();
+                    for (float partial : new float[]{0, .25f, .5f, .75f, 1}) {
+                        double anchorY = accessor.differentialcreate$previousOffset().lerp(section.getAnimatedOffset(), partial).y;
+                        double cartY = net.minecraft.util.Mth.lerp(partial, entity.yo, offset.y);
+                        if (Math.abs(anchorY - cartY) > 1e-5 && failures.size() < 12)
+                            failures.add("Cart and replaced anchor have different heights at tick " + tick + " partial " + partial);
+                    }
+                });
             if (scene.getId().getPath().equals("minecart_dynamics"))
                 for (var section : sections) if (section.blocks().contains("3, 2, 2")
                     && offset.distanceTo(section.offset()) > .01 && failures.size() < 12)
@@ -519,6 +531,18 @@ final class PonderAnimationAudit {
     }
 
     void verify(PonderScene scene) {
+        if (scene.getId().getPath().equals("cart_assembler")) {
+            scene.forEachVisible(net.createmod.ponder.api.element.MinecartElement.class, cart -> {
+                scene.forEachVisible(WorldSectionElement.class, section -> {
+                    var selection = ((com.diliupengyun.differential_create.mixin.PonderWorldSectionAccessor) section).differentialcreate$selection();
+                    if (selection.test(new BlockPos(3, 1, 2)) && Math.abs(section.getAnimatedOffset().y
+                        - cart.getPositionOffset().y) > 1e-5)
+                        throw new AssertionError("Placed minecart anchor floats above its cart: " + section.getAnimatedOffset()
+                            + " / " + cart.getPositionOffset());
+                });
+            });
+        }
+        PonderPresentationAudit.verify(scene);
         drills.verify(scene);
         coasting.verify(scene);
         controls.verify(scene);

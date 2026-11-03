@@ -110,7 +110,7 @@ public final class LoadFactorTests {
             new LoadFactor.Reading(LoadFactor.Status.AVAILABLE, Double.POSITIVE_INFINITY),
             LoadFactor.Reading.NO_POWER, new LoadFactor.Reading(LoadFactor.Status.BRAKING, 0), LoadFactor.Reading.UNKNOWN,
             LoadFactor.Reading.UNDEFINED);
-        for (var reading : readings) {
+        for (var reading : readings) for (boolean stepped : new boolean[]{false, true}) {
             var payload = new RotorStatePayload(h.getLevel().dimension().location(), source.network, 123.5, 57.125, reading,
                 List.of(new RotorStatePayload.Rotor(source.getBlockPos(), -12, 45.25, -16, 0, 12.25),
                     new RotorStatePayload.Rotor(source.getBlockPos().above(), 512, 90.5, 0, .125f, 44.875,
@@ -121,7 +121,7 @@ public final class LoadFactorTests {
                         List.of(new RotorStatePayload.ClockPose(128, 3600000180.25, -12.125, .625),
                             new RotorStatePayload.ClockPose(129, -179.875, 0, .25)), null),
                     new RotorStatePayload.Rotor(source.getBlockPos().west(), -64, -20, 1, 0, 0, null, null,
-                        new RotorStatePayload.FeedPose(-.25f, .1, 1024, 5), List.of(), new RotorStatePayload.LinearPose(130, 127.999998, true))));
+                        new RotorStatePayload.FeedPose(-.25f, .1, 1024, 5), List.of(), new RotorStatePayload.LinearPose(130, 127.999998, true))), stepped);
             var buf = new FriendlyByteBuf(Unpooled.buffer());
             try {
                 RotorStatePayload.STREAM_CODEC.encode(buf, payload);

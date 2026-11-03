@@ -254,3 +254,7 @@ Create 的 Shift 摘要和 Ctrl 操作提示机制继续沿用。没有简介的
 这项检查不代替[动力](KINETIC_COVERAGE.md)、[流体](FLUID_COVERAGE.md)、[动态结构](CONTRAPTIONS.md)、[移动式接口](PORTABLE_STORAGE.md)与[列车](TRAINS.md)的实际世界行为测试。
 
 列车演示的燃料检查通过 Create 的 `MountedStorageManager.getFuelItems()` 读取可用库存，不能仅因某个容器中装着煤就视为能够供燃料；保险库黑名单和内部库存排除必须同样生效。行驶时另外核对独立普通水罐中存在水，避免把不参加挂载流体库存的锅炉自身误算为备用水箱。
+
+搅拌头的升降使用实际工作计数的小数余量，旋转按输入轴累计行程积分。普通渲染与 Flywheel 从同一个方块实体状态读取前后姿态，变速、加工阶段切换和渲染重建不重置相位；断能后不再凭子帧时间虚构升降。[MixerRenderingAudit](../src/gameTest/java/com/diliupengyun/differential_create/tests/MixerRenderingAudit.java) 对照实际头部网格和 Flywheel 实例，检查四个加工阶段、四种停住姿态、时钟变化及视觉重建。真实世界另可运行 `.\gradlew.bat runMixerClientSmoke`，追加 `-PmixerClientStayOpen=true` 可在自动检查后保留三台机器供手动观察。
+
+矿车与货物的绑定在同一批故事板指令完成后、下次积分前解析，兼容先移动货物或先移动矿车的原生顺序。矿车保留积分前的位置，避免随后执行的原生元素更新把插值起点覆盖成终点。放回轨道阶段逐 tick 比较五个子帧的高度，四种原生矿车教程均参加正常／跳过／正常重播检查。

@@ -20,26 +20,31 @@ public final class PonderPhysicalSection extends PonderInstruction {
     private final int duration;
     private final boolean rotation;
     private final PonderInstruction presentation;
-    private boolean started, physical;
-    private int age;
+    private boolean started, physical, awaitingCart;
 
     public PonderPhysicalSection(ElementLink<WorldSectionElement> link, Vec3 delta, int duration, boolean rotation) {
         this.link = link; this.delta = delta; this.duration = duration; this.rotation = rotation;
         presentation = rotation ? AnimateWorldSectionInstruction.rotate(link, delta, duration)
             : AnimateWorldSectionInstruction.move(link, delta, duration);
     }
-    @Override public boolean isComplete() { return started && (physical || presentation.isComplete()); }
-    @Override public void reset(PonderScene scene) { started = physical = false; age = 0; presentation.reset(scene); }
+    @Override public boolean isComplete() { return started && !awaitingCart && (physical || presentation.isComplete()); }
+    @Override public void reset(PonderScene scene) { started = physical = awaitingCart = false; presentation.reset(scene); }
     @Override public void tick(PonderScene scene) {
-        age++;
-        if (!started && age == 1 && !rotation && duration > 0 && scene.getId().getPath().startsWith("cart_")) return;
         if (!started) {
             started = true;
             var section = scene.resolve(link);
+            if (section != null && !rotation && duration > 0 && scene.getId().getPath().startsWith("cart_")) {
+                awaitingCart = true;
+                PonderSimulation.of(scene.getWorld()).deferCartBinding(section, delta, duration, attached -> {
+                    physical = attached;
+                    awaitingCart = false;
+                });
+                return;
+            }
             if (section != null && duration > 0) physical = attach(scene, section);
             if (section != null && duration == 0) PonderSimulation.of(scene.getWorld()).release(section);
         }
-        if (!physical) presentation.tick(scene);
+        if (!physical && !awaitingCart) presentation.tick(scene);
     }
     private boolean attach(PonderScene scene, WorldSectionElement section) {
         var world = scene.getWorld();
