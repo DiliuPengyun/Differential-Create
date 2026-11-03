@@ -975,7 +975,7 @@ public final class PonderClientSmokeTests {
                     if (scene.getId().getPath().equals("portable_fluid_interface") || redstoneInterface
                         || java.util.Set.of("piston_pole", "mechanical_bearing", "stabilized_bearings", "bearing_modes",
                             "rope_pulley", "rope_pulley_modes", "rope_pulley_multi_rope", "elevator_pulley", "elevator_pulley_multi_rope",
-                            "clockwork_bearing", "gantry_redstone", "gantry_cascaded", "linear_chassis_group",
+                            "clockwork_bearing", "gantry_redstone", "gantry_cascaded", "mechanical_drill_contraption", "linear_chassis_group",
                             "linear_chassis_attachment", "radial_chassis", "contraption_controls").contains(scene.getId().getPath())) attachmentReplay(scene);
                 } catch (Throwable failure) {
                     playbackFailures.add(scene.getId() + ": " + failure);

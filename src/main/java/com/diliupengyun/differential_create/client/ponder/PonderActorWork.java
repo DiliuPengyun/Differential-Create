@@ -13,6 +13,7 @@ import com.simibubi.create.content.contraptions.actors.contraptionControls.Contr
 import com.simibubi.create.content.contraptions.mounted.MountedContraption;
 import com.simibubi.create.content.kinetics.base.BlockBreakingMovementBehaviour;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
+import com.simibubi.create.content.kinetics.drill.DrillMovementBehaviour;
 import net.createmod.ponder.api.element.WorldSectionElement;
 import net.createmod.ponder.api.level.PonderLevel;
 import net.minecraft.core.BlockPos;
@@ -167,7 +168,9 @@ final class PonderActorWork implements ActorDrive {
             ctx.relativeMotion = new Vec3(inverse.transformDirection(new org.joml.Vector3f((float) delta.x, (float) delta.y, (float) delta.z)));
             ctx.rotation = v -> new Vec3(matrix.transformDirection(new org.joml.Vector3f((float) v.x, (float) v.y, (float) v.z)));
             actor.previousAngle = actor.angle;
-            actor.angle += ctx.getAnimationSpeed() * .3;
+            // Native moving drills stop their heads while returning away from the cutting face.
+            if (!(actor.behaviour instanceof DrillMovementBehaviour) || actor.behaviour.isActive(ctx))
+                actor.angle += ctx.getAnimationSpeed() * .3;
             if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.harvester.HarvesterBlockEntity harvester) harvester.setAnimatedSpeed(ctx.getAnimationSpeed());
             if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.roller.RollerBlockEntity roller) roller.setAnimatedSpeed(ctx.getAnimationSpeed());
             if (accepted <= 1e-10 || !actor.behaviour.isActive(ctx)) continue;

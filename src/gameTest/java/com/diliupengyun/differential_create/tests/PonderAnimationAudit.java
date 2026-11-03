@@ -76,9 +76,11 @@ final class PonderAnimationAudit {
     private final PonderSectionJoinAudit joining = new PonderSectionJoinAudit();
     private final PonderControlsAudit controls = new PonderControlsAudit();
     private final PonderCoastingAudit coasting = new PonderCoastingAudit();
+    private final PonderDrillAudit drills = new PonderDrillAudit();
 
     void sample(PonderScene scene) {
         PonderPresentationAudit.sample(scene);
+        drills.sample(scene);
         controls.sample(scene);
         joining.sample(scene);
         trains.sample(scene);
@@ -511,6 +513,7 @@ final class PonderAnimationAudit {
     }
 
     void verify(PonderScene scene) {
+        drills.verify(scene);
         coasting.verify(scene);
         controls.verify(scene);
         joining.verify(scene);
