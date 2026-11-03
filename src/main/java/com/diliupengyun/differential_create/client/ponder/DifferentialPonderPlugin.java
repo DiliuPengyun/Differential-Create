@@ -50,6 +50,7 @@ public final class DifferentialPonderPlugin implements PonderPlugin {
     }
 
     @Override public void registerSharedText(SharedTextRegistrationHelper helper) {
+        helper.registerSharedText("controls_keep_moving", "The controls switch the tools on or off. The bearing keeps moving.");
         helper.registerSharedText("bearing_assemble", "Right-click with an empty hand to assemble the structure.");
         helper.registerSharedText("bearing_power", "Switch the Clutch on to drive the assembled structure.");
         helper.registerSharedText("bearing_coast", "Cutting power lets the structure coast; it remains assembled.");

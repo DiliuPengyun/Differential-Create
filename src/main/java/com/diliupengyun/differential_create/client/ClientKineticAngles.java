@@ -18,8 +18,7 @@ public final class ClientKineticAngles {
 
 	public static RotationFrame rotationOf(KineticBlockEntity be) {
 		if (be.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel level) {
-			Double angle = com.diliupengyun.differential_create.client.ponder.PonderKinetics.of(level)
-				.angle(be, net.createmod.catnip.animation.AnimationTickHolder.getPartialTicks(level));
+			Double angle = ponderAngle(be, level);
 			return angle == null ? null : new RotationFrame(Minecraft.getInstance().levelRenderer.getTicks(), angle, 0);
 		}
 		RotationFrame member = ClientTrainKinetics.rotation(be);
@@ -35,13 +34,19 @@ public final class ClientKineticAngles {
 
 	public static float angleOf(KineticBlockEntity be, Axis axis, float staticOffset) {
 		if (be.getLevel() instanceof net.createmod.ponder.api.level.PonderLevel level) {
-			Double angle = com.diliupengyun.differential_create.client.ponder.PonderKinetics.of(level)
-				.angle(be, net.createmod.catnip.animation.AnimationTickHolder.getPartialTicks(level));
+			Double angle = ponderAngle(be, level);
 			return angle == null ? Float.NaN : (float) Math.toRadians((staticOffset + angle) % 360);
 		}
+
 		Double theta = ClientTrainKinetics.theta(be);
 		if (theta == null) theta = ClientNetworkSpeeds.thetaOf(be);
 		return theta == null ? Float.NaN : (float) (Math.toRadians((staticOffset + theta) % 360));
+	}
+
+	private static Double ponderAngle(KineticBlockEntity be, net.createmod.ponder.api.level.PonderLevel level) {
+		float partialTicks = net.createmod.catnip.animation.AnimationTickHolder.getPartialTicks(level);
+		var tool = com.diliupengyun.differential_create.client.ponder.PonderSimulation.of(level).mountedToolAngle(be.getBlockPos(), partialTicks);
+		return tool != null ? tool : com.diliupengyun.differential_create.client.ponder.PonderKinetics.of(level).angle(be, partialTicks);
 	}
 
 	/** A neighbouring large cog's teeth and centre shaft have different static alignments. */

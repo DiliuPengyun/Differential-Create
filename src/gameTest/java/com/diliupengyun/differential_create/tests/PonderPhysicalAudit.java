@@ -31,7 +31,7 @@ final class PonderPhysicalAudit {
         basin(false, false); basin(true, false); basin(false, true); basin(true, true); hopper();
         breaking(false); breaking(true); clockwork(false); clockwork(true); hoseMotion(false); hoseMotion(true); linearEndpoints(); roller(false); roller(true);
         pulleyStroke(false); pulleyStroke(true); gantryDisassembly(); movingSectionNeighbours();
-        mountTransitions(); toolReplacement(); dockTransitions(false); dockTransitions(true); templateCommands(); isolatedCallbacks();
+        mountTransitions(); toolReplacement(); actorControls(); actorControlsResume(); dockTransitions(false); dockTransitions(true); templateCommands(); isolatedCallbacks();
         depotPressing(4, false); depotPressing(1, true); depotPressing(4, true); depotPressing(64, true);
         DifferentialCreate.LOGGER.info("DC_PONDER_PHYSICAL_INPUTS: finite/renewable water, reserved stock, filter refusal, zero-drive work, paid recipes, native block loot, inventory transfer, tool wear and clock isolation passed");
     }
@@ -202,6 +202,78 @@ final class PonderPhysicalAudit {
             for (int i = 0; i < 120 && next.phase != com.diliupengyun.differential_create.kinetics.portable.DockingState.Phase.TRANSFER; i++) { world.tick(); simulation.finish(world); }
             require(next.phase == com.diliupengyun.differential_create.kinetics.portable.DockingState.Phase.TRANSFER, "a fresh station at the same position must be able to establish its own new session");
         } else require(physics.attachmentState(drive).load() == 0, "a retired interface cannot leave its brake on the next scene");
+    }
+    private static void actorControls() {
+        var world = world(); var drive = new BlockPos(0, 0, 0); var drill = drive.above();
+        var first = drill.east(); var second = first.east(); var all = first.south(); var harvester = drill.south();
+        world.setBlock(drive, AllBlocks.MECHANICAL_BEARING.getDefaultState().setValue(BlockStateProperties.FACING, Direction.UP), 3);
+        world.setBlock(drill, AllBlocks.MECHANICAL_DRILL.getDefaultState().setValue(BlockStateProperties.FACING, Direction.WEST), 3);
+        world.setBlock(harvester, AllBlocks.MECHANICAL_HARVESTER.getDefaultState(), 3);
+        for (var button : java.util.List.of(first, second, all)) {
+            world.setBlock(button, AllBlocks.CONTRAPTION_CONTROLS.getDefaultState(), 3);
+            var control = (com.simibubi.create.content.contraptions.actors.contraptionControls.ContraptionControlsBlockEntity)world.getBlockEntity(button);
+            control.initialize();
+            if (!button.equals(all)) control.filtering.setFilter(AllBlocks.MECHANICAL_DRILL.asStack());
+        }
+        var bearing = (com.simibubi.create.content.kinetics.base.KineticBlockEntity)world.getBlockEntity(drive); bearing.initialize();
+        var simulation = PonderSimulation.of(world); var physics = PonderKinetics.of(world);
+        var body = section(drill, second.south());
+        physics.useExplicitSources(); simulation.attach(body, bearing, true, 1, 1); physics.boundary(world, drive, 16);
+        for (int tick = 0; tick < 15; tick++) { world.tick(); simulation.finish(world); }
+        require(Math.abs(simulation.mountedToolAngle(drill, 1) - simulation.mountedToolAngle(drill, 0)) > 1, "enabled preview drill actually spins");
+        double angle = body.getAnimatedRotation().y, speed = physics.outputSpeed(drive);
+        simulation.toggleActors(bearing, first);
+        require(angle == body.getAnimatedRotation().y && speed == physics.outputSpeed(drive), "preview control cannot inject a carrier speed or angle change");
+        for (var button : java.util.List.of(first, second))
+            require(((com.simibubi.create.content.contraptions.actors.contraptionControls.ContraptionControlsBlockEntity)world.getBlockEntity(button)).disabled,
+                "both same-type preview indicators share the disabled selection");
+        world.tick(); simulation.finish(world);
+        double stoppedAngle = simulation.mountedToolAngle(drill, 1);
+        require(stoppedAngle == simulation.mountedToolAngle(drill, 0) && body.getAnimatedRotation().y > angle, "disabled drill stops its own model while the carrier keeps moving");
+        var be = (com.simibubi.create.content.kinetics.base.KineticBlockEntity)world.getBlockEntity(drill);
+        double rendered = com.diliupengyun.differential_create.client.ClientKineticAngles.angleOf(be, Direction.Axis.X, 0);
+        require(Math.abs(rendered - Math.toRadians(stoppedAngle % 360)) < 1e-5, "the block-entity rendering path uses the mounted tool's actual frozen angle");
+        simulation.toggleActors(bearing, second); world.tick(); simulation.finish(world);
+        require(Math.abs(simulation.mountedToolAngle(drill, 1) - simulation.mountedToolAngle(drill, 0)) > 1, "the second same-type control restarts the first control's tool");
+        simulation.toggleActors(bearing, all); world.tick(); simulation.finish(world);
+        require(simulation.mountedToolAngle(drill, 1).equals(simulation.mountedToolAngle(drill, 0)), "all-off preview stops the drill");
+        simulation.toggleActors(bearing, first); world.tick(); simulation.finish(world);
+        require(Math.abs(simulation.mountedToolAngle(drill, 1) - simulation.mountedToolAngle(drill, 0)) > 1, "a type control can enable just that tool after all-off");
+        require(((com.simibubi.create.content.contraptions.actors.harvester.HarvesterBlockEntity)world.getBlockEntity(harvester)).getAnimatedSpeed() == 0,
+            "enabling only drills after all-off leaves the harvester disabled");
+        simulation.toggleActors(bearing, first); world.tick(); simulation.finish(world);
+        for (var button : java.util.List.of(first, second))
+            ((com.simibubi.create.content.contraptions.actors.contraptionControls.ContraptionControlsBlockEntity)world.getBlockEntity(button)).disabled = false;
+        world.tick(); simulation.finish(world);
+        require(Math.abs(simulation.mountedToolAngle(drill, 1) - simulation.mountedToolAngle(drill, 0)) > 1,
+            "updating both same-type indicators to enabled must apply the selection only once");
+    }
+    private static void actorControlsResume() {
+        var world = world(); var drive = BlockPos.ZERO; var tool = drive.above(); var button = tool.east();
+        world.setBlock(drive, AllBlocks.MECHANICAL_BEARING.getDefaultState().setValue(BlockStateProperties.FACING, Direction.UP), 3);
+        world.setBlock(tool, AllBlocks.MECHANICAL_DRILL.getDefaultState().setValue(BlockStateProperties.FACING, Direction.UP), 3);
+        world.setBlock(button, AllBlocks.CONTRAPTION_CONTROLS.getDefaultState(), 3);
+        world.setBlock(tool.above(), Blocks.STONE.defaultBlockState(), 3);
+        var bearing = (com.simibubi.create.content.kinetics.base.KineticBlockEntity)world.getBlockEntity(drive); bearing.initialize();
+        ((com.simibubi.create.content.contraptions.actors.contraptionControls.ContraptionControlsBlockEntity)world.getBlockEntity(button)).initialize();
+        var simulation = PonderSimulation.of(world); var physics = PonderKinetics.of(world);
+        physics.useExplicitSources(); simulation.attach(section(tool, button), bearing, true, 1, 1); physics.boundary(world, drive, .5f);
+        for (int tick = 0; tick < 10; tick++) { world.tick(); simulation.finish(world); }
+        com.simibubi.create.content.contraptions.behaviour.MovementContext context;
+        try {
+            var field = PonderSimulation.class.getDeclaredField("actorDrives"); field.setAccessible(true);
+            @SuppressWarnings("unchecked") var drives = (java.util.Map<com.simibubi.create.content.contraptions.behaviour.MovementContext, ActorDrive>)field.get(simulation);
+            context = drives.keySet().stream().filter(c -> c.localPos.equals(tool)).findFirst().orElseThrow();
+        } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+        require(context.data.contains("BreakingPos") && context.data.getDouble("DCActorTravel") > 0 && world.getBlockState(tool.above()).is(Blocks.STONE),
+            "preview drill first acquires and partly pays its actual target: " + context.data + " pos=" + context.position + " motion=" + context.relativeMotion);
+        var cell = BlockPos.containing(context.position);
+        simulation.toggleActors(bearing, button);
+        require(!context.data.contains("BreakingPos") && !context.data.contains("DCActorTravel"), "disabling the preview cancels its paid partial cut");
+        simulation.toggleActors(bearing, button); world.tick(); simulation.finish(world);
+        require(BlockPos.containing(context.position).equals(cell), "reenabling happens within the same contact voxel");
+        require(context.data.contains("BreakingPos") && context.data.getDouble("DCActorTravel") > 0,
+            "reenabled preview drill reacquires its target without leaving and reentering the voxel");
     }
     private static void toolReplacement() {
         var world = world(); var drive = new BlockPos(0, 3, 0); var tool = drive.above(); var chest = tool.east();

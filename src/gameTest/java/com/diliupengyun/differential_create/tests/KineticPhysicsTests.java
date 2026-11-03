@@ -156,6 +156,12 @@ public final class KineticPhysicsTests {
 	public static void stationaryContraptionContactRefresh(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.stationaryContactRefresh(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_stall", timeoutTicks = 100)
 	public static void stalledContraptionDrill(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.stalledDrill(helper); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "controls_rotating", timeoutTicks = 100)
+	public static void contraptionControlsWhileRotating(GameTestHelper helper) { forceImpactChunks(helper); ContraptionControlsTests.clicks(helper, false); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "controls_cancel_cut", timeoutTicks = 100)
+	public static void contraptionControlsCancelCut(GameTestHelper helper) { forceImpactChunks(helper); ContraptionControlsTests.clicks(helper, true); }
+	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "controls_shared_selection", timeoutTicks = 100)
+	public static void contraptionControlsSharedSelection(GameTestHelper helper) { forceImpactChunks(helper); ContraptionControlsTests.sharedSelection(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_completion", timeoutTicks = 100)
 	public static void contraptionCompletionTolerance(GameTestHelper helper) { forceImpactChunks(helper); ContinuousActorTests.completionTolerance(helper); }
 	@GameTest(template = TEMPLATE, templateNamespace = "differentialcreate", batch = "continuous_actor_native_stall", timeoutTicks = 100)

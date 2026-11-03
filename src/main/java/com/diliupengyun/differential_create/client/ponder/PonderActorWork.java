@@ -8,6 +8,8 @@ import com.simibubi.create.api.behaviour.movement.MovementBehaviour;
 import com.simibubi.create.content.contraptions.AbstractContraptionEntity;
 import com.simibubi.create.content.contraptions.OrientedContraptionEntity;
 import com.simibubi.create.content.contraptions.behaviour.MovementContext;
+import com.simibubi.create.content.contraptions.actors.contraptionControls.ContraptionControlsBlockEntity;
+import com.simibubi.create.content.contraptions.actors.contraptionControls.ContraptionControlsMovement;
 import com.simibubi.create.content.contraptions.mounted.MountedContraption;
 import com.simibubi.create.content.kinetics.base.BlockBreakingMovementBehaviour;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
@@ -26,6 +28,7 @@ final class PonderActorWork implements ActorDrive {
         WorldSectionElement owner;
         Vec3 previous;
         BlockPos cell;
+        double previousAngle, angle;
         Actor(MovementContext context, MovementBehaviour behaviour, WorldSectionElement owner) { this.context = context; this.behaviour = behaviour; this.owner = owner; }
     }
     private final PonderLevel world;
@@ -33,6 +36,7 @@ final class PonderActorWork implements ActorDrive {
     private final boolean rotating;
     private final Direction.Axis axis;
     private final List<Actor> actors = new ArrayList<>();
+    private final java.util.Map<BlockPos, Boolean> buttons = new java.util.HashMap<>();
     private final java.util.Map<BlockPos, net.minecraft.world.level.block.entity.BlockEntity> templates = new java.util.HashMap<>();
     private final MountedContraption storage = new MountedContraption();
     private final OrientedContraptionEntity entity;
@@ -49,6 +53,8 @@ final class PonderActorWork implements ActorDrive {
         for (var iterator = actors.iterator(); iterator.hasNext();) {
             var actor = iterator.next(); if (!actor.context.localPos.equals(pos)) continue;
             ContraptionActorWork.of(actor.context).cancel(); PonderSimulation.of(world).removeActor(actor.context); iterator.remove();
+            storage.getActors().removeIf(pair -> pair.getRight() == actor.context);
+            buttons.remove(pos);
         }
     }
 
@@ -83,9 +89,16 @@ final class PonderActorWork implements ActorDrive {
             storage.getBlocks().put(pos, info); changed = true;
             var behaviour = MovementBehaviour.REGISTRY.get(state);
             if (!(behaviour instanceof BlockBreakingMovementBehaviour)
-                && !(behaviour instanceof com.simibubi.create.content.contraptions.actors.harvester.HarvesterMovementBehaviour)) continue;
+                && !(behaviour instanceof com.simibubi.create.content.contraptions.actors.harvester.HarvesterMovementBehaviour)
+                && !(behaviour instanceof ContraptionControlsMovement)) continue;
             var ctx = new MovementContext(world, info, storage);
             actors.add(new Actor(ctx, behaviour, owner)); PonderSimulation.of(world).actorDrive(ctx, this);
+            storage.getActors().add(org.apache.commons.lang3.tuple.MutablePair.of(info, ctx));
+            if (be instanceof ContraptionControlsBlockEntity control) {
+                buttons.put(pos, control.disabled);
+                var filter = ContraptionControlsMovement.getFilter(ctx);
+                if (control.disabled && filter != null && !storage.isActorTypeDisabled(filter)) storage.getDisabledActors().add(filter);
+            }
         }
         }
         if (changed) {
@@ -98,7 +111,36 @@ final class PonderActorWork implements ActorDrive {
             for (var info : storage.getBlocks().values()) storage.getStorage().addBlock(world, info.state(), info.pos(), info.pos(), world.getBlockEntity(info.pos()));
             storage.getStorage().initialize();
             storageInitialized = true;
+            for (var filter : storage.getDisabledActors()) storage.setActorsActive(filter, false);
         }
+    }
+    void toggle(BlockPos button) {
+        discover();
+        for (var actor : actors) if (actor.context.localPos.equals(button) && actor.behaviour instanceof ContraptionControlsMovement) {
+            ActorControlState.toggle(storage, ContraptionControlsMovement.getFilter(actor.context));
+            controls(false);
+            return;
+        }
+        throw new IllegalArgumentException("Control is not part of the assembled structure: " + button);
+    }
+    private void controls(boolean readEdits) {
+        if (readEdits) for (var actor : actors)
+            if (actor.behaviour instanceof ContraptionControlsMovement && world.getBlockEntity(actor.context.localPos) instanceof ContraptionControlsBlockEntity control
+                && control.disabled != buttons.getOrDefault(actor.context.localPos, control.disabled)
+                && control.disabled != ActorControlState.disabled(storage, ContraptionControlsMovement.getFilter(actor.context)))
+                ActorControlState.toggle(storage, ContraptionControlsMovement.getFilter(actor.context));
+        for (var actor : actors) {
+            if (actor.context.disabled) { ContraptionActorWork.of(actor.context).cancel(); actor.cell = null; }
+            if (!(actor.behaviour instanceof ContraptionControlsMovement)
+                || !(world.getBlockEntity(actor.context.localPos) instanceof ContraptionControlsBlockEntity control)) continue;
+            control.disabled = ActorControlState.disabled(storage, ContraptionControlsMovement.getFilter(actor.context));
+            buttons.put(actor.context.localPos, control.disabled);
+        }
+    }
+    Double toolAngle(BlockPos pos, float partialTicks) {
+        for (var actor : actors) if (actor.context.localPos.equals(pos) && !(actor.behaviour instanceof ContraptionControlsMovement))
+            return net.minecraft.util.Mth.lerp(partialTicks, actor.previousAngle, actor.angle);
+        return null;
     }
     void tick() {
         if (actuator.isRemoved() || world.getBlockEntity(actuator.getBlockPos()) != actuator) return;
@@ -107,10 +149,12 @@ final class PonderActorWork implements ActorDrive {
             return;
         }
         discover();
+        controls(true);
         double current = travel(); accepted = Double.isNaN(previousTravel) ? 0 : Math.abs(current - previousTravel); previousTravel = current;
         double load = 0;
         for (var actor : actors) {
             if (!actor.owner.isVisible() || !PonderSimulation.of(world).sections(actuator).contains(actor.owner)) continue;
+            if (actor.behaviour instanceof ContraptionControlsMovement) continue;
             var pose = new com.mojang.blaze3d.vertex.PoseStack();
             ((net.createmod.ponder.foundation.element.WorldSectionElementImpl) actor.owner).transformMS(pose, 1);
             var matrix = pose.last().pose(); var inverse = new org.joml.Matrix4f(matrix).invert();
@@ -122,13 +166,8 @@ final class PonderActorWork implements ActorDrive {
             ctx.motion = delta;
             ctx.relativeMotion = new Vec3(inverse.transformDirection(new org.joml.Vector3f((float) delta.x, (float) delta.y, (float) delta.z)));
             ctx.rotation = v -> new Vec3(matrix.transformDirection(new org.joml.Vector3f((float) v.x, (float) v.y, (float) v.z)));
-            ctx.disabled = false;
-            for (var controlOwner : PonderSimulation.of(world).sections(actuator))
-            for (var controlPos : ((PonderWorldSectionAccessor) controlOwner).differentialcreate$selection())
-                if (world.getBlockEntity(controlPos) instanceof com.simibubi.create.content.contraptions.actors.contraptionControls.ContraptionControlsBlockEntity control && control.disabled) {
-                    var filter = control.getBehaviour(com.simibubi.create.foundation.blockEntity.behaviour.filtering.FilteringBehaviour.TYPE);
-                    if (filter == null || filter.getFilter().isEmpty() || filter.test(new net.minecraft.world.item.ItemStack(ctx.state.getBlock()))) ctx.disabled = true;
-                }
+            actor.previousAngle = actor.angle;
+            actor.angle += ctx.getAnimationSpeed() * .3;
             if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.harvester.HarvesterBlockEntity harvester) harvester.setAnimatedSpeed(ctx.getAnimationSpeed());
             if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.roller.RollerBlockEntity roller) roller.setAnimatedSpeed(ctx.getAnimationSpeed());
             if (accepted <= 1e-10 || !actor.behaviour.isActive(ctx)) continue;

@@ -2,6 +2,11 @@ package com.diliupengyun.differential_create.mixin;
 
 import com.diliupengyun.differential_create.kinetics.ContraptionActorWork;
 import com.diliupengyun.differential_create.kinetics.IContraptionBreaker;
+import com.diliupengyun.differential_create.kinetics.PhysicsPreview;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import net.minecraft.world.level.Level;
+import org.objectweb.asm.Opcodes;
 import com.simibubi.create.content.contraptions.behaviour.MovementContext;
 import com.simibubi.create.content.kinetics.base.BlockBreakingMovementBehaviour;
 import net.minecraft.core.BlockPos;
@@ -37,7 +42,11 @@ public abstract class BlockBreakingMovementBehaviourMixin implements IContraptio
 	}
 	@Inject(method = "cancelStall", at = @At("RETURN"))
 	private void differentialcreate$clearWork(MovementContext context, CallbackInfo ci) {
-		if (!context.world.isClientSide) ContraptionActorWork.of(context).cancel();
+		if (!context.world.isClientSide || PhysicsPreview.enabled(context.world)) ContraptionActorWork.of(context).cancel();
+	}
+	@WrapOperation(method = "cancelStall", at = @At(value = "FIELD", target = "Lnet/minecraft/world/level/Level;isClientSide:Z", opcode = Opcodes.GETFIELD))
+	private boolean differentialcreate$cancelPreviewCut(Level world, Operation<Boolean> original) {
+		return original.call(world) && !PhysicsPreview.enabled(world);
 	}
 	@Override public void differentialcreate$finishBreaking(MovementContext context, BlockPos pos) {
 		context.world.destroyBlockProgress(context.data.getInt("BreakerId"), pos, -1);

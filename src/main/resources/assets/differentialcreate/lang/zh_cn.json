@@ -235,6 +235,7 @@
   "create.ponder.cart_assembler_rails.text_4": "熔炉矿车取煤或木炭；保险库不供燃料。",
   "create.ponder.smart_pipe.text_4": "在两条支路设置不同过滤，就能分开输送不同液体。",
   "create.ponder.smart_pipe.text_5": "看两只储罐：巧克力和牛奶各走各的支路。",
+  "differentialcreate.ponder.shared.controls_keep_moving": "控制器只切换工具的工作状态，轴承仍会带着结构继续运动。",
   "differentialcreate.ponder.shared.bearing_assemble": "空手右击轴承，组装结构。",
   "differentialcreate.ponder.shared.bearing_power": "接通离合器，让动力驱动已组装的结构。",
   "differentialcreate.ponder.shared.bearing_coast": "断开动力后，结构会惰行，并保持组装状态。",

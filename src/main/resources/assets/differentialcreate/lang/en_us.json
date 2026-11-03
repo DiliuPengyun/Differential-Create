@@ -235,6 +235,7 @@
   "create.ponder.cart_assembler_rails.text_4": "Furnace Carts take coal/charcoal from eligible storage, excluding Vaults.",
   "create.ponder.smart_pipe.text_4": "Set different filters on the two branches to separate the liquids.",
   "create.ponder.smart_pipe.text_5": "Watch chocolate and milk flow through separate branches into their own tanks.",
+  "differentialcreate.ponder.shared.controls_keep_moving": "The controls switch the tools on or off. The bearing keeps moving.",
   "differentialcreate.ponder.shared.bearing_assemble": "Right-click with an empty hand to assemble the structure.",
   "differentialcreate.ponder.shared.bearing_power": "Switch the Clutch on to drive the assembled structure.",
   "differentialcreate.ponder.shared.bearing_coast": "Cutting power lets the structure coast; it remains assembled.",
