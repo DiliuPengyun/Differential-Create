@@ -22,7 +22,7 @@ public enum PonderLesson {
         "Empty-hand hold right-click on the Brass panel to adjust engagement."
     ),
     RATIO("ratio",
-        "Adjusting Speed and Direction with the Ratio Controller",
+        "Adjusting Speed and Direction with the Rotation Speed Controller",
         "Set the lower shaft/top cog speed ratio, from -16 to +16.",
         "Set -1: the lower shaft reverses relative to the top cog.",
         "Set 0: the input keeps turning, with the output disconnected.",
