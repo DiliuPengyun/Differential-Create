@@ -275,10 +275,15 @@ public final class PonderSimulation {
         if (!actorSections.containsValue(actors)) actorDrives.values().removeIf(drive -> drive == actors);
     }
     public boolean mountedTool(BlockPos pos) { return actorDrives.entrySet().stream().anyMatch(entry -> entry.getKey().localPos.equals(pos)
-        && entry.getValue() instanceof PonderActorWork work && work.active(entry.getKey())); }
+        && entry.getValue() instanceof PonderActorWork work && work.active(entry.getKey()))
+        || trains.values().stream().anyMatch(train -> train.toolAngle(pos, 1) != null); }
     public Double mountedToolAngle(BlockPos pos, float partialTicks) {
         for (var drive : actorDrives.entrySet()) if (drive.getKey().localPos.equals(pos)
             && drive.getValue() instanceof PonderActorWork work && work.active(drive.getKey())) return work.toolAngle(pos, partialTicks);
+        for (var train : trains.values()) {
+            var angle = train.toolAngle(pos, partialTicks);
+            if (angle != null) return angle;
+        }
         return null;
     }
     public void toggleActors(KineticBlockEntity actuator, BlockPos button) {

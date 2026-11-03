@@ -28,9 +28,14 @@ final class PonderTrain {
     private final TrainMechanics.Engine boundary = new TrainMechanics.Engine();
     private final List<BlockPos> bogeys = new ArrayList<>();
     private final java.util.Map<BlockPos, AbstractBogeyBlockEntity> bogeyTemplates = new java.util.HashMap<>();
+    private final java.util.Map<BlockPos, PonderToolAnimation> tools = new java.util.HashMap<>();
     private boolean stopAtEnd;
     boolean contains(BlockPos pos) { return bogeys.contains(pos); }
     boolean owns(BlockPos pos) { return contraption.getBlocks().containsKey(pos); }
+    Double toolAngle(BlockPos pos, float partialTicks) {
+        var animation = tools.get(pos);
+        return animation == null || !live() ? null : animation.angle(partialTicks);
+    }
     boolean live() {
         return sections.stream().anyMatch(member -> {
             var selected = ((PonderWorldSectionAccessor) member).differentialcreate$selection();
@@ -156,8 +161,7 @@ final class PonderTrain {
         TrainPhysics.advance(train);
         for (var actor : contraption.getActors()) {
             var ctx = actor.getRight(); if (ctx == null) continue;
-            if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.roller.RollerBlockEntity roller) roller.setAnimatedSpeed(ctx.getAnimationSpeed());
-            if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.harvester.HarvesterBlockEntity harvester) harvester.setAnimatedSpeed(ctx.getAnimationSpeed());
+            tools.computeIfAbsent(ctx.localPos, ignored -> new PonderToolAnimation()).tick(ctx);
         }
         if (duration > 0 && --duration == 0 && stopAtEnd) brake = true;
         pendingPose = true;

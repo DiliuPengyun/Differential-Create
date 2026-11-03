@@ -231,8 +231,11 @@ final class PonderPhysicalAudit {
         double stoppedAngle = simulation.mountedToolAngle(drill, 1);
         require(stoppedAngle == simulation.mountedToolAngle(drill, 0) && body.getAnimatedRotation().y > angle, "disabled drill stops its own model while the carrier keeps moving");
         var be = (com.simibubi.create.content.kinetics.base.KineticBlockEntity)world.getBlockEntity(drill);
-        double rendered = com.diliupengyun.differential_create.client.ClientKineticAngles.angleOf(be, Direction.Axis.X, 0);
-        require(Math.abs(rendered - Math.toRadians(stoppedAngle % 360)) < 1e-5, "the block-entity rendering path uses the mounted tool's actual frozen angle");
+        var facing = be.getBlockState().getValue(com.simibubi.create.content.kinetics.drill.DrillBlock.FACING);
+        float offset = com.simibubi.create.content.kinetics.base.KineticBlockEntityRenderer.getRotationOffsetForPosition(be, be.getBlockPos(), facing.getAxis());
+        double rendered = com.diliupengyun.differential_create.client.ClientKineticAngles.angleOf(be, facing.getAxis(), offset);
+        require(Math.abs(rendered - Math.toRadians(stoppedAngle * facing.getAxisDirection().getStep() % 360)) < 1e-5,
+            "the block-entity rendering path preserves the frozen head angle in its facing, without stationary-shaft alignment");
         simulation.toggleActors(bearing, second); world.tick(); simulation.finish(world);
         require(Math.abs(simulation.mountedToolAngle(drill, 1) - simulation.mountedToolAngle(drill, 0)) > 1, "the second same-type control restarts the first control's tool");
         simulation.toggleActors(bearing, all); world.tick(); simulation.finish(world);

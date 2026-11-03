@@ -125,6 +125,7 @@ public final class PonderClientSmokeTests {
                 require(entries.size() >= PonderLesson.values().length, "Addon Ponder plugin was not registered");
                 PonderTextAudit.verify();
                 PonderFanAudit.verifyRenderer();
+                PonderToolRenderAudit.verify();
                 ShaftRenderingAudit.verify();
                 started = true;
             }
@@ -975,7 +976,8 @@ public final class PonderClientSmokeTests {
                     if (scene.getId().getPath().equals("portable_fluid_interface") || redstoneInterface
                         || java.util.Set.of("piston_pole", "mechanical_bearing", "stabilized_bearings", "bearing_modes",
                             "rope_pulley", "rope_pulley_modes", "rope_pulley_multi_rope", "elevator_pulley", "elevator_pulley_multi_rope",
-                            "clockwork_bearing", "gantry_redstone", "gantry_cascaded", "mechanical_drill_contraption", "linear_chassis_group",
+                            "clockwork_bearing", "gantry_redstone", "gantry_cascaded", "mechanical_drill_contraption",
+                            "mechanical_saw_contraption", "mechanical_harvester", "mechanical_roller_pave", "mechanical_roller_fill", "linear_chassis_group",
                             "linear_chassis_attachment", "radial_chassis", "contraption_controls").contains(scene.getId().getPath())) attachmentReplay(scene);
                 } catch (Throwable failure) {
                     playbackFailures.add(scene.getId() + ": " + failure);
@@ -1002,8 +1004,17 @@ public final class PonderClientSmokeTests {
                 var passengers = new ArrayList<net.minecraft.world.phys.Vec3>();
                 scene.forEachVisible(net.createmod.ponder.api.element.ParrotElement.class,
                     bird -> passengers.add(bird.getPositionOffset()));
+                var mechanisms = new LinkedHashMap<>(PonderSimulation.of(scene.getWorld()).readings());
+                for (var be : scene.getWorld().getBlockEntities()) {
+                    var simulation = PonderSimulation.of(scene.getWorld());
+                    if (simulation.mountedToolAngle(be.getBlockPos(), 1) == null) continue;
+                    var phases = new ArrayList<Double>();
+                    for (float partial : new float[]{0, .25f, .5f, .75f, 1})
+                        phases.add(simulation.mountedToolAngle(be.getBlockPos(), partial));
+                    mechanisms.put("tool " + be.getBlockPos().toShortString(), phases);
+                }
                 frames.add(new Frame(new PlaybackFrame(snapshot(scene), sectionSnapshot(scene), Map.of()),
-                    Map.copyOf(PonderSimulation.of(scene.getWorld()).readings()), List.copyOf(passengers)));
+                    Map.copyOf(mechanisms), List.copyOf(passengers)));
             }
             require(!pendingInstructions(scene), "Mounted lesson did not complete after rewind: " + scene.getId());
             animation.verify(scene);

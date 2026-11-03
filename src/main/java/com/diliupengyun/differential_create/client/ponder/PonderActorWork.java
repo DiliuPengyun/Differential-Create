@@ -13,7 +13,6 @@ import com.simibubi.create.content.contraptions.actors.contraptionControls.Contr
 import com.simibubi.create.content.contraptions.mounted.MountedContraption;
 import com.simibubi.create.content.kinetics.base.BlockBreakingMovementBehaviour;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
-import com.simibubi.create.content.kinetics.drill.DrillMovementBehaviour;
 import net.createmod.ponder.api.element.WorldSectionElement;
 import net.createmod.ponder.api.level.PonderLevel;
 import net.minecraft.core.BlockPos;
@@ -29,7 +28,7 @@ final class PonderActorWork implements ActorDrive {
         WorldSectionElement owner;
         Vec3 previous;
         BlockPos cell;
-        double previousAngle, angle;
+        final PonderToolAnimation animation = new PonderToolAnimation();
         Actor(MovementContext context, MovementBehaviour behaviour, WorldSectionElement owner) { this.context = context; this.behaviour = behaviour; this.owner = owner; }
     }
     private final PonderLevel world;
@@ -140,7 +139,7 @@ final class PonderActorWork implements ActorDrive {
     }
     Double toolAngle(BlockPos pos, float partialTicks) {
         for (var actor : actors) if (actor.context.localPos.equals(pos) && !(actor.behaviour instanceof ContraptionControlsMovement))
-            return net.minecraft.util.Mth.lerp(partialTicks, actor.previousAngle, actor.angle);
+            return actor.animation.angle(partialTicks);
         return null;
     }
     void tick() {
@@ -167,12 +166,7 @@ final class PonderActorWork implements ActorDrive {
             ctx.motion = delta;
             ctx.relativeMotion = new Vec3(inverse.transformDirection(new org.joml.Vector3f((float) delta.x, (float) delta.y, (float) delta.z)));
             ctx.rotation = v -> new Vec3(matrix.transformDirection(new org.joml.Vector3f((float) v.x, (float) v.y, (float) v.z)));
-            actor.previousAngle = actor.angle;
-            // Native moving drills stop their heads while returning away from the cutting face.
-            if (!(actor.behaviour instanceof DrillMovementBehaviour) || actor.behaviour.isActive(ctx))
-                actor.angle += ctx.getAnimationSpeed() * .3;
-            if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.harvester.HarvesterBlockEntity harvester) harvester.setAnimatedSpeed(ctx.getAnimationSpeed());
-            if (world.getBlockEntity(ctx.localPos) instanceof com.simibubi.create.content.contraptions.actors.roller.RollerBlockEntity roller) roller.setAnimatedSpeed(ctx.getAnimationSpeed());
+            actor.animation.tick(ctx);
             if (accepted <= 1e-10 || !actor.behaviour.isActive(ctx)) continue;
             int steps = Math.max(1, (int) Math.ceil(delta.length() / .03));
             for (int i = 1; i <= steps; i++) {

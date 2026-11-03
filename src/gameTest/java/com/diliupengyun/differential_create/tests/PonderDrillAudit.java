@@ -51,6 +51,9 @@ final class PonderDrillAudit {
                     else { backward++; returned.add(pos); }
                 } else if (along > .99 * travel && travel > .003) {
                     require(Math.abs(end - start) > 1e-5, scene, "advancing drill does not spin", pos);
+                    // Native animation speed is degrees/second: this feed band is 100 deg/s.
+                    if (travel < .09) require(Math.abs(Math.abs(end - start) - 5) < 1e-5,
+                        scene, "drill animation treats degrees/second as RPM", pos);
                     forward++;
                     if (returned.contains(pos)) resumed.add(pos);
                 }

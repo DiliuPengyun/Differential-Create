@@ -198,6 +198,12 @@ final class PonderAnimationAudit {
         steamAssembly(scene, sections, mechanisms);
         for (var be : scene.getWorld().getBlockEntities()) {
             String pos = be.getBlockPos().toShortString();
+            var simulation = com.diliupengyun.differential_create.client.ponder.PonderSimulation.of(scene.getWorld());
+            if (simulation.mountedToolAngle(be.getBlockPos(), 1) != null) {
+                var phases = new ArrayList<Double>();
+                for (float partial : new float[]{0, .25f, .5f, .75f, 1}) phases.add(simulation.mountedToolAngle(be.getBlockPos(), partial));
+                mechanisms.put("tool " + pos, phases);
+            }
             if (be instanceof com.simibubi.create.content.contraptions.actors.psi.PortableStorageInterfaceBlockEntity port) {
                 try {
                     var animation = (LerpedFloat) PORT_ANIMATION.get(port);

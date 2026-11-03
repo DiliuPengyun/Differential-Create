@@ -46,6 +46,13 @@ public final class ClientKineticAngles {
 	private static Double ponderAngle(KineticBlockEntity be, net.createmod.ponder.api.level.PonderLevel level) {
 		float partialTicks = net.createmod.catnip.animation.AnimationTickHolder.getPartialTicks(level);
 		var tool = com.diliupengyun.differential_create.client.ponder.PonderSimulation.of(level).mountedToolAngle(be.getBlockPos(), partialTicks);
+		if (tool != null && be instanceof com.simibubi.create.content.kinetics.drill.DrillBlockEntity) {
+			var facing = be.getBlockState().getValue(com.simibubi.create.content.kinetics.drill.DrillBlock.FACING);
+			// Actor heads rotate about their own facing. The BE mesh uses a positive world axis
+			// and adds a stationary-shaft alignment which the native actor does not have.
+			tool = tool * facing.getAxisDirection().getStep()
+				- KineticBlockEntityRenderer.getRotationOffsetForPosition(be, be.getBlockPos(), facing.getAxis());
+		}
 		return tool != null ? tool : com.diliupengyun.differential_create.client.ponder.PonderKinetics.of(level).angle(be, partialTicks);
 	}
 
