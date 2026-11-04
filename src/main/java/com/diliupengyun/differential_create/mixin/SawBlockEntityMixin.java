@@ -16,7 +16,14 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(SawBlockEntity.class)
-public abstract class SawBlockEntityMixin implements ShaftWork {
+public abstract class SawBlockEntityMixin implements ShaftWork, com.diliupengyun.differential_create.kinetics.SawFeedDirection {
+	@Unique private int differentialcreate$feedDirection = 1;
+	@Override public int differentialcreate$feedDirection() { return differentialcreate$feedDirection; }
+	@Inject(method = "tick", at = @At("HEAD"))
+	private void differentialcreate$rememberFeedDirection(CallbackInfo ci) {
+		float speed = ((SawBlockEntity) (Object) this).getSpeed();
+		if (speed != 0) differentialcreate$feedDirection = speed < 0 ? -1 : 1;
+	}
 	@Unique private double differentialcreate$remaining = Double.NaN;
 	@Unique private float differentialcreate$published = Float.NaN;
 	@Unique private boolean differentialcreate$event;
@@ -70,11 +77,14 @@ public abstract class SawBlockEntityMixin implements ShaftWork {
 	@Inject(method = "write", at = @At("RETURN"))
 	private void differentialcreate$write(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
 		tag.putDouble("DCProcessingRemaining", differentialcreate$remaining());
+		tag.putInt("DCFeedDirection", differentialcreate$feedDirection);
 	}
 	@Inject(method = "read", at = @At("RETURN"))
 	private void differentialcreate$read(CompoundTag tag, HolderLookup.Provider registries, boolean packet, CallbackInfo ci) {
 		SawBlockEntity self = (SawBlockEntity) (Object) this;
 		differentialcreate$published = self.inventory.remainingTime;
 		differentialcreate$remaining = tag.contains("DCProcessingRemaining") ? tag.getDouble("DCProcessingRemaining") : Double.NaN;
+		differentialcreate$feedDirection = tag.contains("DCFeedDirection") ? tag.getInt("DCFeedDirection") < 0 ? -1 : 1
+			: self.getSpeed() < 0 ? -1 : 1;
 	}
 }

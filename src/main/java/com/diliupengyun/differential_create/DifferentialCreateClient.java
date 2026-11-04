@@ -34,6 +34,7 @@ public class DifferentialCreateClient {
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post event) -> {
             ClientNetworkSpeeds.onClientTick();
             com.diliupengyun.differential_create.client.ClientMixerAnimations.tick();
+            com.diliupengyun.differential_create.client.ClientSawAnimations.tick();
         });
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post event) -> com.diliupengyun.differential_create.client.PortableDockingPreview.tick());
     }

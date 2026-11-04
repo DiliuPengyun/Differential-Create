@@ -119,6 +119,8 @@
     "MixerAnimationMixin",
     "MechanicalMixerRendererMixin",
     "MixerVisualMixin",
+    "SawItemAnimationMixin",
+    "SawItemRendererMixin",
     "PonderWorldSectionAccessor",
     "PonderTankAccessor",
     "PonderSpoutAccessor",

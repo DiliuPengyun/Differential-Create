@@ -20,6 +20,25 @@ import net.minecraft.world.item.Item;
 /** Retry a scripted delivery until the moving belt has room; only track the accepted item. */
 public final class PonderBeltInput {
     private PonderBeltInput() {}
+    /** Link the storyboard's gestures to a real machine result, without spawning a copy. */
+    public static ElementLink<net.createmod.ponder.api.element.EntityElement> output(CreateSceneBuilder builder, ItemStack requested) {
+        var link = new ElementLinkImpl<>(net.createmod.ponder.api.element.EntityElement.class);
+        builder.addInstruction(new TickingInstruction(false, 160) {
+            @Override public void tick(PonderScene scene) {
+                super.tick(scene);
+                for (var entity : scene.getWorld().getEntityList()) {
+                    if (!(entity instanceof net.minecraft.world.entity.item.ItemEntity item) || !item.isAlive()
+                        || !ItemStack.isSameItemSameComponents(item.getItem(), requested)) continue;
+                    var tracker = new net.createmod.ponder.foundation.element.EntityElementImpl(item);
+                    scene.addElement(tracker);
+                    scene.linkElement(tracker, link);
+                    remainingTicks = 0;
+                    break;
+                }
+            }
+        });
+        return link;
+    }
     /** Reinsert an actual previously ejected result rather than spawning a duplicate. */
     public static void retrieve(CreateSceneBuilder builder, BlockPos pos, Direction side, ItemStack requested) {
         builder.addInstruction(new TickingInstruction(false, 160) {
@@ -30,6 +49,7 @@ public final class PonderBeltInput {
                 for (var entity : java.util.List.copyOf(scene.getWorld().getEntityList())) {
                     if (!(entity instanceof net.minecraft.world.entity.item.ItemEntity item) || !item.isAlive()
                         || !ItemStack.isSameItemSameComponents(item.getItem(), requested)) continue;
+                    if (!item.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(pos).inflate(.1, .8, .1))) continue;
                     var left = input.handleInsertion(item.getItem().copy(), side.getOpposite(), false);
                     if (left.getCount() == item.getItem().getCount()) continue;
                     if (left.isEmpty()) item.discard(); else item.setItem(left);

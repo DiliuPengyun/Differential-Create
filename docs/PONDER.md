@@ -258,3 +258,9 @@ Create 的 Shift 摘要和 Ctrl 操作提示机制继续沿用。没有简介的
 搅拌头的升降使用实际工作计数的小数余量，旋转按输入轴累计行程积分。普通渲染与 Flywheel 从同一个方块实体状态读取前后姿态，变速、加工阶段切换和渲染重建不重置相位；断能后不再凭子帧时间虚构升降。[MixerRenderingAudit](../src/gameTest/java/com/diliupengyun/differential_create/tests/MixerRenderingAudit.java) 对照实际头部网格和 Flywheel 实例，检查四个加工阶段、四种停住姿态、时钟变化及视觉重建。真实世界另可运行 `.\gradlew.bat runMixerClientSmoke`，追加 `-PmixerClientStayOpen=true` 可在自动检查后保留三台机器供手动观察。
 
 矿车与货物的绑定在同一批故事板指令完成后、下次积分前解析，兼容先移动货物或先移动矿车的原生顺序。矿车保留积分前的位置，避免随后执行的原生元素更新把插值起点覆盖成终点。放回轨道阶段逐 tick 比较五个子帧的高度，四种原生矿车教程均参加正常／跳过／正常重播检查。
+
+原生锯床加工教程保留首次原木的拾取和抛投；后续去皮原木与木板的故事板句柄绑定到机器真实排出的物品。原来的回投动作和清除动作因此作用于实际产物，回投原木必须飞到锯床附近并被入口接收后才消耗，不能远程搬回库存。伐木与移动锯仍由实际砍树算法产生掉落物。[PonderSawAudit](../src/gameTest/java/com/diliupengyun/differential_create/tests/PonderSawAudit.java) 检查原料持续可见、回投轨迹、六块木板的实际产出及进入石材段前清空木材，锯床加工教程另参加正常／跳过／正常重播。
+
+伐木教程中，粗树底部先退场的三块木头，在完全隐藏后实际移出预览世界；仅隐藏模型会让砍树算法仍认为树有支撑。最后一块树根保留，由真实轴行程切断并调用原生砍树算法，不能定时清空整棵树。结果检查按舞台实际放置的树干数量扣除这三块示意移除，核对余下原木的真实掉落；普通／跳过／普通重播也检查两棵树都确实锯倒。真实世界专项另对照仍有三块树根支撑与已移除三块树根的粗树，保留原生的支撑判定。
+
+锯床上物料的位置按实际加工进度的前后端点插值，不再以当前转速外推子帧位置或在零速时移到中心。切割前后的进给阶段在锯片中心衔接，停转保留位置和最后一次非零进给方向；方向随机器 NBT 保存，兼容缺少该字段的旧数据。普通渲染与 Flywheel 都沿用原生 `SawRenderer.renderItems`，仅读取这一共用位置。[SawItemRenderingAudit](../src/gameTest/java/com/diliupengyun/differential_create/tests/SawItemRenderingAudit.java) 采集实际物品模型顶点，检查跨 tick 连续性、五个子帧、两种轴向、正反进给、低速停住及停住后读取存档。真实服务器、库存和客户端同步另用 `.\gradlew.bat runSawClientSmoke` 检查，包含变速、断轴、重新放置、渲染重建、冻结与单步；不以单独连续的锯片转角推断物料显示正确。

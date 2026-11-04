@@ -177,6 +177,15 @@ neoForge {
             logLevel = org.slf4j.event.Level.INFO
         }
 
+        sawClientSmoke {
+            client()
+            gameDirectory = project.file('build/saw-client/runs/' + UUID.randomUUID())
+            systemProperty 'differentialcreate.sawClientSmoke', 'true'
+            systemProperty 'differentialcreate.sawClientReport', project.file('build/saw-client/frames').absolutePath
+            programArguments.addAll '--width', '1600', '--height', '1000'
+            logLevel = org.slf4j.event.Level.INFO
+        }
+
         ponderClientSmoke {
             client()
             gameDirectory = project.file('build/ponder/runs/' + UUID.randomUUID())
@@ -375,6 +384,15 @@ tasks.named('runMixerClientSmoke') {
         def log = new File(directory, 'logs/latest.log')
         if (!log.isFile() || !log.text.contains('DC_MIXER_CLIENT_PASS') || log.text.contains('DC_MIXER_CLIENT_FAIL'))
             throw new GradleException('Mixer client verification failed; inspect its latest.log.')
+    }
+}
+
+tasks.named('runSawClientSmoke') {
+    notCompatibleWithConfigurationCache('Saw verification uses a fresh disposable client world.')
+    doLast {
+        def log = new File(neoForge.runs.getByName('sawClientSmoke').gameDirectory.get().asFile, 'logs/latest.log')
+        if (!log.isFile() || !log.text.contains('DC_SAW_CLIENT_PASS') || log.text.contains('DC_SAW_CLIENT_FAIL'))
+            throw new GradleException('Saw client verification failed; inspect its latest.log.')
     }
 }
 
